@@ -1,0 +1,389 @@
+import { ipcMain, __handlers } from 'electron'
+import { initDb, closeDb } from '../src/main/db/client'
+import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
+import { registerProjectHandlers } from '../src/main/ipc/projects'
+import { registerTaskHandlers } from '../src/main/ipc/tasks'
+import { registerMeetingHandlers } from '../src/main/ipc/meetings'
+import { registerPeopleHandlers } from '../src/main/ipc/people'
+import { registerContentHandlers } from '../src/main/ipc/content'
+import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
+import { registerSearchHandlers } from '../src/main/ipc/search'
+import { registerSettingsHandlers } from '../src/main/ipc/settings'
+
+const call = async (channel: string, input?: unknown): Promise<any> => {
+  const fn = (__handlers as Map<string, any>).get(channel)
+  if (!fn) throw new Error(`No handler: ${channel}`)
+  return fn({}, input)
+}
+
+const ok = (label: string, cond: boolean, extra = ''): void => {
+  console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? ` — ${extra}` : ''}`)
+  if (!cond) process.exitCode = 1
+}
+
+async function main(): Promise<void> {
+  await initDb()
+  void ipcMain
+  registerWorkspaceHandlers()
+  registerProjectHandlers()
+  registerTaskHandlers()
+  registerPeopleHandlers()
+  registerContentHandlers()
+  registerMeetingHandlers()
+  registerDashboardHandlers()
+  registerSearchHandlers()
+  registerSettingsHandlers()
+
+  ok('a fresh database has no workspaces', (await call('workspace:list')).length === 0)
+
+  await call('settings:loadSample')
+  const workspaces = await call('workspace:list')
+  ok('sample data creates its own workspaces', workspaces.length === 3,
+     workspaces.map((w: any) => w.name).join(', '))
+
+  const ws = (name: string): string => workspaces.find((w: any) => w.name === name).id
+  const dayJob = ws('Day job')
+  const own = ws('My company')
+  const consultancy = ws('Consultancy')
+
+  const projects = await call('project:list', { workspaceId: dayJob, status: 'all' })
+  ok('project list is fenced to one workspace', projects.length === 3,
+     projects.map((p: any) => p.name).join(', '))
+  ok('the other workspaces hold the rest',
+     (await call('project:list', { workspaceId: own, status: 'all' })).length === 1 &&
+     (await call('project:list', { workspaceId: consultancy, status: 'all' })).length === 1)
+  ok('projects carry a cast preview for their card',
+     projects.every((p: any) => Array.isArray(p.castPreview)) &&
+     projects.find((p: any) => p.name === 'Checkout rewrite').castPreview.length === 5)
+  ok('health is derived', projects.every((p: any) => p.health && p.health.reasons.length > 0))
+
+  const risky = projects.filter((p: any) => p.health.level === 'risk' || p.health.level === 'watch')
+  ok('some projects flagged', risky.length > 0,
+     risky.map((p: any) => `${p.name}=${p.health.level}(${p.health.reasons[0]})`).join(' | '))
+
+  const idle = projects.find((p: any) => p.name === 'Internal tooling')
+  ok('stale project detected', idle && idle.health.reasons.some((r: string) => r.includes('no activity')),
+     idle?.health.reasons.join('; '))
+
+  const today = await call('dashboard:today', { workspaceId: dayJob })
+  ok('today: overdue populated', today.overdue.length >= 3, `${today.overdue.length} overdue`)
+  ok('today: due today populated', today.dueToday.length >= 1, `${today.dueToday.length} due today`)
+  ok('every kind is either a task or delegated',
+     [...today.overdue, ...today.dueToday, ...today.soon].every((t: any) => ['task', 'delegated'].includes(t.kind)))
+
+  const dayJobNames = new Set(projects.map((p: any) => p.name))
+  const everyTaskShown = [...today.overdue, ...today.dueToday, ...today.soon]
+  ok('today shows nothing from another workspace',
+     everyTaskShown.every((t: any) => dayJobNames.has(t.projectName)),
+     everyTaskShown.map((t: any) => t.projectName).filter((n: string) => !dayJobNames.has(n)).join(', ') || 'clean')
+  ok('needs-attention is fenced too',
+     today.needsAttention.every((p: any) => dayJobNames.has(p.name)))
+  ok('stats count only this workspace', today.stats.activeProjects === 3 && today.stats.peopleTracked === 6,
+     `${today.stats.activeProjects} projects, ${today.stats.peopleTracked} people`)
+
+  const checkout = projects.find((p: any) => p.name === 'Checkout rewrite')
+  const payments = projects.find((p: any) => p.name === 'Payments migration')
+  const detail = await call('project:get', { id: checkout.id })
+  ok('project detail: lanes', detail.lanes.length === 3, detail.lanes.map((l: any) => l.name).join(', '))
+  ok('project detail: cast with roles', detail.cast.length === 5,
+     detail.cast.map((c: any) => `${c.name}=${c.role}`).join(', '))
+  ok('you sort first in a project cast', detail.cast[0].isMe === true, detail.cast[0].name)
+  ok('project detail: escalation flagged first among the rest', detail.cast[1].isEscalation === true)
+  let refusedSelfRemoval = false
+  try {
+    await call('membership:delete', { id: detail.cast[0].id })
+  } catch {
+    refusedSelfRemoval = true
+  }
+  ok('you cannot be removed from your own project', refusedSelfRemoval)
+  ok('project detail: links', detail.links.length === 5)
+  ok('project detail: decisions', detail.decisions.length === 2)
+  ok('project detail: notes', detail.notes.length === 2 && detail.notes[0].isPinned === true)
+  ok('project detail: journal', detail.journal.length === 2)
+  ok('project detail: tasks with lanes', detail.tasks.filter((t: any) => t.laneName).length >= 7)
+  ok('project detail: meetings with attendees', detail.meetings.length === 2 &&
+     detail.meetings[0].attendees.length === 3,
+     detail.meetings.map((m: any) => `${m.title}(${m.attendees.length})`).join(', '))
+  ok('meeting attendees carry their project role',
+     detail.meetings[0].attendees.every((a: any) => typeof a.role === 'string') &&
+     detail.meetings[0].attendees.some((a: any) => a.role.includes('Tech lead')),
+     detail.meetings[0].attendees.map((a: any) => `${a.name}=${a.role}`).join(', '))
+  ok('a project gets the default board', detail.columns.length === 4 &&
+     detail.columns.map((c: any) => c.name).join(' > ') === 'To do > In progress > In review > Done',
+     detail.columns.map((c: any) => c.name).join(' > '))
+  ok('exactly one column is the finishing line',
+     detail.columns.filter((c: any) => c.isDone).length === 1 &&
+     detail.columns[3].isDone === true)
+  ok('cards start on the board', detail.tasks.every((t: any) => t.columnId !== null))
+
+  ok('project detail: brief has changes', detail.brief.changes.length > 0,
+     `${detail.brief.changes.length} changes since previous visit`)
+
+  const dormant = projects.find((p: any) => p.name === 'Internal tooling')
+  const dormantDetail = await call('project:get', { id: dormant.id })
+  ok('re-entry brief triggers on return', dormantDetail.brief.isReturning === true,
+     `${dormantDetail.brief.daysSinceOpened} days since opened`)
+
+  const openTask = detail.tasks.find((t: any) => t.status === 'open' && t.kind === 'task')
+  await call('task:setStatus', { id: openTask.id, status: 'done' })
+  const after = await call('project:get', { id: checkout.id })
+  ok('completing a task logs activity',
+     after.activity.some((a: any) => a.kind === 'task_completed' && a.summary.includes(openTask.title)))
+
+  const todoColumn = detail.columns[0]
+  const doingColumn = detail.columns[1]
+  const doneColumn = detail.columns[3]
+  const boardTask = detail.tasks.find((t: any) => t.columnId === todoColumn.id && t.status === 'open')
+  const moved = await call('task:setColumn', { id: boardTask.id, columnId: doneColumn.id })
+  ok('dropping a card in the done column ticks the task',
+     moved.columnId === doneColumn.id && moved.status === 'done')
+  const movedBack = await call('task:setColumn', { id: boardTask.id, columnId: doingColumn.id })
+  ok('dragging it back out reopens it',
+     movedBack.columnId === doingColumn.id && movedBack.status === 'open')
+  const ticked = await call('task:setStatus', { id: boardTask.id, status: 'done' })
+  ok('ticking it elsewhere moves the card to the done column', ticked.columnId === doneColumn.id)
+  await call('task:setStatus', { id: boardTask.id, status: 'open' })
+
+  // --- columns are the project's own
+  const extra = await call('column:save', { projectId: checkout.id, name: 'Blocked' })
+  ok('a column can be added', extra.name === 'Blocked' && extra.sortOrder === 4)
+  await call('column:save', { id: extra.id, name: 'On hold' })
+  await call('column:reorder', {
+    ids: [extra.id, ...detail.columns.map((c: any) => c.id)]
+  })
+  const reordered = (await call('project:get', { id: checkout.id })).columns
+  ok('renamed and reordered', reordered[0].name === 'On hold', reordered.map((c: any) => c.name).join(' > '))
+
+  await call('task:setColumn', { id: boardTask.id, columnId: extra.id })
+  await call('column:delete', { id: extra.id })
+  const afterColumnDelete = await call('project:get', { id: checkout.id })
+  ok('deleting a column keeps its cards',
+     afterColumnDelete.columns.length === 4 &&
+     afterColumnDelete.tasks.some((t: any) => t.id === boardTask.id),
+     `${afterColumnDelete.columns.length} columns, card survived`)
+  ok('and moves them to the first column',
+     afterColumnDelete.tasks.find((t: any) => t.id === boardTask.id).columnId ===
+       afterColumnDelete.columns[0].id)
+
+  let refusedLastColumn = false
+  const soloProject = await call('project:save', { workspaceId: dayJob, name: 'Solo board', status: 'active' })
+  const soloColumns = (await call('project:get', { id: soloProject.id })).columns
+  for (const c of soloColumns.slice(1)) await call('column:delete', { id: c.id })
+  try {
+    await call('column:delete', { id: soloColumns[0].id })
+  } catch {
+    refusedLastColumn = true
+  }
+  ok('a board keeps at least one column', refusedLastColumn)
+  await call('project:delete', { id: soloProject.id })
+
+  const newMeeting = await call('meeting:save', {
+    projectId: checkout.id,
+    title: 'Verification stand-up',
+    attendeeIds: detail.cast.slice(0, 2).map((c: any) => c.personId)
+  })
+  ok('a new meeting records who was there', newMeeting.attendees.length === 2,
+     newMeeting.attendees.map((a: any) => a.name).join(', '))
+  await call('meeting:delete', { id: newMeeting.id })
+  ok('meetings can be removed',
+     (await call('project:get', { id: checkout.id })).meetings.length === 2)
+
+  const created = await call('task:save', { projectId: checkout.id, title: 'Lands in the first column' })
+  ok('a new task lands in the first column', created.columnId === detail.columns[0].id)
+
+  const hits = await call('search:query', { workspaceId: dayJob, q: 'tax' })
+  ok('search finds across types', hits.length >= 2, hits.map((h: any) => `${h.kind}:${h.title}`).join(' | '))
+  ok('search finds people', (await call('search:query', { workspaceId: dayJob, q: 'Priya' }))
+     .some((h: any) => h.kind === 'person'))
+  ok('search cannot reach another workspace',
+     (await call('search:query', { workspaceId: dayJob, q: 'Lena' })).length === 0 &&
+     (await call('search:query', { workspaceId: consultancy, q: 'Lena' })).length > 0)
+
+  const dayJobPeople = await call('person:list', { workspaceId: dayJob })
+  ok('people are fenced to their workspace',
+     dayJobPeople.length === 6 &&
+     (await call('person:list', { workspaceId: own })).length === 3 &&
+     (await call('person:list', { workspaceId: consultancy })).length === 3,
+     `${dayJobPeople.length} in Day job`)
+
+  const person = dayJobPeople.find((p: any) => p.name === 'Jonas Berg')
+  const personDetail = await call('person:get', { id: person.id })
+  ok('person shows every project and role', personDetail.projects.length === 2,
+     personDetail.projects.map((p: any) => `${p.projectName}=${p.role}`).join(', '))
+
+  const reopened = await call('project:get', { id: dormant.id })
+  ok('brief survives an immediate re-open',
+     reopened.brief.changes.length === dormantDetail.brief.changes.length &&
+     reopened.brief.isReturning === dormantDetail.brief.isReturning,
+     'previous_opened_at not rolled within the same visit')
+
+  await call('project:save', { id: checkout.id, currentState: 'Rewritten by the verification run.' })
+  const restated = await call('project:get', { id: checkout.id })
+  ok('editing where-we-are logs activity',
+     restated.activity.some((a: any) => a.kind === 'state_updated'))
+  ok('where-we-are persists', restated.project.currentState === 'Rewritten by the verification run.')
+
+  const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
+  ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
+
+  const throwaway = await call('workspace:save', { name: 'Throwaway', color: '#000000' })
+  ok('a new workspace starts empty apart from you',
+     (await call('project:list', { workspaceId: throwaway.id, status: 'all' })).length === 0 &&
+     (await call('person:list', { workspaceId: throwaway.id })).length === 1 &&
+     (await call('person:list', { workspaceId: throwaway.id }))[0].isMe === true)
+  await call('project:save', { workspaceId: throwaway.id, name: 'Doomed', status: 'active' })
+  await call('person:save', { workspaceId: throwaway.id, name: 'Doomed Person' })
+  await call('workspace:delete', { id: throwaway.id })
+  const afterDelete = await call('workspace:list')
+  const dayJobPeopleAfter = await call('person:list', { workspaceId: dayJob })
+  ok('deleting a workspace takes its projects and people with it',
+     afterDelete.length === 3 && dayJobPeopleAfter.length === 6,
+     `${afterDelete.length} workspaces (${afterDelete.map((w: any) => w.name).join('/')}), ${dayJobPeopleAfter.length} day-job people`)
+
+  // --- you, as a person in every workspace
+  const profile = await call('profile:get')
+  ok('there is a profile', typeof profile.name === 'string', profile.name)
+  const renamedProfile = await call('profile:save', { name: 'Johan' })
+  ok('the profile can be renamed', renamedProfile.name === 'Johan')
+  for (const ws of [dayJob, own, consultancy]) {
+    const mine = (await call('person:list', { workspaceId: ws })).filter((p: any) => p.isMe)
+    ok(`exactly one of you exists in each workspace`, mine.length === 1 && mine[0].name === 'Johan',
+       `${mine.length} in one workspace`)
+  }
+  ok('you are listed first among people',
+     (await call('person:list', { workspaceId: dayJob }))[0].isMe === true)
+  const mePerson = (await call('person:list', { workspaceId: dayJob })).find((p: any) => p.isMe)
+  let refusedSelfDelete = false
+  try {
+    await call('person:delete', { id: mePerson.id })
+  } catch {
+    refusedSelfDelete = true
+  }
+  ok('you cannot delete yourself', refusedSelfDelete)
+
+  ok('you carry roles on a project', checkout.myRoles === 'Project manager', checkout.myRoles)
+  const mineUpdated = await call('membership:saveMine', {
+    projectId: checkout.id, role: 'Project manager, Release approver'
+  })
+  ok('and can edit them', mineUpdated.role === 'Project manager, Release approver')
+  ok('which shows up on the project card',
+     (await call('project:list', { workspaceId: dayJob }))
+       .find((p: any) => p.id === checkout.id).myRoles === 'Project manager, Release approver')
+
+  const freshProject = await call('project:save', { workspaceId: dayJob, name: 'Brand new', status: 'active' })
+  ok('a new project already has you on it',
+     (await call('project:get', { id: freshProject.id })).cast.some((c: any) => c.name === 'Johan'))
+  await call('project:delete', { id: freshProject.id })
+
+  // --- tasks can be assigned, including to yourself
+  const assigned = await call('task:save', {
+    projectId: checkout.id, title: 'Assigned to me', assigneePersonId: mePerson.id
+  })
+  ok('a task can be assigned', assigned.assigneePersonId === mePerson.id)
+  const assignedView = (await call('project:get', { id: checkout.id })).tasks
+    .find((t: any) => t.id === assigned.id)
+  ok('and the assignee comes back resolved',
+     assignedView.assigneeName === 'Johan' && assignedView.assigneeIsMe === true,
+     `${assignedView.assigneeName}, isMe=${assignedView.assigneeIsMe}`)
+  await call('task:delete', { id: assigned.id })
+
+  // --- people, roles and deadlines
+  ok('a person carries multiple roles on a project',
+     detail.cast.find((c: any) => c.name === 'Jonas Berg').role === 'Tech lead, Release approver')
+  const roleVocabulary = await call('membership:roles', { workspaceId: dayJob })
+  ok('roles used in the workspace are offered back as suggestions',
+     roleVocabulary.includes('Tech lead') && roleVocabulary.includes('Release approver') &&
+     roleVocabulary.length === new Set(roleVocabulary).size,
+     roleVocabulary.join(' | '))
+  ok('role suggestions do not leak between workspaces',
+     !(await call('membership:roles', { workspaceId: consultancy })).includes('Release approver'))
+
+  const reusable = (await call('person:list', { workspaceId: dayJob }))
+    .find((p: any) => p.name === 'Tom Lie')
+  await call('membership:save', {
+    personId: reusable.id, projectId: payments.id, role: 'QA, Release approver'
+  })
+  const payDetail = await call('project:get', { id: payments.id })
+  ok('an existing person can be reused on another project without duplicating them',
+     payDetail.cast.some((c: any) => c.personId === reusable.id) &&
+     (await call('person:list', { workspaceId: dayJob })).length === 6)
+  ok('and keeps their own identity while taking a different role there',
+     payDetail.cast.find((c: any) => c.personId === reusable.id).role === 'QA, Release approver' &&
+     detail.cast.find((c: any) => c.personId === reusable.id).role === 'QA')
+
+  ok('projects carry a deadline', checkout.deadline !== null, String(checkout.deadline))
+  ok('a near deadline shows up in health',
+     payDetail.project.health.reasons.some((r: string) => r.includes('deadline')),
+     payDetail.project.health.reasons.join('; '))
+  const cleared = await call('project:save', { id: payments.id, deadline: null })
+  ok('and can be cleared', cleared.deadline === null)
+
+  ok('people expose an avatar field everywhere they appear',
+     'avatar' in detail.cast[0] && 'avatar' in detail.meetings[0].attendees[0] &&
+     'avatar' in projects[0].castPreview[0])
+
+  // --- worklanes, configured from project settings
+  const newLane = await call('lane:save', { projectId: checkout.id, name: 'Aftercare' })
+  ok('a worklane can be added', newLane.name === 'Aftercare' && newLane.sortOrder === 3)
+  const renamed = await call('lane:save', { id: newLane.id, name: 'Support' })
+  ok('and renamed', renamed.name === 'Support')
+  const laneOrder = (await call('project:get', { id: checkout.id })).lanes
+  await call('lane:reorder', { ids: [newLane.id, ...laneOrder.filter((l: any) => l.id !== newLane.id).map((l: any) => l.id)] })
+  ok('and reordered', (await call('project:get', { id: checkout.id })).lanes[0].id === newLane.id)
+  await call('lane:delete', { id: newLane.id })
+  const afterLaneDelete = await call('project:get', { id: checkout.id })
+  ok('deleting a worklane keeps its items', afterLaneDelete.lanes.length === 3 &&
+     afterLaneDelete.tasks.length === detail.tasks.length + 1,
+     `${afterLaneDelete.lanes.length} lanes, ${afterLaneDelete.tasks.length} tasks`)
+
+  // --- archiving and deleting
+  const tooling = projects.find((p: any) => p.name === 'Internal tooling')
+  await call('project:setArchived', { id: tooling.id, archived: true })
+  const visible = await call('project:list', { workspaceId: dayJob })
+  ok('an archived project leaves the project list', !visible.some((p: any) => p.id === tooling.id),
+     visible.map((p: any) => p.name).join(', '))
+  ok('and can be listed on its own',
+     (await call('project:list', { workspaceId: dayJob, archived: true }))
+       .some((p: any) => p.id === tooling.id))
+  const archivedToday = await call('dashboard:today', { workspaceId: dayJob })
+  ok('an archived project drops out of Today',
+     ![...archivedToday.overdue, ...archivedToday.dueToday, ...archivedToday.soon]
+       .some((t: any) => t.projectName === 'Internal tooling'))
+  ok('and out of search',
+     (await call('search:query', { workspaceId: dayJob, q: 'rota' })).length === 0)
+  ok('but it still opens', (await call('project:get', { id: tooling.id })).project.name === 'Internal tooling')
+
+  await call('project:setArchived', { id: tooling.id, archived: false })
+  ok('restoring brings it back',
+     (await call('project:list', { workspaceId: dayJob })).some((p: any) => p.id === tooling.id) &&
+     (await call('search:query', { workspaceId: dayJob, q: 'rota' })).length > 0)
+
+  const archivedWorkspace = await call('workspace:setArchived', { id: own, archived: true })
+  ok('a workspace can be archived', archivedWorkspace.archivedAt !== null)
+  ok('its data is untouched while archived',
+     (await call('project:list', { workspaceId: own, status: 'all' })).length === 1)
+  ok('restoring a workspace clears the flag',
+     (await call('workspace:setArchived', { id: own, archived: false })).archivedAt === null)
+
+  const doomed = await call('project:save', { workspaceId: dayJob, name: 'Doomed project', status: 'active' })
+  await call('project:delete', { id: doomed.id })
+  ok('a project can be deleted outright',
+     !(await call('project:list', { workspaceId: dayJob, status: 'all' })).some((p: any) => p.id === doomed.id))
+
+  const md = await call('settings:exportMarkdown')
+  ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
+  const json = await call('settings:exportJson')
+  ok('json export writes', typeof json.path === 'string', json.path)
+
+  // Destructive, so it runs last.
+  await call('workspace:delete', { id: consultancy })
+  ok('a deleted active workspace falls back to a real one',
+     [dayJob, own].includes((await call('settings:get')).activeWorkspaceId))
+
+  await closeDb()
+}
+
+main().catch((e) => {
+  console.error('THREW', e)
+  process.exitCode = 1
+})

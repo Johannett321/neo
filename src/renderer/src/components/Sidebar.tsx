@@ -1,0 +1,335 @@
+import { useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { NavLink, useMatch, useNavigate } from 'react-router-dom'
+import { useApi, useApiMutation } from '@/lib/api'
+import { useWorkspace, useWorkspaces } from '@/lib/workspace'
+import { Icon, type IconName } from './Icon'
+import { Mark } from './Mark'
+import { HealthDot } from './primitives'
+import { WorkspaceModal } from './WorkspaceModal'
+
+const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
+  { to: '/', label: 'Today', icon: 'today', end: true },
+  { to: '/projects', label: 'Projects', icon: 'projects' },
+  { to: '/people', label: 'People', icon: 'people' }
+]
+
+/** Quick enough to feel like a direct response, slow enough to read as movement. */
+const ENTER = { duration: 0.22, ease: [0.32, 0.72, 0, 1] } as const
+const EXIT = { duration: 0.14, ease: [0.32, 0.72, 0, 1] } as const
+
+const listVariants = {
+  hidden: {},
+  shown: { transition: { staggerChildren: 0.028, delayChildren: 0.05 } }
+}
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 5 },
+  shown: { opacity: 1, y: 0, transition: EXIT }
+}
+
+export function Sidebar(): React.JSX.Element {
+  const workspace = useWorkspace()
+  const inProject = useMatch('/projects/:id/*')
+  const projectId = inProject?.params.id
+  const reduceMotion = useReducedMotion() ?? false
+
+  return (
+    <aside
+      className="hairline flex w-[228px] shrink-0 flex-col border-r"
+      // A quiet ambient tint so it is always obvious which area you are working in.
+      style={{ backgroundColor: `color-mix(in oklch, ${workspace.color} 7%, var(--color-base-200))` }}
+    >
+      <div className="drag-region h-[52px] shrink-0" />
+
+      {/*
+        Entering a project is a drill-down, so the panels move like one: the workspace
+        list leaves to the left, the project's own navigation arrives from the right,
+        and its items settle in sequence. `mode="wait"` keeps the two from overlapping
+        in a fixed-width column where they would collide.
+      */}
+      <div className="overflow-hidden">
+        <AnimatePresence mode="wait" initial={false}>
+          {projectId ? (
+            <motion.div
+              key={`project-${projectId}`}
+              initial={{ x: reduceMotion ? 0 : 26, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: reduceMotion ? 0 : 26, opacity: 0 }}
+              transition={ENTER}
+            >
+              <ProjectNav projectId={projectId} />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="workspace"
+              initial={{ x: reduceMotion ? 0 : -26, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: reduceMotion ? 0 : -26, opacity: 0 }}
+              transition={ENTER}
+            >
+              <WorkspaceNav />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <div className="flex-1" />
+      <div className="px-3 pb-2">
+        <NavLink
+          to={projectId ? `/projects/${projectId}/settings` : '/settings'}
+          className={({ isActive }) =>
+            `flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
+              isActive ? 'bg-base-100 font-medium shadow-sm' : 'text-base-content/60 hover:bg-base-content/5'
+            }`
+          }
+        >
+          <Icon name="settings" size={15} className="opacity-70" />
+          {projectId ? 'Project settings' : 'Settings'}
+        </NavLink>
+      </div>
+      <WorkspaceSwitcher />
+    </aside>
+  )
+}
+
+const linkClass = ({ isActive }: { isActive: boolean }): string =>
+  `mb-0.5 flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
+    isActive
+      ? 'bg-base-100 font-medium text-base-content shadow-sm'
+      : 'text-base-content/65 hover:bg-base-content/5'
+  }`
+
+function WorkspaceNav(): React.JSX.Element {
+  const workspace = useWorkspace()
+  const todayView = useApi('dashboard:today', { workspaceId: workspace.id })
+  const dueCount = (todayView.data?.overdue.length ?? 0) + (todayView.data?.dueToday.length ?? 0)
+
+  return (
+    <motion.nav className="px-3" variants={listVariants} initial="hidden" animate="shown">
+      {NAV.map((item) => (
+        <motion.div key={item.to} variants={itemVariants}>
+          <NavLink to={item.to} end={item.end} className={linkClass}>
+            <Icon name={item.icon} size={15} className="opacity-70" />
+            <span className="flex-1">{item.label}</span>
+            {item.to === '/' && dueCount > 0 && (
+              <span className="rounded-full bg-error/12 px-1.5 text-[10px] font-semibold tabular-nums text-error">
+                {dueCount}
+              </span>
+            )}
+          </NavLink>
+        </motion.div>
+      ))}
+    </motion.nav>
+  )
+}
+
+const PROJECT_NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
+  { to: '', label: 'Today', icon: 'today', end: true },
+  { to: 'kanban', label: 'Kanban', icon: 'lane' },
+  { to: 'meetings', label: 'Meetings', icon: 'people' },
+  { to: 'notes', label: 'Notes', icon: 'note' },
+  { to: 'decisions', label: 'Decisions', icon: 'decision' },
+  { to: 'people', label: 'People', icon: 'inbox' }
+]
+
+/**
+ * Inside a project the sidebar belongs to the project. One thing at a time is the
+ * whole point — the way out is the button at the top, not a competing list of
+ * everything else you could be doing instead.
+ */
+function ProjectNav({ projectId }: { projectId: string }): React.JSX.Element {
+  const workspace = useWorkspace()
+  const { data } = useApi('project:get', { id: projectId })
+
+  const counts: Record<string, number | undefined> = {
+    kanban: data?.tasks.filter((t) => t.status === 'open').length,
+    meetings: data?.meetings.length,
+    notes: data?.notes.length,
+    decisions: data?.decisions.length,
+    people: data?.cast.length
+  }
+
+  return (
+    <>
+      <div className="px-3">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={ENTER}>
+          <NavLink
+            to="/projects"
+            className="group mb-3 flex items-center gap-1.5 rounded-field px-2.5 py-[6px] text-[12px] text-base-content/55 transition hover:bg-base-content/5 hover:text-base-content"
+          >
+            <Icon
+              name="arrowLeft"
+              size={13}
+              className="transition-transform group-hover:-translate-x-0.5"
+            />
+            {workspace.name}
+          </NavLink>
+        </motion.div>
+
+        <motion.div
+          className="mb-3 flex items-center gap-2.5 px-1"
+          initial={{ opacity: 0, scale: 0.94 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ ...ENTER, delay: 0.03 }}
+        >
+          <Mark
+            name={data?.project.name ?? '?'}
+            color={workspace.color}
+            icon={data?.project.icon ?? null}
+            size={28}
+            rounded="rounded-[8px]"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-semibold leading-tight">
+              {data?.project.name ?? '…'}
+            </div>
+            {data && (
+              <div className="mt-0.5">
+                <HealthDot health={data.project.health} showLabel />
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+
+      <motion.nav className="px-3" variants={listVariants} initial="hidden" animate="shown">
+        {PROJECT_NAV.map((item) => (
+          <motion.div key={item.label} variants={itemVariants}>
+            <NavLink
+              to={item.to ? `/projects/${projectId}/${item.to}` : `/projects/${projectId}`}
+              end={item.end}
+              className={linkClass}
+            >
+              <Icon name={item.icon} size={15} className="opacity-70" />
+              <span className="flex-1">{item.label}</span>
+              {counts[item.to] !== undefined && counts[item.to]! > 0 && (
+                <span className="text-[11px] tabular-nums text-base-content/35">{counts[item.to]}</span>
+              )}
+            </NavLink>
+          </motion.div>
+        ))}
+      </motion.nav>
+    </>
+  )
+}
+
+function WorkspaceSwitcher(): React.JSX.Element {
+  const { workspaces, archived, active, switchTo } = useWorkspaces()
+  const restore = useApiMutation('workspace:setArchived')
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  if (!active) return <></>
+
+  const close = (): void => setOpen(false)
+
+  return (
+    <div className="hairline relative border-t p-2">
+      <button
+        className="flex w-full items-center gap-2.5 rounded-field px-2 py-2 text-left transition hover:bg-base-content/5"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Mark name={active.name} color={active.color} icon={active.icon} size={26} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium">{active.name}</span>
+          <span className="block text-[10px] text-base-content/45">
+            {workspaces.length === 1 ? 'Only workspace' : `${workspaces.length} workspaces`}
+          </span>
+        </span>
+        <Icon name={open ? 'chevronDown' : 'chevronUp'} size={13} className="text-base-content/35" />
+      </button>
+
+      {open && (
+        <>
+          {/* Click anywhere to dismiss, without stealing focus from the menu itself. */}
+          <div className="fixed inset-0 z-40" onClick={close} />
+          <div className="rise hairline absolute bottom-[calc(100%-0.25rem)] left-2 right-2 z-50 overflow-hidden rounded-box border bg-base-100 shadow-xl shadow-black/10">
+            <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-base-content/35">
+              Switch workspace
+            </div>
+            <div className="scroll-area max-h-64 pb-1">
+              {workspaces.map((item) => (
+                <button
+                  key={item.id}
+                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition hover:bg-base-200"
+                  onClick={() => {
+                    switchTo(item.id)
+                    // Never leave the user inside a project belonging to the old workspace.
+                    navigate('/')
+                    close()
+                  }}
+                >
+                  <Mark name={item.name} color={item.color} icon={item.icon} size={20} />
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{item.name}</span>
+                  {item.id === active.id && <Icon name="check" size={13} className="text-primary" />}
+                </button>
+              ))}
+            </div>
+            {archived.length > 0 && (
+              <div className="hairline border-t py-1">
+                <div className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-base-content/35">
+                  Archived
+                </div>
+                {archived.map((item) => (
+                  <div key={item.id} className="group flex items-center gap-2.5 px-3 py-1.5">
+                    <span className="opacity-45">
+                      <Mark name={item.name} color={item.color} icon={item.icon} size={20} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-base-content/45">
+                      {item.name}
+                    </span>
+                    <button
+                      className="text-[11px] text-base-content/45 opacity-0 transition group-hover:opacity-100 hover:text-base-content"
+                      onClick={async () => {
+                        await restore.mutateAsync({ id: item.id, archived: false })
+                        switchTo(item.id)
+                        navigate('/')
+                        close()
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="hairline border-t py-1">
+              <button
+                className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-base-content/70 transition hover:bg-base-200"
+                onClick={() => {
+                  navigate('/workspace')
+                  close()
+                }}
+              >
+                <Icon name="settings" size={14} className="opacity-60" />
+                Workspace settings
+              </button>
+              <button
+                className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-base-content/70 transition hover:bg-base-200"
+                onClick={() => {
+                  setCreating(true)
+                  close()
+                }}
+              >
+                <Icon name="plus" size={14} className="opacity-60" />
+                New workspace
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      <WorkspaceModal
+        open={creating}
+        onClose={() => setCreating(false)}
+        workspace={null}
+        onSaved={(created) => {
+          switchTo(created.id)
+          navigate('/')
+        }}
+      />
+    </div>
+  )
+}

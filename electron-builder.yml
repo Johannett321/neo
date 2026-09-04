@@ -1,0 +1,23 @@
+appId: com.svartdal.neo
+productName: Neo
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+# PGlite ships a WebAssembly build plus its data file; both must stay real files
+# on disk rather than being packed into the asar archive.
+asarUnpack:
+  - node_modules/@electric-sql/pglite/**
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+win:
+  target: nsis
+linux:
+  target: AppImage
+  category: Office
