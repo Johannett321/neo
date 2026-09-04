@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { NavLink, useMatch, useNavigate } from 'react-router-dom'
-import { useApi, useApiMutation } from '@/lib/api'
+import { useApi, useApiMutation, usePrefetch } from '@/lib/api'
+import { ENTER, EXIT } from '@/lib/motion'
+import { projectColor, STATUS_LABEL } from '@/lib/format'
 import { useWorkspace, useWorkspaces } from '@/lib/workspace'
 import { Icon, type IconName } from './Icon'
+import { Brand } from './Logo'
 import { Mark } from './Mark'
-import { HealthDot } from './primitives'
 import { WorkspaceModal } from './WorkspaceModal'
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
@@ -13,10 +15,6 @@ const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/projects', label: 'Projects', icon: 'projects' },
   { to: '/people', label: 'People', icon: 'people' }
 ]
-
-/** Quick enough to feel like a direct response, slow enough to read as movement. */
-const ENTER = { duration: 0.22, ease: [0.32, 0.72, 0, 1] } as const
-const EXIT = { duration: 0.14, ease: [0.32, 0.72, 0, 1] } as const
 
 const listVariants = {
   hidden: {},
@@ -40,7 +38,17 @@ export function Sidebar(): React.JSX.Element {
       // A quiet ambient tint so it is always obvious which area you are working in.
       style={{ backgroundColor: `color-mix(in oklch, ${workspace.color} 7%, var(--color-base-200))` }}
     >
-      <div className="drag-region h-[52px] shrink-0" />
+      {/*
+        The strip the traffic lights float over was empty; the app's own name belongs
+        there. It is indented past them on macOS and sits at the normal gutter
+        everywhere else, so nothing ever lands underneath a window control.
+      */}
+      <div
+        className="drag-region flex h-[52px] shrink-0 items-center"
+        style={{ paddingLeft: window.api.platform === 'darwin' ? 94 : 14 }}
+      >
+        <Brand size={17} />
+      </div>
 
       {/*
         Entering a project is a drill-down, so the panels move like one: the workspace
@@ -102,14 +110,21 @@ const linkClass = ({ isActive }: { isActive: boolean }): string =>
 
 function WorkspaceNav(): React.JSX.Element {
   const workspace = useWorkspace()
+  const prefetch = usePrefetch()
   const todayView = useApi('dashboard:today', { workspaceId: workspace.id })
   const dueCount = (todayView.data?.overdue.length ?? 0) + (todayView.data?.dueToday.length ?? 0)
+
+  /** Fetch what a link leads to while the pointer is still on its way to it. */
+  const warm = (to: string): void => {
+    if (to === '/projects') prefetch('project:list', { workspaceId: workspace.id, status: 'all', archived: false })
+    else if (to === '/people') prefetch('person:list', { workspaceId: workspace.id, query: '' })
+  }
 
   return (
     <motion.nav className="px-3" variants={listVariants} initial="hidden" animate="shown">
       {NAV.map((item) => (
         <motion.div key={item.to} variants={itemVariants}>
-          <NavLink to={item.to} end={item.end} className={linkClass}>
+          <NavLink to={item.to} end={item.end} className={linkClass} onPointerEnter={() => warm(item.to)}>
             <Icon name={item.icon} size={15} className="opacity-70" />
             <span className="flex-1">{item.label}</span>
             {item.to === '/' && dueCount > 0 && (
@@ -126,7 +141,7 @@ function WorkspaceNav(): React.JSX.Element {
 
 const PROJECT_NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '', label: 'Today', icon: 'today', end: true },
-  { to: 'kanban', label: 'Kanban', icon: 'lane' },
+  { to: 'kanban', label: 'Kanban', icon: 'board' },
   { to: 'meetings', label: 'Meetings', icon: 'people' },
   { to: 'notes', label: 'Notes', icon: 'note' },
   { to: 'decisions', label: 'Decisions', icon: 'decision' },
@@ -175,7 +190,7 @@ function ProjectNav({ projectId }: { projectId: string }): React.JSX.Element {
         >
           <Mark
             name={data?.project.name ?? '?'}
-            color={workspace.color}
+            color={data ? projectColor(data.project) : workspace.color}
             icon={data?.project.icon ?? null}
             size={28}
             rounded="rounded-[8px]"
@@ -184,9 +199,9 @@ function ProjectNav({ projectId }: { projectId: string }): React.JSX.Element {
             <div className="truncate text-[13px] font-semibold leading-tight">
               {data?.project.name ?? '…'}
             </div>
-            {data && (
-              <div className="mt-0.5">
-                <HealthDot health={data.project.health} showLabel />
+            {data && data.project.status !== 'active' && (
+              <div className="mt-0.5 text-[11px] text-base-content/45">
+                {STATUS_LABEL[data.project.status]}
               </div>
             )}
           </div>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { Health } from '@shared/types'
 import { Icon, type IconName } from './Icon'
 import { initials } from '@/lib/format'
 
@@ -10,32 +9,6 @@ export function Dot({ color, size = 7 }: { color: string; size?: number }): Reac
       className="inline-block shrink-0 rounded-full"
       style={{ width: size, height: size, backgroundColor: color }}
     />
-  )
-}
-
-const HEALTH_COLOR: Record<Health['level'], string> = {
-  good: 'bg-success',
-  watch: 'bg-warning',
-  risk: 'bg-error',
-  idle: 'bg-base-content/25'
-}
-
-const HEALTH_TEXT: Record<Health['level'], string> = {
-  good: 'On track',
-  watch: 'Watch',
-  risk: 'At risk',
-  idle: 'Idle'
-}
-
-/** The colour always carries its reasons — hover explains why it is what it is. */
-export function HealthDot({ health, showLabel = false }: { health: Health; showLabel?: boolean }): React.JSX.Element {
-  return (
-    <span className="tooltip tooltip-bottom max-w-full" data-tip={health.reasons.join(' · ')}>
-      <span className="flex items-center gap-1.5">
-        <span className={`inline-block size-2 rounded-full ${HEALTH_COLOR[health.level]}`} />
-        {showLabel && <span className="text-xs text-base-content/60">{HEALTH_TEXT[health.level]}</span>}
-      </span>
-    </span>
   )
 }
 
@@ -305,12 +278,19 @@ export function Field({
   children: ReactNode
   className?: string
 }): React.JSX.Element {
+  /*
+   * Deliberately a div and not a label. A <label> with no `for` forwards every click
+   * anywhere inside it — caption, hint, surrounding whitespace — to its first labelable
+   * descendant, and buttons are labelable. That gave every field a hitbox the size of
+   * the whole block: clicking the word "Deadline" opened the date picker, and clicking
+   * "My roles here" pressed the first role's remove button and deleted a role.
+   */
   return (
-    <label className={`block ${className}`}>
+    <div className={`block ${className}`}>
       <span className="mb-1.5 block text-xs font-medium text-base-content/65">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-[11px] text-base-content/40">{hint}</span>}
-    </label>
+    </div>
   )
 }
 

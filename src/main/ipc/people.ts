@@ -77,7 +77,7 @@ export function registerPeopleHandlers(): void {
     const isNew = !draft.id
     const row = await upsert<any>(
       'membership',
-      pick(draft as Partial<Membership>, ['personId', 'projectId', 'role', 'isEscalation', 'note']),
+      pick(draft as Partial<Membership>, ['personId', 'projectId', 'role', 'note']),
       draft.id
     )
     const joined = await q<any>(

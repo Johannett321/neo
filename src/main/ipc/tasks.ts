@@ -26,7 +26,7 @@ export function registerTaskHandlers(): void {
   handle('task:save', async (draft) => {
     const isNew = !draft.id
     const fields = pick(draft as Partial<Task>, [
-      'projectId', 'laneId', 'title', 'details', 'kind', 'status', 'columnId',
+      'projectId', 'title', 'details', 'kind', 'status', 'columnId',
       'dueDate', 'assigneePersonId', 'sortOrder'
     ])
 

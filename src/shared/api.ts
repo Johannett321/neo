@@ -1,5 +1,5 @@
 import type {
-  Activity, BoardColumn, CastMember, Decision, JournalEntry, Lane, Link, LinkKind, Membership, Note,
+  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, LinkKind, Membership, Note,
   Meeting, MeetingView, Person, PersonProject, Project, ProjectDetail, ProjectStatus,
   ProjectSummary, Profile, SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, Workspace
 } from './types'
@@ -49,9 +49,6 @@ export interface ApiMap {
   'project:setArchived': { in: { id: string; archived: boolean }; out: Project }
   'project:delete': { in: { id: string }; out: void }
 
-  'lane:save': { in: Draft<Lane>; out: Lane }
-  'lane:delete': { in: { id: string }; out: void }
-  'lane:reorder': { in: { ids: string[] }; out: void }
 
   'task:list': { in: TaskFilter | void; out: import('./types').TaskView[] }
   'task:save': { in: Draft<Task>; out: Task }

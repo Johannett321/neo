@@ -3,6 +3,7 @@ import { useApiMutation } from '@/lib/api'
 import { useWorkspaces } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
+import { Logo } from '@/components/Logo'
 import { Mark } from '@/components/Mark'
 import { Field } from '@/components/primitives'
 import { WORKSPACE_COLORS } from '@/components/WorkspaceModal'
@@ -42,6 +43,19 @@ export function Onboarding(): React.JSX.Element {
       <div className="drag-region absolute inset-x-0 top-0 h-[52px]" />
 
       <div className="rise w-full max-w-md">
+        {/* First launch is the one moment the app should say what it is. */}
+        <div className="flex items-center gap-3">
+          <Logo size={34} />
+          <div>
+            <div className="text-[17px] font-semibold leading-tight tracking-[-0.015em]">Neo</div>
+            <div className="text-[12px] text-base-content/50">
+              A command centre for several working lives
+            </div>
+          </div>
+        </div>
+        {/* A 2px rule is how this app says whose colour something is; here it is its own. */}
+        <div className="brand-gradient mb-6 mt-4 h-[2px] w-14 rounded-full" />
+
         <h1 className="text-[26px] font-semibold tracking-[-0.02em]">
           {archived.length > 0 ? 'No open workspaces' : 'Create your first workspace'}
         </h1>

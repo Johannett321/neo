@@ -5,9 +5,15 @@
 }
 
 /*
- * One accent colour for the whole app. Workspace colours are identifiers, not
- * surfaces — they appear as a dot or a 2px rule and never as a filled block,
+ * One accent colour for the whole app, and it is the app's own: the orange out of
+ * the middle of the icon's rose-to-amber gradient. Workspace colours are identifiers,
+ * not surfaces — they appear as a dot or a 2px rule and never as a filled block,
  * which is what stops a five-context app from looking like a fruit salad.
+ *
+ * Because primary is now warm, `warning` has been moved off it to a clear gold and
+ * `error` onto the icon's own rose. The three health colours have to stay legible as
+ * 8px dots sitting a few pixels from a primary button, so they are pulled apart by
+ * hue: primary 42, warning 88, error 18, success 155.
  */
 @plugin "daisyui/theme" {
   name: 'pm';
@@ -19,7 +25,7 @@
   --color-base-300: oklch(93.5% 0.004 265);
   --color-base-content: oklch(24% 0.015 265);
 
-  --color-primary: oklch(52% 0.19 268);
+  --color-primary: oklch(58% 0.176 42);
   --color-primary-content: oklch(99% 0 0);
   --color-secondary: oklch(60% 0.11 250);
   --color-secondary-content: oklch(99% 0 0);
@@ -32,9 +38,9 @@
   --color-info-content: oklch(99% 0 0);
   --color-success: oklch(58% 0.13 155);
   --color-success-content: oklch(99% 0 0);
-  --color-warning: oklch(72% 0.15 75);
-  --color-warning-content: oklch(22% 0.02 75);
-  --color-error: oklch(56% 0.19 22);
+  --color-warning: oklch(70% 0.143 88);
+  --color-warning-content: oklch(22% 0.02 88);
+  --color-error: oklch(56% 0.2 18);
   --color-error-content: oklch(99% 0 0);
 
   --radius-selector: 0.5rem;
@@ -57,8 +63,8 @@
   --color-base-300: oklch(27% 0.011 265);
   --color-base-content: oklch(92% 0.006 265);
 
-  --color-primary: oklch(70% 0.15 268);
-  --color-primary-content: oklch(16% 0.02 268);
+  --color-primary: oklch(72% 0.165 52);
+  --color-primary-content: oklch(18% 0.03 52);
   --color-secondary: oklch(70% 0.09 250);
   --color-secondary-content: oklch(16% 0.02 250);
   --color-accent: oklch(72% 0.12 190);
@@ -70,10 +76,10 @@
   --color-info-content: oklch(16% 0.02 235);
   --color-success: oklch(70% 0.13 155);
   --color-success-content: oklch(16% 0.02 155);
-  --color-warning: oklch(78% 0.14 75);
-  --color-warning-content: oklch(18% 0.02 75);
-  --color-error: oklch(66% 0.17 22);
-  --color-error-content: oklch(16% 0.02 22);
+  --color-warning: oklch(80% 0.14 90);
+  --color-warning-content: oklch(18% 0.02 90);
+  --color-error: oklch(66% 0.18 18);
+  --color-error-content: oklch(16% 0.02 18);
 
   --radius-selector: 0.5rem;
   --radius-field: 0.5rem;
@@ -85,7 +91,16 @@
   --noise: 0;
 }
 
+/*
+ * The two ends of the icon's gradient, written as the exact oklch of the sRGB the
+ * icon generator draws (#e11d48 and #f59e0b in scripts/make-icon.mjs). They do not
+ * change with the theme: the mark is the mark. Everything that carries the app's own
+ * identity — the logo, the onboarding rule — is drawn from these, and nothing else is.
+ */
 @theme {
+  --color-brand-from: oklch(58.6% 0.222 17.6);
+  --color-brand-to: oklch(76.9% 0.165 70.1);
+
   --font-sans:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
@@ -115,6 +130,18 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/*
+ * Anything you can press says so. A <button> gets the arrow cursor by default, and
+ * most of what you press in this app — the settings panes, the workspace switcher,
+ * the context and column menus, every daisyUI button — is one, so they all read as
+ * inert next to the links beside them. Disabled controls keep the arrow.
+ */
+button:not(:disabled),
+summary,
+[role='button']:not([aria-disabled='true']) {
+  cursor: pointer;
+}
+
 /* A quiet scrollbar that appears on hover rather than framing every panel. */
 .scroll-area {
   overflow-y: auto;
@@ -137,6 +164,14 @@ body {
 .scroll-area:hover::-webkit-scrollbar-thumb {
   background: var(--color-base-300);
   background-clip: content-box;
+}
+
+/*
+ * The icon's gradient, on the same diagonal the icon uses. Reserved for the app's own
+ * identity — never for a control, so it can never be mistaken for something to press.
+ */
+.brand-gradient {
+  background-image: linear-gradient(135deg, var(--color-brand-from), var(--color-brand-to));
 }
 
 /* Hairlines carry the structure, so borders never need to shout. */

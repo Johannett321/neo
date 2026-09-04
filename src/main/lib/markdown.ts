@@ -29,7 +29,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
   const [links, cast, notes, decisions, journal, tasks, meetings] = await Promise.all([
     q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order', [project.id]),
     q<any>(
-      `SELECT m.role, m.is_escalation, m.note, p.name, p.org, p.how_to_work_with
+      `SELECT m.role, m.note, p.name, p.org, p.how_to_work_with
        FROM membership m JOIN person p ON p.id = m.person_id
        WHERE m.project_id = $1 ORDER BY p.name`,
       [project.id]
@@ -60,22 +60,12 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
     `**Status:** ${project.status}`,
     project.summary ? `\n${project.summary}` : '',
     '',
-    '## Where we are',
-    project.current_state || '_Not written yet._',
-    '',
-    '## Next action',
-    project.next_action || '_None._',
-    '',
-    '## Open questions',
-    project.open_questions || '_None._',
-    '',
     '## Cast',
     cast.length
       ? cast
           .map(
             (c) =>
               `- **${c.name}** — ${c.role || 'no role set'}${c.org ? ` (${c.org})` : ''}` +
-              `${c.is_escalation ? ' · escalation path' : ''}` +
               `${c.how_to_work_with ? `\n  - ${c.how_to_work_with}` : ''}`
           )
           .join('\n')

@@ -46,24 +46,116 @@ export const markdownDir = (): string => join(dataRoot(), 'markdown')
 export const exportDir = (): string => join(dataRoot(), 'exports')
 
 /**
- * An abrupt exit — a force quit, a crash, two copies of the app opened on the same
- * folder — can leave a b-tree index inconsistent. The row data survives; only the
- * index is wrong, and rebuilding it is enough. Postgres reports this as XX002, so
- * the first launch after such an exit repairs itself instead of refusing to start.
+ * An abrupt exit — a force quit, a crash, a hot reload that kills the process
+ * mid-write, two copies of the app opened on the same folder — can leave a b-tree
+ * index inconsistent. Row data is never what is damaged; only the index is wrong,
+ * and rebuilding it is enough.
  */
-async function applySchema(client: PGlite): Promise<void> {
+async function reindexCatalog(client: PGlite): Promise<void> {
+  await client.exec('REINDEX TABLE pg_catalog.pg_constraint')
+  await client.exec('REINDEX TABLE pg_catalog.pg_trigger')
+  await client.exec('REINDEX SYSTEM postgres')
+}
+
+/** True for the family of errors that mean "the catalog cannot find itself". */
+function isCatalogDamage(error: unknown): boolean {
+  const { code, message } = (error ?? {}) as { code?: string; message?: string }
+  return code === 'XX002' || /cache lookup failed/i.test(message ?? '')
+}
+
+/**
+ * Foreign-key triggers whose constraint has gone missing.
+ *
+ * Postgres reports XX002 at startup when it *notices* damage, and the recovery above
+ * handles that. It does not always notice. A foreign key can lose its `pg_constraint`
+ * row while the triggers that enforce it survive, and the database then opens
+ * perfectly and fails the first time a row is inserted into that table:
+ * `cache lookup failed for constraint 25004`, raised from `ri_LoadConstraintInfo`
+ * inside the INSERT — and every insert into that table fails the same way afterwards.
+ *
+ * This is deliberately a sequential scan and not `pg_get_constraintdef`, which returns
+ * null for a constraint it cannot find rather than complaining, and so sails straight
+ * past exactly the damage worth catching.
+ */
+export async function orphanedForeignKeys(client: PGlite = db()): Promise<string[]> {
+  const res = await client.query<{ tbl: string }>(
+    `SELECT DISTINCT t.tgrelid::regclass::text AS tbl
+     FROM pg_trigger t
+     WHERE t.tgconstraint <> 0
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.oid = t.tgconstraint)
+     ORDER BY 1`
+  )
+  return res.rows.map((r) => r.tbl)
+}
+
+/**
+ * Delete the stranded triggers that cannot be enforcing anything, and only those.
+ *
+ * A trigger left behind by a table that was dropped points at a `tgconstrrelid` no
+ * row in `pg_class` answers to any more. There is no relationship left for it to
+ * check — the other side of it does not exist — so it is debris, and all it does is
+ * make every insert into its own table fail. Removing it is the whole repair.
+ *
+ * A trigger whose referenced table *is* still there is a different animal: that
+ * foreign key was real, and a dropped `pg_constraint` row takes the shape of the key
+ * with it — modern Postgres keeps it there and nowhere else, so nothing survives to
+ * rebuild it from. Deleting those would let writes through while quietly abandoning
+ * referential integrity, so they are reported and left alone.
+ */
+export async function clearStrandedTriggers(client: PGlite): Promise<number> {
+  const res = await client.query<{ tgname: string }>(
+    `DELETE FROM pg_trigger t
+     WHERE t.tgconstraint <> 0
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.oid = t.tgconstraint)
+       AND NOT EXISTS (SELECT 1 FROM pg_class r WHERE r.oid = t.tgconstrrelid)
+     RETURNING t.tgname`
+  )
+  return res.rows.length
+}
+
+/** Resolves true when it removed something, which the caller has to act on. */
+async function applySchema(client: PGlite): Promise<boolean> {
   try {
     await client.exec(DDL)
   } catch (error) {
-    const code = (error as { code?: string }).code
-    if (code !== 'XX002') throw error
+    if (!isCatalogDamage(error)) throw error
     console.warn('Damaged index found on startup, rebuilding it…')
-    await client.exec('REINDEX TABLE pg_catalog.pg_constraint')
-    await client.exec('REINDEX SYSTEM postgres')
+    await reindexCatalog(client)
     await client.exec(DDL)
     console.warn('Index rebuilt; your data was not affected.')
   }
   for (const statement of MIGRATIONS) await client.query(statement)
+
+  // Catch the damage that opening the database cleanly does not reveal, here at
+  // launch rather than the first time someone tries to add a task.
+  let damaged = await orphanedForeignKeys(client)
+  if (damaged.length === 0) return false
+
+  // An index that merely lost track of rows that are still there is repaired by
+  // rebuilding it, so try the cheap and complete fix first.
+  console.warn(`Foreign keys on ${damaged.join(', ')} have lost their constraint; reindexing…`)
+  await reindexCatalog(client)
+  damaged = await orphanedForeignKeys(client)
+  if (damaged.length === 0) {
+    console.warn('Rebuilt; your data was not affected.')
+    return false
+  }
+
+  const cleared = await clearStrandedTriggers(client)
+  if (cleared > 0) console.warn(`Removed ${cleared} trigger(s) left behind by a dropped table.`)
+
+  damaged = await orphanedForeignKeys(client)
+  if (damaged.length > 0) {
+    console.error(
+      `The database in ${dataRoot()} has a damaged system catalog: ${damaged.join(', ')} ` +
+        'will refuse every insert with "cache lookup failed for constraint", and the key ' +
+        'that was lost cannot be rebuilt. Every row is intact and readable — export from ' +
+        'Settings, then start a new folder.'
+    )
+  } else {
+    console.warn('Repaired; your data was not affected.')
+  }
+  return cleared > 0
 }
 
 /**
@@ -111,7 +203,20 @@ export async function initDb(): Promise<PGlite> {
   mkdirSync(dbDir(), { recursive: true })
   pg = new PGlite(dbDir())
   await pg.waitReady
-  await applySchema(pg)
+
+  if (await applySchema(pg)) {
+    /*
+     * Writing to the catalog directly does not invalidate the relation cache, and by
+     * the time the repair runs this connection has already read `task` — so it holds
+     * the old list of triggers, including the ones just deleted, and every insert
+     * would go on failing until the next launch. Reconnecting is what makes the
+     * repair take effect now rather than the second time you open the app.
+     */
+    await pg.close()
+    pg = new PGlite(dbDir())
+    await pg.waitReady
+    await applySchema(pg)
+  }
   return pg
 }
 

@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import type { Channel, Input, Output } from '@shared/api'
 
@@ -30,7 +31,7 @@ export function useApi<C extends Channel>(channel: C, ...args: Args<C, [options?
 /**
  * Every mutation invalidates everything. The whole dataset is a few thousand rows
  * held locally, and almost every write moves a derived number somewhere else —
- * health, the Today counts, the review lists. Refetching the lot is both cheaper
+ * what needs a look, the Today counts, the review lists. Refetching the lot is cheaper
  * to reason about and imperceptible in practice.
  */
 export function useApiMutation<C extends Channel>(channel: C) {
@@ -41,6 +42,28 @@ export function useApiMutation<C extends Channel>(channel: C) {
       void client.invalidateQueries()
     }
   })
+}
+
+/**
+ * Warm a screen's data before it is asked for. Every query here costs a couple of
+ * milliseconds against an in-process database, but those milliseconds land *after*
+ * the click, which is exactly where they are felt. Fetching on hover moves them
+ * into the time the pointer is already travelling, so the screen has its content
+ * on the first frame it paints instead of arriving empty and filling in.
+ */
+export function usePrefetch(): <C extends Channel>(channel: C, ...args: Args<C>) => void {
+  const client = useQueryClient()
+  return useCallback(
+    <C extends Channel>(channel: C, ...args: Args<C>) => {
+      void client.prefetchQuery({
+        queryKey: [channel, args[0] ?? null],
+        queryFn: () => window.api.invoke(channel, args[0] as Input<C>),
+        // Hovering back and forth across a list must not refire on every pass.
+        staleTime: 10_000
+      })
+    },
+    [client]
+  )
 }
 
 export const openExternal = (url: string): void => {

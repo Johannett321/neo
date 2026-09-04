@@ -1,5 +1,5 @@
 import { ipcMain, __handlers } from 'electron'
-import { initDb, closeDb } from '../src/main/db/client'
+import { initDb, closeDb, clearStrandedTriggers, orphanedForeignKeys } from '../src/main/db/client'
 import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
 import { registerTaskHandlers } from '../src/main/ipc/tasks'
@@ -9,6 +9,7 @@ import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
+import { attentionReason } from '../src/main/lib/attention'
 
 const call = async (channel: string, input?: unknown): Promise<any> => {
   const fn = (__handlers as Map<string, any>).get(channel)
@@ -36,6 +37,12 @@ async function main(): Promise<void> {
 
   ok('a fresh database has no workspaces', (await call('workspace:list')).length === 0)
 
+  // A foreign-key trigger whose constraint has gone missing makes every insert into
+  // that table fail with "cache lookup failed for constraint", and the database opens
+  // perfectly beforehand — so the check that catches it has to run on every launch.
+  ok('the schema leaves no foreign key without its constraint',
+     (await orphanedForeignKeys()).length === 0, (await orphanedForeignKeys()).join(', '))
+
   await call('settings:loadSample')
   const workspaces = await call('workspace:list')
   ok('sample data creates its own workspaces', workspaces.length === 3,
@@ -55,15 +62,40 @@ async function main(): Promise<void> {
   ok('projects carry a cast preview for their card',
      projects.every((p: any) => Array.isArray(p.castPreview)) &&
      projects.find((p: any) => p.name === 'Checkout rewrite').castPreview.length === 5)
-  ok('health is derived', projects.every((p: any) => p.health && p.health.reasons.length > 0))
+  ok('projects report why they want a look, never a status someone typed',
+     projects.every((p: any) => 'attention' in p))
 
-  const risky = projects.filter((p: any) => p.health.level === 'risk' || p.health.level === 'watch')
-  ok('some projects flagged', risky.length > 0,
-     risky.map((p: any) => `${p.name}=${p.health.level}(${p.health.reasons[0]})`).join(' | '))
+  const flagged = projects.filter((p: any) => p.attention !== null)
+  ok('some projects are asking for one', flagged.length > 0,
+     flagged.map((p: any) => `${p.name}: ${p.attention}`).join(' | '))
+  ok('an overdue project says how much is late',
+     flagged.some((p: any) => /overdue item/.test(p.attention)),
+     flagged.map((p: any) => p.attention).join(' | '))
+
+  // Only the most pressing fact is reported, so the tiers below it are exercised
+  // directly rather than by hunting for a sample project in each state.
+  const reason = (over: number, still: number, deadline: number | null = null): string | null =>
+    attentionReason({
+      status: 'active', openTasks: 2, overdueTasks: over,
+      worstOverdueDays: over > 0 ? 4 : 0, daysSinceActivity: still, deadlineDays: deadline
+    })
+  ok('overdue outranks everything else', /overdue item/.test(reason(2, 40, 1) ?? ''), String(reason(2, 40, 1)))
+  ok('a near deadline comes next', /deadline in 3 days/.test(reason(0, 40, 3) ?? ''), String(reason(0, 40, 3)))
+  ok('a project nobody has touched is standing still',
+     reason(0, 12) === 'standing still for 12 days', String(reason(0, 12)))
+  ok('a week is the line', reason(0, 6) === null && reason(0, 7) !== null)
+  ok('a project doing fine says nothing at all', reason(0, 1, 60) === null, String(reason(0, 1, 60)))
+  ok('and one paused on purpose is never dragged back',
+     attentionReason({ status: 'paused', openTasks: 9, overdueTasks: 9, worstOverdueDays: 90,
+                       daysSinceActivity: 90, deadlineDays: -5 }) === null)
 
   const idle = projects.find((p: any) => p.name === 'Internal tooling')
-  ok('stale project detected', idle && idle.health.reasons.some((r: string) => r.includes('no activity')),
-     idle?.health.reasons.join('; '))
+
+  // A colour is optional and inherited until set; it must survive a round trip.
+  const painted = await call('project:save', { id: idle.id, color: '#0ea5e9' })
+  ok('a project can be given its own colour', painted.color === '#0ea5e9', painted.color)
+  ok('and can hand it back to the workspace',
+     (await call('project:save', { id: idle.id, color: '' })).color === '')
 
   const today = await call('dashboard:today', { workspaceId: dayJob })
   ok('today: overdue populated', today.overdue.length >= 3, `${today.overdue.length} overdue`)
@@ -84,11 +116,11 @@ async function main(): Promise<void> {
   const checkout = projects.find((p: any) => p.name === 'Checkout rewrite')
   const payments = projects.find((p: any) => p.name === 'Payments migration')
   const detail = await call('project:get', { id: checkout.id })
-  ok('project detail: lanes', detail.lanes.length === 3, detail.lanes.map((l: any) => l.name).join(', '))
   ok('project detail: cast with roles', detail.cast.length === 5,
      detail.cast.map((c: any) => `${c.name}=${c.role}`).join(', '))
   ok('you sort first in a project cast', detail.cast[0].isMe === true, detail.cast[0].name)
-  ok('project detail: escalation flagged first among the rest', detail.cast[1].isEscalation === true)
+  ok('project detail: nobody carries a hand-set escalation flag any more',
+     detail.cast.every((c: any) => !('isEscalation' in c)), Object.keys(detail.cast[0]).join(', '))
   let refusedSelfRemoval = false
   try {
     await call('membership:delete', { id: detail.cast[0].id })
@@ -100,7 +132,6 @@ async function main(): Promise<void> {
   ok('project detail: decisions', detail.decisions.length === 2)
   ok('project detail: notes', detail.notes.length === 2 && detail.notes[0].isPinned === true)
   ok('project detail: journal', detail.journal.length === 2)
-  ok('project detail: tasks with lanes', detail.tasks.filter((t: any) => t.laneName).length >= 7)
   ok('project detail: meetings with attendees', detail.meetings.length === 2 &&
      detail.meetings[0].attendees.length === 3,
      detail.meetings.map((m: any) => `${m.title}(${m.attendees.length})`).join(', '))
@@ -217,14 +248,68 @@ async function main(): Promise<void> {
      reopened.brief.isReturning === dormantDetail.brief.isReturning,
      'previous_opened_at not rolled within the same visit')
 
-  await call('project:save', { id: checkout.id, currentState: 'Rewritten by the verification run.' })
-  const restated = await call('project:get', { id: checkout.id })
-  ok('editing where-we-are logs activity',
-     restated.activity.some((a: any) => a.kind === 'state_updated'))
-  ok('where-we-are persists', restated.project.currentState === 'Rewritten by the verification run.')
+  // The hand-maintained where-we-are block is gone; nothing on a project is a field
+  // you have to keep rewriting, so a save must not smuggle one back in.
+  const saved = await call('project:save', { id: checkout.id, summary: 'Rewritten by the verification run.' })
+  ok('a project carries no hand-maintained state block',
+     !('currentState' in saved) && !('nextAction' in saved) && !('openQuestions' in saved),
+     Object.keys(saved).join(', '))
+  ok('the summary is what a project says about itself',
+     saved.summary === 'Rewritten by the verification run.')
+
+  /*
+   * A killed process can leave a foreign-key trigger behind whose constraint is gone.
+   * The table then refuses every insert with "cache lookup failed for constraint N"
+   * and keeps refusing, so the repair has to tell two cases apart: debris left by a
+   * table that no longer exists, which is safe to remove, and a real foreign key that
+   * lost its row, which must not be quietly abandoned.
+   */
+  {
+    const { PGlite } = await import('@electric-sql/pglite')
+    const scratch = new PGlite()
+    await scratch.waitReady
+    await scratch.exec(`
+      CREATE TABLE parent (id int PRIMARY KEY);
+      CREATE TABLE gone (id int PRIMARY KEY);
+      CREATE TABLE child (
+        id int PRIMARY KEY,
+        parent_id int REFERENCES parent(id),
+        gone_id int REFERENCES gone(id)
+      );
+      INSERT INTO parent VALUES (1);
+    `)
+    // Debris: the constraint row goes, and the table it referenced is no longer
+    // anything pg_class answers to — which is what a dropped table leaves behind.
+    const goneFk = (await scratch.query<any>(
+      `SELECT oid FROM pg_constraint WHERE conname = 'child_gone_id_fkey'`)).rows[0].oid
+    // A dropped table takes its own two triggers with it; the two on the other side
+    // are the ones left stranded, which is exactly the shape the real damage had.
+    await scratch.query(`DELETE FROM pg_trigger WHERE tgconstraint = $1 AND tgrelid = 'gone'::regclass`, [goneFk])
+    await scratch.query(`UPDATE pg_trigger SET tgconstrrelid = 999999 WHERE tgconstraint = $1`, [goneFk])
+    await scratch.query(`DELETE FROM pg_constraint WHERE oid = $1`, [goneFk])
+    // A real one: the referenced table is alive, only the constraint row is missing.
+    await scratch.query(`DELETE FROM pg_constraint WHERE conname = 'child_parent_id_fkey'`)
+
+    const before = await orphanedForeignKeys(scratch)
+    ok('a lost foreign key is noticed', before.includes('child'), before.join(', '))
+
+    const cleared = await clearStrandedTriggers(scratch)
+    ok('only the debris is removed', cleared === 2, `${cleared} trigger(s)`)
+    ok('a foreign key whose table still exists is left alone, not silently abandoned',
+       (await orphanedForeignKeys(scratch)).includes('child'))
+
+    const survivors = await scratch.query<any>(
+      `SELECT count(*)::int AS n FROM pg_trigger t
+       WHERE t.tgrelid = 'child'::regclass AND t.tgconstraint <> 0`)
+    ok('the surviving triggers are the real key\'s', survivors.rows[0].n === 2, String(survivors.rows[0].n))
+    await scratch.close()
+  }
 
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
   ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
+  ok('the app version is reported, not stored',
+     settings.appVersion === '0.0.0-test' &&
+     (await call('settings:save', { appVersion: '9.9.9' } as any)).appVersion === '0.0.0-test')
 
   const throwaway = await call('workspace:save', { name: 'Throwaway', color: '#000000' })
   ok('a new workspace starts empty apart from you',
@@ -312,29 +397,14 @@ async function main(): Promise<void> {
      detail.cast.find((c: any) => c.personId === reusable.id).role === 'QA')
 
   ok('projects carry a deadline', checkout.deadline !== null, String(checkout.deadline))
-  ok('a near deadline shows up in health',
-     payDetail.project.health.reasons.some((r: string) => r.includes('deadline')),
-     payDetail.project.health.reasons.join('; '))
+  ok('a project with work behind it reports that, deadline or no deadline',
+     /overdue item/.test(payDetail.project.attention ?? ''), String(payDetail.project.attention))
   const cleared = await call('project:save', { id: payments.id, deadline: null })
   ok('and can be cleared', cleared.deadline === null)
 
   ok('people expose an avatar field everywhere they appear',
      'avatar' in detail.cast[0] && 'avatar' in detail.meetings[0].attendees[0] &&
      'avatar' in projects[0].castPreview[0])
-
-  // --- worklanes, configured from project settings
-  const newLane = await call('lane:save', { projectId: checkout.id, name: 'Aftercare' })
-  ok('a worklane can be added', newLane.name === 'Aftercare' && newLane.sortOrder === 3)
-  const renamed = await call('lane:save', { id: newLane.id, name: 'Support' })
-  ok('and renamed', renamed.name === 'Support')
-  const laneOrder = (await call('project:get', { id: checkout.id })).lanes
-  await call('lane:reorder', { ids: [newLane.id, ...laneOrder.filter((l: any) => l.id !== newLane.id).map((l: any) => l.id)] })
-  ok('and reordered', (await call('project:get', { id: checkout.id })).lanes[0].id === newLane.id)
-  await call('lane:delete', { id: newLane.id })
-  const afterLaneDelete = await call('project:get', { id: checkout.id })
-  ok('deleting a worklane keeps its items', afterLaneDelete.lanes.length === 3 &&
-     afterLaneDelete.tasks.length === detail.tasks.length + 1,
-     `${afterLaneDelete.lanes.length} lanes, ${afterLaneDelete.tasks.length} tasks`)
 
   // --- archiving and deleting
   const tooling = projects.find((p: any) => p.name === 'Internal tooling')

@@ -80,7 +80,6 @@ export function TaskRow({
               <span className="truncate">{task.projectName}</span>
             </span>
           )}
-          {task.laneName && <span className="truncate">{task.laneName}</span>}
           {task.kind !== 'task' && (
             <span className="flex items-center gap-1">
               <Icon name={KIND_ICON[task.kind]} size={10} />

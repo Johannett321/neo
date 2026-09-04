@@ -117,6 +117,8 @@ export function CommandPalette({
 
   return (
     <div
+      // Marks the screen as covered: Escape belongs to whatever is on top of it.
+      data-overlay
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 p-6 pt-[12vh] backdrop-blur-[2px]"
       onClick={onClose}
     >

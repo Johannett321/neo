@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import type { BoardColumn, TaskView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
@@ -72,7 +72,6 @@ function Card({
             {KIND_LABEL[task.kind]}
           </span>
         )}
-        {task.laneName && <span className="hairline rounded border px-1 py-px">{task.laneName}</span>}
         {task.assigneeName && (
           <span className="flex items-center gap-1" title={`Assigned to ${task.assigneeName}`}>
             <Avatar
@@ -101,7 +100,7 @@ function Card({
  * anything in them.
  */
 export function ProjectKanban(): React.JSX.Element {
-  const { project, columns, lanes, tasks } = useProject()
+  const { project, columns, tasks } = useProject()
   const setColumn = useApiMutation('task:setColumn')
   const saveColumn = useApiMutation('column:save')
   const deleteColumn = useApiMutation('column:delete')
@@ -111,22 +110,9 @@ export function ProjectKanban(): React.JSX.Element {
   const [over, setOver] = useState<string | null>(null)
   const [editing, setEditing] = useState<TaskView | null>(null)
   const [adding, setAdding] = useState(false)
-  const [swimlanes, setSwimlanes] = useState(false)
   const [addingColumn, setAddingColumn] = useState(false)
   const [newColumn, setNewColumn] = useState('')
   const [menuFor, setMenuFor] = useState<string | null>(null)
-
-  const groups = useMemo(() => {
-    if (!swimlanes) return [{ id: null as string | null, name: '', tasks }]
-    return [
-      ...lanes.map((lane) => ({
-        id: lane.id as string | null,
-        name: lane.name,
-        tasks: tasks.filter((t) => t.laneId === lane.id)
-      })),
-      { id: null as string | null, name: 'No worklane', tasks: tasks.filter((t) => !t.laneId) }
-    ].filter((group) => group.tasks.length > 0 || group.id !== null)
-  }, [swimlanes, lanes, tasks])
 
   const drop = (columnId: string): void => {
     if (dragging) setColumn.mutate({ id: dragging, columnId })
@@ -158,108 +144,81 @@ export function ProjectKanban(): React.JSX.Element {
           <Icon name="plus" size={13} />
           Add item
         </button>
-        {lanes.length > 0 && (
-          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-base-content/55">
-            <input
-              type="checkbox"
-              className="toggle toggle-xs"
-              checked={swimlanes}
-              onChange={(e) => setSwimlanes(e.target.checked)}
-            />
-            Split by worklane
-          </label>
-        )}
         <span className="ml-auto text-[11px] text-base-content/35">Drag a card to move it</span>
       </div>
 
-      {groups.map((group) => (
-        <div key={group.id ?? 'all'} className="mb-6">
-          {swimlanes && (
-            <div className="mb-2 flex items-center gap-2">
-              <Icon name="lane" size={12} className="text-base-content/30" />
-              <h3 className="text-[11px] font-semibold uppercase tracking-[0.09em] text-base-content/50">
-                {group.name}
-              </h3>
-              <span className="text-[11px] tabular-nums text-base-content/30">{group.tasks.length}</span>
+      {/* Columns share the width available and only scroll once they would be
+          too narrow to read, so the board grows with the window. */}
+      <div className="scroll-area -mx-1 overflow-x-auto px-1 pb-2">
+        <div className="flex min-w-full items-stretch gap-3">
+          {columns.map((column, index) => (
+            <BoardColumnView
+              key={column.id}
+              column={column}
+              index={index}
+              total={columns.length}
+              tasks={tasks.filter((t) => t.columnId === column.id)}
+              isOver={over === column.id}
+              menuOpen={menuFor === column.id}
+              onMenuToggle={() => setMenuFor((c) => (c === column.id ? null : column.id))}
+              onMenuClose={() => setMenuFor(null)}
+              onDragOver={() => setOver(column.id)}
+              onDragLeave={() => setOver(null)}
+              onDrop={() => drop(column.id)}
+              onRename={(name) => saveColumn.mutate({ id: column.id, name })}
+              onMarkDone={() => saveColumn.mutate({ id: column.id, isDone: true })}
+              onMove={(delta) => moveColumn(index, delta)}
+              onDelete={() => deleteColumn.mutate({ id: column.id })}
+              onEditTask={setEditing}
+              onDragStartTask={setDragging}
+              allColumns={columns}
+            />
+          ))}
+
+          {addingColumn ? (
+            <div className="hairline w-[180px] shrink-0 self-start rounded-box border bg-base-100 p-2">
+              <input
+                autoFocus
+                className="input input-bordered input-sm w-full"
+                placeholder="Column name…"
+                value={newColumn}
+                onChange={(e) => setNewColumn(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addColumn()
+                  if (e.key === 'Escape') {
+                    setAddingColumn(false)
+                    setNewColumn('')
+                  }
+                }}
+              />
+              <div className="mt-2 flex gap-1.5">
+                <button className="btn btn-primary btn-xs flex-1" onClick={addColumn}>
+                  Add
+                </button>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => {
+                    setAddingColumn(false)
+                    setNewColumn('')
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
+          ) : (
+            // Deliberately not column-shaped: it is an action, not a place cards go.
+            <button
+              className="tooltip tooltip-right btn btn-ghost btn-sm btn-circle shrink-0 self-start text-base-content/35 hover:text-base-content"
+              data-tip="Add column"
+              onClick={() => setAddingColumn(true)}
+              aria-label="Add column"
+            >
+              <Icon name="plus" size={15} />
+            </button>
           )}
-
-          {/* Columns share the width available and only scroll once they would be
-              too narrow to read, so the board grows with the window. */}
-          <div className="scroll-area -mx-1 overflow-x-auto px-1 pb-2">
-            <div className="flex min-w-full items-stretch gap-3">
-              {columns.map((column, index) => (
-                <BoardColumnView
-                  key={column.id}
-                  column={column}
-                  index={index}
-                  total={columns.length}
-                  tasks={group.tasks.filter((t) => t.columnId === column.id)}
-                  isOver={over === `${group.id ?? 'all'}-${column.id}`}
-                  showControls={!swimlanes}
-                  menuOpen={menuFor === column.id}
-                  onMenuToggle={() => setMenuFor((c) => (c === column.id ? null : column.id))}
-                  onMenuClose={() => setMenuFor(null)}
-                  onDragOver={() => setOver(`${group.id ?? 'all'}-${column.id}`)}
-                  onDragLeave={() => setOver(null)}
-                  onDrop={() => drop(column.id)}
-                  onRename={(name) => saveColumn.mutate({ id: column.id, name })}
-                  onMarkDone={() => saveColumn.mutate({ id: column.id, isDone: true })}
-                  onMove={(delta) => moveColumn(index, delta)}
-                  onDelete={() => deleteColumn.mutate({ id: column.id })}
-                  onEditTask={setEditing}
-                  onDragStartTask={setDragging}
-                  allColumns={columns}
-                />
-              ))}
-
-              {!swimlanes &&
-                (addingColumn ? (
-                  <div className="hairline w-[180px] shrink-0 self-start rounded-box border bg-base-100 p-2">
-                    <input
-                      autoFocus
-                      className="input input-bordered input-sm w-full"
-                      placeholder="Column name…"
-                      value={newColumn}
-                      onChange={(e) => setNewColumn(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') addColumn()
-                        if (e.key === 'Escape') {
-                          setAddingColumn(false)
-                          setNewColumn('')
-                        }
-                      }}
-                    />
-                    <div className="mt-2 flex gap-1.5">
-                      <button className="btn btn-primary btn-xs flex-1" onClick={addColumn}>
-                        Add
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        onClick={() => {
-                          setAddingColumn(false)
-                          setNewColumn('')
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  // Deliberately not column-shaped: it is an action, not a place cards go.
-                  <button
-                    className="tooltip tooltip-right btn btn-ghost btn-sm btn-circle shrink-0 self-start text-base-content/35 hover:text-base-content"
-                    data-tip="Add column"
-                    onClick={() => setAddingColumn(true)}
-                    aria-label="Add column"
-                  >
-                    <Icon name="plus" size={15} />
-                  </button>
-                ))}
-            </div>
-          </div>
         </div>
-      ))}
+      </div>
 
       <CreateDialog
         open={adding}
@@ -271,7 +230,6 @@ export function ProjectKanban(): React.JSX.Element {
         open={editing !== null}
         onClose={() => setEditing(null)}
         task={editing}
-        lanes={lanes}
         columns={columns}
       />
     </div>
@@ -284,7 +242,6 @@ function BoardColumnView({
   total,
   tasks,
   isOver,
-  showControls,
   menuOpen,
   onMenuToggle,
   onMenuClose,
@@ -304,7 +261,6 @@ function BoardColumnView({
   total: number
   tasks: TaskView[]
   isOver: boolean
-  showControls: boolean
   menuOpen: boolean
   onMenuToggle: () => void
   onMenuClose: () => void
@@ -331,7 +287,6 @@ function BoardColumnView({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       onContextMenu={(e) =>
-        showControls &&
         openMenu(e, [
           { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(true) },
           { label: 'Move left', icon: 'arrowLeft', disabled: index === 0, onSelect: () => onMove(-1) },
@@ -402,18 +357,16 @@ function BoardColumnView({
             )}
             <span className="text-[11px] tabular-nums text-base-content/30">{tasks.length}</span>
 
-            {showControls && (
-              <button
-                className={`ml-auto flex size-6 shrink-0 items-center justify-center rounded-field text-base-content/45 transition hover:bg-base-content/10 hover:text-base-content ${
-                  menuOpen ? 'bg-base-content/10 text-base-content' : ''
-                }`}
-                onClick={onMenuToggle}
-                title="Rename, reorder or delete this column"
-                aria-label={`${column.name} options`}
-              >
-                <Icon name="more" size={15} />
-              </button>
-            )}
+            <button
+              className={`ml-auto flex size-6 shrink-0 items-center justify-center rounded-field text-base-content/45 transition hover:bg-base-content/10 hover:text-base-content ${
+                menuOpen ? 'bg-base-content/10 text-base-content' : ''
+              }`}
+              onClick={onMenuToggle}
+              title="Rename, reorder or delete this column"
+              aria-label={`${column.name} options`}
+            >
+              <Icon name="more" size={15} />
+            </button>
           </>
         )}
 

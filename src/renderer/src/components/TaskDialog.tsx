@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { BoardColumn, Lane, TaskView } from '@shared/types'
+import type { BoardColumn, TaskView } from '@shared/types'
 import { useApi, useApiMutation } from '@/lib/api'
 import { differs } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
@@ -11,7 +11,6 @@ interface State {
   details: string
   assigneePersonId: string
   dueDate: string
-  laneId: string
   columnId: string
 }
 
@@ -20,7 +19,6 @@ const stateFor = (task: TaskView): State => ({
   details: task.details,
   assigneePersonId: task.assigneePersonId ?? '',
   dueDate: task.dueDate ?? '',
-  laneId: task.laneId ?? '',
   columnId: task.columnId ?? ''
 })
 
@@ -33,13 +31,11 @@ export function TaskDialog({
   open,
   onClose,
   task,
-  lanes = [],
   columns = []
 }: {
   open: boolean
   onClose: () => void
   task: TaskView | null
-  lanes?: Lane[]
   columns?: BoardColumn[]
 }): React.JSX.Element {
   const workspace = useWorkspace()
@@ -56,7 +52,6 @@ export function TaskDialog({
             details: '',
             assigneePersonId: '',
             dueDate: '',
-            laneId: '',
             columnId: ''
           } as State),
     [task]
@@ -84,7 +79,6 @@ export function TaskDialog({
       details: state.details,
       kind,
       columnId: state.columnId || null,
-      laneId: state.laneId || null,
       dueDate: state.dueDate || null,
       assigneePersonId: state.assigneePersonId || null
     })
@@ -189,23 +183,6 @@ export function TaskDialog({
           <Field label="Due date">
             <DateField value={state.dueDate} onChange={(v) => set('dueDate', v)} />
           </Field>
-
-          {lanes.length > 0 && (
-            <Field label="Worklane">
-              <select
-                className="select select-bordered w-full"
-                value={state.laneId}
-                onChange={(e) => set('laneId', e.target.value)}
-              >
-                <option value="">No lane</option>
-                {lanes.map((lane) => (
-                  <option key={lane.id} value={lane.id}>
-                    {lane.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
         </div>
 
       </div>

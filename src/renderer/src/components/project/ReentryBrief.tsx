@@ -1,4 +1,4 @@
-import type { ProjectSummary, ReentryBrief as Brief } from '@shared/types'
+import type { ReentryBrief as Brief } from '@shared/types'
 import { plural, relativeFromIso } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 
@@ -11,7 +11,6 @@ const KIND_LABEL: Record<string, string> = {
   state_updated: 'updated',
   person_added: 'people',
   link_added: 'link',
-  lane_added: 'worklane',
   project_created: 'created'
 }
 
@@ -20,13 +19,7 @@ const KIND_LABEL: Record<string, string> = {
  * it diffs what changed against your previous visit rather than reciting history
  * you already know.
  */
-export function ReentryBrief({
-  brief,
-  project
-}: {
-  brief: Brief
-  project: ProjectSummary
-}): React.JSX.Element | null {
+export function ReentryBrief({ brief }: { brief: Brief }): React.JSX.Element | null {
   if (!brief.isReturning) return null
 
   return (
@@ -47,13 +40,6 @@ export function ReentryBrief({
           </>
         ) : (
           <> and nothing has changed since.</>
-        )}{' '}
-        {project.nextAction ? (
-          <>
-            The next action you left yourself: <strong className="font-medium">{project.nextAction}</strong>
-          </>
-        ) : (
-          <span className="text-base-content/60">You did not leave yourself a next action.</span>
         )}
       </p>
 

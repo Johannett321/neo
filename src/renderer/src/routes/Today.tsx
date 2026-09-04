@@ -3,17 +3,18 @@ import { Link } from 'react-router-dom'
 import type { TaskView } from '@shared/types'
 import { useApi } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace'
-import { formatLongDate, plural } from '@/lib/format'
-import { EmptyState, HealthDot, PageHeader, Panel, Section } from '@/components/primitives'
+import { formatLongDate, plural, projectColor } from '@/lib/format'
+import { Dot, EmptyState, PageHeader, Panel, Section } from '@/components/primitives'
 import { TaskDialog } from '@/components/TaskDialog'
 import { TaskList } from '@/components/TaskRow'
+import { Pending } from '@/components/PageTransition'
 
 export function TodayPage(): React.JSX.Element {
   const workspace = useWorkspace()
   const { data, isLoading } = useApi('dashboard:today', { workspaceId: workspace.id })
   const [editing, setEditing] = useState<TaskView | null>(null)
 
-  if (isLoading || !data) return <div className="py-20 text-center text-sm text-base-content/40">Loading…</div>
+  if (isLoading || !data) return <Pending />
 
   const clear = data.overdue.length === 0 && data.dueToday.length === 0 && data.soon.length === 0
 
@@ -78,11 +79,11 @@ export function TodayPage(): React.JSX.Element {
                     className="row-hover hairline block border-b px-3 py-2.5 last:border-b-0"
                   >
                     <span className="flex items-center gap-2">
+                      <Dot color={projectColor(project)} />
                       <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-                      <HealthDot health={project.health} />
                     </span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-base-content/45">
-                      {project.health.reasons[0]}
+                    <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
+                      {project.attention}
                     </span>
                   </Link>
                 ))}

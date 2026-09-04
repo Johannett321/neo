@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
-import { HashRouter, Route, Routes, useMatch, useNavigate } from 'react-router-dom'
-import { useApi, useApiMutation } from '@/lib/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { HashRouter, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Icon } from '@/components/Icon'
-import { Kbd } from '@/components/primitives'
+import { PageTransition } from '@/components/PageTransition'
 import { Sidebar } from '@/components/Sidebar'
 import { CreateDialog } from '@/components/CreateDialog'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
 import { ContextMenuProvider } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
+import { useTheme } from '@/lib/theme'
 import { WorkspaceProvider, useWorkspaces } from '@/lib/workspace'
 import { Onboarding } from '@/routes/Onboarding'
 import { PeoplePage, PersonPage } from '@/routes/People'
@@ -23,24 +23,15 @@ import { SettingsPage } from '@/routes/Settings'
 import { WorkspaceSettings } from '@/routes/WorkspaceSettings'
 import { TodayPage } from '@/routes/Today'
 
-/** The renderer follows the stored preference; "system" defers to the OS. */
-function useTheme(): { theme: string; setTheme: (t: 'light' | 'dark' | 'system') => void } {
-  const settings = useApi('settings:get')
-  const save = useApiMutation('settings:save')
-  const theme = settings.data?.theme ?? 'system'
-
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const apply = (): void => {
-      const dark = theme === 'dark' || (theme === 'system' && media.matches)
-      document.documentElement.setAttribute('data-theme', dark ? 'pmdark' : 'pm')
-    }
-    apply()
-    media.addEventListener('change', apply)
-    return () => media.removeEventListener('change', apply)
-  }, [theme])
-
-  return { theme, setTheme: (t) => save.mutate({ theme: t }) }
+/**
+ * What counts as "a different screen" for the purposes of the transition. A project's
+ * own tabs are deliberately *not* separate screens — the heading above them does not
+ * change, so re-animating the whole page every time you move between Kanban and Notes
+ * would animate the parts that stayed still. Those tabs fade themselves in instead.
+ */
+function screenKey(pathname: string): string {
+  const project = pathname.match(/^\/projects\/([^/]+)/)
+  return project ? `project:${project[1]}` : pathname
 }
 
 function Shell(): React.JSX.Element {
@@ -49,11 +40,14 @@ function Shell(): React.JSX.Element {
   const inProject = useMatch('/projects/:id/*')
   const isBoard = Boolean(useMatch('/projects/:id/kanban'))
   const navigate = useNavigate()
+  const location = useLocation()
+  const scroller = useRef<HTMLElement>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
-  const { theme, setTheme } = useTheme()
+  // The preference lives in Settings; the shell only applies it.
+  useTheme()
 
   /**
    * The application menu drives the same actions the keyboard and buttons do, rather
@@ -89,9 +83,6 @@ function Shell(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onKeyDown])
 
-  const cycleTheme = (): void =>
-    setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system')
-
   if (!ready) return <div className="h-full bg-base-100" />
   // Nothing to show until there is a workspace to be inside.
   if (!active) return <Onboarding />
@@ -105,48 +96,44 @@ function Shell(): React.JSX.Element {
           <button
             className="hairline flex h-8 w-full max-w-md items-center gap-2 rounded-field border bg-base-200/60 px-3 text-left text-[13px] text-base-content/40 transition hover:bg-base-200"
             onClick={() => setPaletteOpen(true)}
+            title="Search everything (⌘K)"
           >
             <Icon name="search" size={14} />
             <span className="flex-1">Search everything…</span>
-            <Kbd>⌘K</Kbd>
           </button>
 
-          <div className="ml-auto flex items-center gap-1.5">
-            <button
-              className="btn btn-ghost btn-sm btn-circle text-base-content/50"
-              onClick={cycleTheme}
-              title={`Theme: ${theme}`}
-            >
-              <Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'sparkle'} size={15} />
-            </button>
-            <button className="btn btn-primary btn-sm gap-1.5" onClick={() => setQuickAddOpen(true)}>
-              <Icon name="plus" size={14} />
-              New
-              <Kbd>⌘N</Kbd>
-            </button>
-          </div>
+          <button
+            className="btn btn-primary btn-sm ml-auto gap-1.5"
+            onClick={() => setQuickAddOpen(true)}
+            title="New (⌘N)"
+          >
+            <Icon name="plus" size={14} />
+            New
+          </button>
         </header>
 
-        <main className="scroll-area flex-1">
+        <main className="scroll-area flex-1" ref={scroller}>
           {/* A board should use the whole window; reading screens stay a comfortable width. */}
           <div className={`mx-auto w-full px-8 py-8 ${isBoard ? 'max-w-none' : 'max-w-[1120px]'}`}>
-            <Routes>
-              <Route path="/" element={<TodayPage />} />
-              <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:id" element={<ProjectLayout />}>
-                <Route index element={<ProjectToday />} />
-                <Route path="kanban" element={<ProjectKanban />} />
-                <Route path="meetings" element={<ProjectMeetings />} />
-                <Route path="notes" element={<ProjectNotes />} />
-                <Route path="decisions" element={<ProjectDecisions />} />
-                <Route path="people" element={<ProjectPeople />} />
-                <Route path="settings" element={<ProjectSettings />} />
-              </Route>
-              <Route path="/people" element={<PeoplePage />} />
-              <Route path="/people/:id" element={<PersonPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/workspace" element={<WorkspaceSettings />} />
-            </Routes>
+            <PageTransition id={screenKey(location.pathname)} scrollRef={scroller}>
+              <Routes location={location}>
+                <Route path="/" element={<TodayPage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
+                <Route path="/projects/:id" element={<ProjectLayout />}>
+                  <Route index element={<ProjectToday />} />
+                  <Route path="kanban" element={<ProjectKanban />} />
+                  <Route path="meetings" element={<ProjectMeetings />} />
+                  <Route path="notes" element={<ProjectNotes />} />
+                  <Route path="decisions" element={<ProjectDecisions />} />
+                  <Route path="people" element={<ProjectPeople />} />
+                  <Route path="settings" element={<ProjectSettings />} />
+                </Route>
+                <Route path="/people" element={<PeoplePage />} />
+                <Route path="/people/:id" element={<PersonPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/workspace" element={<WorkspaceSettings />} />
+              </Routes>
+            </PageTransition>
           </div>
         </main>
       </div>

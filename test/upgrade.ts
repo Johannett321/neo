@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
-import { initDb, q } from '../src/main/db/client'
+import { initDb, orphanedForeignKeys, q } from '../src/main/db/client'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
 /**
@@ -128,9 +128,12 @@ async function main(): Promise<void> {
     [workspaceId]
   )
   const projectRow = await legacy.query<{ id: string }>('SELECT id FROM project')
+  await legacy.query(`INSERT INTO lane (project_id, name) VALUES ($1, 'An old worklane')`, [projectRow.rows[0]!.id])
+  const laneRow = await legacy.query<{ id: string }>('SELECT id FROM lane')
   await legacy.query(
-    `INSERT INTO task (project_id, title, status) VALUES ($1, 'An old finished task', 'done'), ($1, 'An old open task', 'open')`,
-    [projectRow.rows[0]!.id]
+    `INSERT INTO task (project_id, lane_id, title, status)
+     VALUES ($1, $2, 'An old finished task', 'done'), ($1, $2, 'An old open task', 'open')`,
+    [projectRow.rows[0]!.id, laneRow.rows[0]!.id]
   )
   await legacy.close()
   console.log('Built a database in the pre-workspace shape.\n')
@@ -151,6 +154,28 @@ async function main(): Promise<void> {
 
   const icons = await q<{ icon_path: string }>('SELECT icon_path FROM workspace UNION ALL SELECT icon_path FROM project')
   ok('workspaces and projects gain an icon column', icons.length === 3 && icons.every((i) => i.icon_path === ''))
+
+  const dropped = await q<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+     WHERE (table_name = 'project'
+              AND column_name IN ('current_state', 'next_action', 'open_questions'))
+        OR (table_name = 'membership' AND column_name = 'is_escalation')`)
+  ok('the retired columns are dropped on upgrade', dropped.length === 0,
+     dropped.map((d) => d.column_name).join(', '))
+
+  // Worklanes go, and the items that sat in them stay.
+  const laneRelics = await q<{ name: string }>(
+    `SELECT table_name AS name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'lane'
+      UNION ALL
+     SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'task' AND column_name = 'lane_id'`)
+  ok('worklanes are dropped on upgrade', laneRelics.length === 0, laneRelics.map((r) => r.name).join(', '))
+  ok('and their items survive it', tasks.length === 2, tasks.map((t) => t.title).join(', '))
+
+  const colors = await q<{ color: string }>('SELECT color FROM project')
+  ok('projects gain a colour column, empty so they inherit the workspace',
+     colors.length === 1 && colors[0]?.color === '', JSON.stringify(colors))
 
   const meetings = await q<{ n: number }>('SELECT count(*)::int AS n FROM meeting')
   ok('the meeting tables are created', meetings[0]?.n === 0)
@@ -183,6 +208,9 @@ async function main(): Promise<void> {
   // Running it a second time must be a no-op, not a failure.
   await initDb()
   await ensureMeEverywhere()
+  ok('dropping columns leaves every foreign key with its constraint',
+     (await orphanedForeignKeys()).length === 0, (await orphanedForeignKeys()).join(', '))
+
   ok('opening it again is safe',
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM person WHERE NOT is_me'))[0]?.n === 2 &&
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM person WHERE is_me'))[0]?.n === 2,

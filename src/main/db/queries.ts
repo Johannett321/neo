@@ -1,5 +1,5 @@
 import type { ProjectSummary, TaskView } from '@shared/types'
-import { computeHealth } from '../lib/health'
+import { attentionReason } from '../lib/attention'
 import { readIcon } from '../lib/icons'
 import { daysBetween, daysSince, q, today } from './client'
 import { mapProject, mapTaskView } from './map'
@@ -38,7 +38,7 @@ LEFT JOIN LATERAL (
     SELECT pe.name, pe.avatar_color AS color, pe.avatar_path, m.role
     FROM membership m JOIN person pe ON pe.id = m.person_id
     WHERE m.project_id = p.id
-    ORDER BY pe.is_me DESC, m.is_escalation DESC, pe.name
+    ORDER BY pe.is_me DESC, pe.name
     LIMIT 5
   ) preview
 ) cast_list ON true
@@ -48,14 +48,13 @@ LEFT JOIN LATERAL (
 async function toSummary(r: any): Promise<ProjectSummary> {
   const now = today()
   const daysSinceActivity = daysSince(r.last_activity_at) ?? 0
-  const health = computeHealth({
+  const attention = attentionReason({
     status: r.status,
     daysSinceActivity,
     openTasks: r.open_tasks,
     overdueTasks: r.overdue_tasks,
     worstOverdueDays: r.worst_overdue_date ? daysBetween(r.worst_overdue_date, now) : 0,
-    deadlineDays: r.deadline ? daysBetween(now, r.deadline) : null,
-    hasNextAction: Boolean((r.next_action ?? '').trim())
+    deadlineDays: r.deadline ? daysBetween(now, r.deadline) : null
   })
   return {
     ...mapProject(r, await readIcon(r.icon_path ?? '')),
@@ -74,7 +73,7 @@ async function toSummary(r: any): Promise<ProjectSummary> {
         avatar: await readIcon(c.avatar_path ?? '')
       }))
     ),
-    health
+    attention
   }
 }
 
@@ -96,13 +95,11 @@ export async function projectSummary(id: string): Promise<ProjectSummary | null>
 const TASK_SELECT = /* sql */ `
 SELECT t.*, p.name AS project_name, p.workspace_id,
        w.name AS workspace_name, w.color AS workspace_color,
-       l.name AS lane_name,
        asg.name AS assignee_name, asg.avatar_path AS assignee_avatar_path,
        asg.avatar_color AS assignee_color, COALESCE(asg.is_me, false) AS assignee_is_me
 FROM task t
 JOIN project p ON p.id = t.project_id
 JOIN workspace w ON w.id = p.workspace_id
-LEFT JOIN lane l ON l.id = t.lane_id
 LEFT JOIN person asg ON asg.id = t.assignee_person_id
 `
 

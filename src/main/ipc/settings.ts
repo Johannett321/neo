@@ -1,17 +1,17 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { shell } from 'electron'
+import { app, shell } from 'electron'
 import type { Settings } from '@shared/types'
 import { db, dataRoot, exportDir, exec, markdownDir, q } from '../db/client'
 import { DDL, MIGRATIONS } from '../db/ddl'
-import { THRESHOLDS } from '../lib/health'
+import { THRESHOLDS } from '../lib/attention'
 import { mirrorAll } from '../lib/markdown'
 import { loadSampleData } from '../lib/sample'
 import { handle } from './util'
 
 const DEFAULTS = {
   theme: 'system' as const,
-  staleAfterDays: THRESHOLDS.staleAfterDays,
+  staleAfterDays: THRESHOLDS.stillAfterDays,
   horizonDays: 21
 }
 
@@ -34,6 +34,7 @@ async function readSettings(): Promise<Settings> {
   return {
     dataDir: dataRoot(),
     markdownDir: markdownDir(),
+    appVersion: app.getVersion(),
     activeWorkspaceId,
     theme: (stored.theme as Settings['theme']) ?? DEFAULTS.theme,
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
@@ -42,7 +43,7 @@ async function readSettings(): Promise<Settings> {
 }
 
 const TABLES = [
-  'workspace', 'project', 'lane', 'person', 'membership',
+  'workspace', 'project', 'person', 'membership',
   'task', 'note', 'decision', 'link', 'journal_entry', 'activity'
 ] as const
 
@@ -51,7 +52,7 @@ export function registerSettingsHandlers(): void {
 
   handle('settings:save', async (patch) => {
     for (const [key, value] of Object.entries(patch)) {
-      if (key === 'dataDir' || key === 'markdownDir') continue
+      if (key === 'dataDir' || key === 'markdownDir' || key === 'appVersion') continue
       await exec(
         `INSERT INTO setting (key, value) VALUES ($1, $2)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,

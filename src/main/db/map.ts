@@ -1,5 +1,5 @@
 import type {
-  Activity, BoardColumn, CastMember, Decision, JournalEntry, Lane, Link, Membership, MeetingView, Note,
+  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, Membership, MeetingView, Note,
   Person, PersonProject, Project, ProjectStatus, Task, TaskView, Workspace
 } from '@shared/types'
 import { daysBetween, iso, isoOrNull, today } from './client'
@@ -25,12 +25,10 @@ export const mapProject = (r: Row, icon: string | null = null): Project => ({
   summary: r.summary,
   iconPath: r.icon_path ?? '',
   icon,
+  color: r.color ?? '',
   deadline: r.deadline ?? null,
   status: r.status as ProjectStatus,
   isPinned: r.is_pinned,
-  currentState: r.current_state,
-  nextAction: r.next_action,
-  openQuestions: r.open_questions,
   lastOpenedAt: isoOrNull(r.last_opened_at),
   previousOpenedAt: isoOrNull(r.previous_opened_at),
   lastActivityAt: iso(r.last_activity_at),
@@ -44,14 +42,6 @@ export const mapColumn = (r: Row): BoardColumn => ({
   name: r.name,
   sortOrder: r.sort_order,
   isDone: r.is_done,
-  createdAt: iso(r.created_at)
-})
-
-export const mapLane = (r: Row): Lane => ({
-  id: r.id,
-  projectId: r.project_id,
-  name: r.name,
-  sortOrder: r.sort_order,
   createdAt: iso(r.created_at)
 })
 
@@ -77,7 +67,6 @@ export const mapMembership = (r: Row): Membership => ({
   personId: r.person_id,
   projectId: r.project_id,
   role: r.role,
-  isEscalation: r.is_escalation,
   note: r.note,
   createdAt: iso(r.created_at)
 })
@@ -104,7 +93,6 @@ export const mapPersonProject = (r: Row): PersonProject => ({
 export const mapTask = (r: Row): Task => ({
   id: r.id,
   projectId: r.project_id,
-  laneId: r.lane_id,
   title: r.title,
   details: r.details,
   kind: r.kind,
@@ -126,7 +114,6 @@ export const mapTaskView = (r: Row): TaskView => {
     workspaceId: r.workspace_id,
     workspaceName: r.workspace_name,
     workspaceColor: r.workspace_color,
-    laneName: r.lane_name ?? null,
     assigneeName: r.assignee_name ?? null,
     assigneeAvatar: r.assignee_avatar ?? null,
     assigneeColor: r.assignee_color ?? null,

@@ -99,3 +99,11 @@ export const ROLE_SUGGESTIONS = [
 
 /** Shallow-serialising comparison, for telling a form that has been edited from one that has not. */
 export const differs = (a: unknown, b: unknown): boolean => JSON.stringify(a) !== JSON.stringify(b)
+
+/**
+ * A project shows its own colour once it has been given one, and its workspace's
+ * until then — so a workspace still reads as one family, and the projects you have
+ * deliberately marked stand out from it.
+ */
+export const projectColor = (p: { color: string; workspaceColor: string }): string =>
+  p.color || p.workspaceColor

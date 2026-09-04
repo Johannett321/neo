@@ -91,7 +91,6 @@ const ACTIVITY_ICON: Record<string, Parameters<typeof Icon>[0]['name']> = {
   state_updated: 'edit',
   person_added: 'people',
   link_added: 'link',
-  lane_added: 'lane',
   project_created: 'sparkle'
 }
 

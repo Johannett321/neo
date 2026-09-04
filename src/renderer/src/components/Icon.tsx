@@ -32,7 +32,7 @@ const PATHS = {
   edit: 'M4 20h4l10.5-10.5a2.1 2.1 0 00-3-3L5 17v3z',
   external: 'M14 4h6v6M20 4l-8.5 8.5M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4',
   folder: 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z',
-  lane: 'M4 6h16M4 12h10M4 18h13',
+  board: 'M4 6h16M4 12h10M4 18h13',
   arrowRight: 'M5 12h13M13 6l6 6-6 6',
   arrowLeft: 'M19 12H6M11 18l-6-6 6-6',
   sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z',
@@ -44,7 +44,8 @@ const PATHS = {
   sun: 'M12 4V2m0 20v-2m8-8h2M2 12h2m13.6-5.6l1.4-1.4M5 19l1.4-1.4m0-11.2L5 5m14 14l-1.4-1.4M16 12a4 4 0 11-8 0 4 4 0 018 0z',
   filter: 'M4 6h16M7 12h10M10 18h4',
   inbox: 'M4 13h4l1.5 3h5L16 13h4M4 13l2.2-7.3A2 2 0 018.1 4.3h7.8a2 2 0 011.9 1.4L20 13v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5z',
-  refresh: 'M20 11.5A8 8 0 006 6.2M4 12.5A8 8 0 0018 17.8M18 3.5v3h-3M6 20.5v-3h3'
+  refresh: 'M20 11.5A8 8 0 006 6.2M4 12.5A8 8 0 0018 17.8M18 3.5v3h-3M6 20.5v-3h3',
+  monitor: 'M4 5.5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1v-9a1 1 0 011-1zM9 20.5h6M12 16.5v4'
 } as const
 
 interface IconProps {

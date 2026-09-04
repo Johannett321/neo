@@ -25,12 +25,11 @@ export interface BoardColumn {
   createdAt: string
 }
 
-export type HealthLevel = 'good' | 'watch' | 'risk' | 'idle'
 export type LinkKind =
   | 'repo' | 'board' | 'design' | 'docs' | 'chat' | 'drive' | 'staging' | 'other'
 export type ActivityKind =
   | 'task_created' | 'task_completed' | 'note' | 'decision' | 'journal' | 'meeting'
-  | 'state_updated' | 'person_added' | 'link_added' | 'lane_added' | 'project_created'
+  | 'state_updated' | 'person_added' | 'link_added' | 'project_created'
 
 export interface Workspace {
   id: string
@@ -46,19 +45,6 @@ export interface Workspace {
   createdAt: string
 }
 
-export interface Lane {
-  id: string
-  projectId: string
-  name: string
-  sortOrder: number
-  createdAt: string
-}
-
-export interface Health {
-  level: HealthLevel
-  reasons: string[]
-}
-
 export interface Project {
   id: string
   workspaceId: string
@@ -67,13 +53,16 @@ export interface Project {
   /** Optional uploaded mark; without one the project shows its initial. */
   iconPath: string
   icon: string | null
+  /**
+   * How you pick this project out of a grid of them. Empty means it inherits the
+   * workspace's colour, so a project only carries one once you have decided it needs
+   * to stand apart from its neighbours.
+   */
+  color: string
   /** The date the whole project has to land, as YYYY-MM-DD. Separate from any task. */
   deadline: string | null
   status: ProjectStatus
   isPinned: boolean
-  currentState: string
-  nextAction: string
-  openQuestions: string
   lastOpenedAt: string | null
   previousOpenedAt: string | null
   lastActivityAt: string
@@ -91,9 +80,14 @@ export interface ProjectSummary extends Project {
   peopleCount: number
   /** Your own roles on this project, comma separated — the hat you wear here. */
   myRoles: string
-  /** A few faces for the card, escalation contacts first. */
+  /** A few faces for the card, you first. */
   castPreview: { name: string; color: string; avatar: string | null; role: string }[]
-  health: Health
+  /**
+   * The one fact that makes this project want a look — something overdue, a deadline
+   * closing in, or nothing having moved for a week — or null when there is nothing
+   * to say. Derived from the work itself; there is no status to keep up to date.
+   */
+  attention: string | null
 }
 
 export interface Person {
@@ -122,7 +116,6 @@ export interface Membership {
   personId: string
   projectId: string
   role: string
-  isEscalation: boolean
   note: string
   createdAt: string
 }
@@ -149,7 +142,6 @@ export interface PersonProject extends Membership {
 export interface Task {
   id: string
   projectId: string
-  laneId: string | null
   title: string
   details: string
   kind: TaskKind
@@ -169,7 +161,6 @@ export interface TaskView extends Task {
   workspaceId: string
   workspaceName: string
   workspaceColor: string
-  laneName: string | null
   assigneeName: string | null
   assigneeAvatar: string | null
   assigneeColor: string | null
@@ -254,7 +245,6 @@ export interface ProjectDetail {
   project: ProjectSummary
   brief: ReentryBrief
   columns: BoardColumn[]
-  lanes: Lane[]
   tasks: TaskView[]
   cast: CastMember[]
   links: Link[]
@@ -294,6 +284,8 @@ export interface Profile {
 export interface Settings {
   dataDir: string
   markdownDir: string
+  /** Read-only, like the two paths above: reported by main, never written back. */
+  appVersion: string
   /** Remembered across restarts so you land back where you were. */
   activeWorkspaceId: string
   theme: 'light' | 'dark' | 'system'

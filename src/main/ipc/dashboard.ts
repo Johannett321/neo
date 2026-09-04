@@ -43,9 +43,11 @@ export function registerDashboardHandlers(): void {
       )
     ])
 
+    // Something late outranks something merely standing still, and among equals the
+    // one nobody has touched for longest goes first.
     const needsAttention = projects
-      .filter((p) => p.health.level === 'risk' || p.health.level === 'watch')
-      .sort((a, b) => (a.health.level === 'risk' ? -1 : 1) - (b.health.level === 'risk' ? -1 : 1))
+      .filter((p) => p.attention !== null)
+      .sort((a, b) => b.overdueTasks - a.overdueTasks || a.lastActivityAt.localeCompare(b.lastActivityAt))
       .slice(0, 6)
 
     const view: TodayView = {

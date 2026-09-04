@@ -24,25 +24,15 @@ CREATE TABLE IF NOT EXISTS project (
   name               text NOT NULL,
   summary            text NOT NULL DEFAULT '',
   icon_path          text NOT NULL DEFAULT '',
+  color              text NOT NULL DEFAULT '',
   deadline           text,
   status             text NOT NULL DEFAULT 'active',
   is_pinned          boolean NOT NULL DEFAULT false,
-  current_state      text NOT NULL DEFAULT '',
-  next_action        text NOT NULL DEFAULT '',
-  open_questions     text NOT NULL DEFAULT '',
   last_opened_at     timestamptz,
   previous_opened_at timestamptz,
   last_activity_at   timestamptz NOT NULL DEFAULT now(),
   created_at         timestamptz NOT NULL DEFAULT now(),
   archived_at        timestamptz
-);
-
-CREATE TABLE IF NOT EXISTS lane (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id  uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-  name        text NOT NULL,
-  sort_order  integer NOT NULL DEFAULT 0,
-  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS board_column (
@@ -77,7 +67,6 @@ CREATE TABLE IF NOT EXISTS membership (
   person_id     uuid NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   project_id    uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   role          text NOT NULL DEFAULT '',
-  is_escalation boolean NOT NULL DEFAULT false,
   note          text NOT NULL DEFAULT '',
   created_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (person_id, project_id)
@@ -86,7 +75,6 @@ CREATE TABLE IF NOT EXISTS membership (
 CREATE TABLE IF NOT EXISTS task (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id           uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-  lane_id              uuid REFERENCES lane(id) ON DELETE SET NULL,
   title                text NOT NULL,
   details              text NOT NULL DEFAULT '',
   kind                 text NOT NULL DEFAULT 'task',
@@ -173,7 +161,6 @@ CREATE TABLE IF NOT EXISTS setting (
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
-CREATE INDEX IF NOT EXISTS idx_lane_project       ON lane (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
 CREATE INDEX IF NOT EXISTS idx_task_due           ON task (due_date) WHERE status = 'open';
@@ -203,12 +190,28 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS deadline text`,
+  `ALTER TABLE project ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT ''`,
+  // The where-we-are block is gone: a snapshot you have to keep rewriting by hand is
+  // a status field wearing a different hat, and the log already keeps the history.
+  // Dropping the columns is deliberate and irreversible — the text in them goes.
+  `ALTER TABLE project DROP COLUMN IF EXISTS current_state`,
+  `ALTER TABLE project DROP COLUMN IF EXISTS next_action`,
+  `ALTER TABLE project DROP COLUMN IF EXISTS open_questions`,
+  // "Escalation path" was one more thing to mark by hand, on every person on every
+  // project, and it never earned it — who to push on is what the role already says.
+  `ALTER TABLE membership DROP COLUMN IF EXISTS is_escalation`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS avatar_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS is_me boolean NOT NULL DEFAULT false`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES workspace(id) ON DELETE CASCADE`,
   `ALTER TABLE task ADD COLUMN IF NOT EXISTS stage text NOT NULL DEFAULT 'todo'`,
   `ALTER TABLE task ADD COLUMN IF NOT EXISTS assignee_person_id uuid REFERENCES person(id) ON DELETE SET NULL`,
   `ALTER TABLE task ADD COLUMN IF NOT EXISTS column_id uuid REFERENCES board_column(id) ON DELETE SET NULL`,
+  // Worklanes are gone. A second axis to file work along was one more thing to keep
+  // tidy by hand, and the board's columns already say where a card is. The tasks stay;
+  // only the lane they sat in goes. The column must be dropped before the table it
+  // references, and both are irreversible.
+  `ALTER TABLE task DROP COLUMN IF EXISTS lane_id`,
+  `DROP TABLE IF EXISTS lane`,
 
   // 2. Constraint changes. Guarded, because a database created after the change
   //    never had the column in the first place.

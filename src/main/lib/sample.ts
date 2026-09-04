@@ -22,10 +22,9 @@ interface ProjectSeed {
   name: string
   summary: string
   status: string
-  currentState: string
-  nextAction: string
-  openQuestions?: string
   pinned?: boolean
+  /** Left off, the project inherits its workspace's colour — which is the default. */
+  color?: string
   deadlineInDays?: number
   activityDaysAgo?: number
   openedDaysAgo?: number
@@ -34,28 +33,25 @@ interface ProjectSeed {
 async function project(seed: ProjectSeed): Promise<string> {
   const projectId = await id(
     `INSERT INTO project
-      (workspace_id, name, summary, status, is_pinned, current_state, next_action, open_questions,
-       last_activity_at, last_opened_at, previous_opened_at, deadline)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
-       now() - ($9 || ' days')::interval,
-       now() - ($10 || ' days')::interval,
-       now() - ($11 || ' days')::interval,
-       $12)`,
+      (workspace_id, name, summary, status, is_pinned,
+       last_activity_at, last_opened_at, previous_opened_at, deadline, color)
+     VALUES ($1,$2,$3,$4,$5,
+       now() - ($6 || ' days')::interval,
+       now() - ($7 || ' days')::interval,
+       now() - ($8 || ' days')::interval,
+       $9, $10)`,
     [
       seed.workspaceId, seed.name, seed.summary, seed.status, seed.pinned ?? false,
-      seed.currentState, seed.nextAction, seed.openQuestions ?? '',
       String(seed.activityDaysAgo ?? 1),
       String(seed.openedDaysAgo ?? 1),
       String((seed.openedDaysAgo ?? 1) + 7),
-      seed.deadlineInDays === undefined ? null : addDays(today(), seed.deadlineInDays)
+      seed.deadlineInDays === undefined ? null : addDays(today(), seed.deadlineInDays),
+      seed.color ?? ''
     ]
   )
   await ensureColumns(projectId)
   return projectId
 }
-
-const lane = (projectId: string, name: string, sort: number): Promise<string> =>
-  id('INSERT INTO lane (project_id, name, sort_order) VALUES ($1,$2,$3)', [projectId, name, sort])
 
 const person = (
   workspaceId: string, name: string, org: string, email: string, color: string,
@@ -67,13 +63,11 @@ const person = (
     [workspaceId, name, org, email, color, howToWorkWith, timezone]
   )
 
-const member = (
-  personId: string, projectId: string, role: string, escalation = false, note = ''
-): Promise<void> =>
+const member = (personId: string, projectId: string, role: string, note = ''): Promise<void> =>
   exec(
-    `INSERT INTO membership (person_id, project_id, role, is_escalation, note)
-     VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-    [personId, projectId, role, escalation, note]
+    `INSERT INTO membership (person_id, project_id, role, note)
+     VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+    [personId, projectId, role, note]
   )
 
 interface TaskSeed {
@@ -82,7 +76,6 @@ interface TaskSeed {
   assignee?: string
   column?: string
   kind?: string
-  laneId?: string | null
   dueInDays?: number | null
   details?: string
   done?: boolean
@@ -99,12 +92,12 @@ async function task(seed: TaskSeed): Promise<void> {
   )
   await exec(
     `INSERT INTO task
-      (project_id, lane_id, title, details, kind, status, column_id, due_date,
+      (project_id, title, details, kind, status, column_id, due_date,
        assignee_person_id, completed_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
-       CASE WHEN $10::text IS NULL THEN NULL ELSE now() - ($10 || ' days')::interval END)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
+       CASE WHEN $9::text IS NULL THEN NULL ELSE now() - ($9 || ' days')::interval END)`,
     [
-      seed.projectId, seed.laneId ?? null, seed.title, seed.details ?? '',
+      seed.projectId, seed.title, seed.details ?? '',
       kind, seed.done ? 'done' : 'open', column?.id ?? null, due,
       seed.assignee ?? null,
       seed.done ? String(seed.completedDaysAgo ?? 2) : null
@@ -194,32 +187,24 @@ export async function loadSampleData(): Promise<void> {
     workspaceId: dayJob,
     name: 'Checkout rewrite',
     summary: 'Replacing the legacy checkout with the new flow, one market at a time.',
-    status: 'active', pinned: true, activityDaysAgo: 0, openedDaysAgo: 0,
-    currentState:
-      'Norway is live at 25% traffic and holding. Sweden is blocked on the tax rules Jonas flagged. ' +
-      'Design is done except the error states.',
-    nextAction: 'Get the Swedish tax rules confirmed with Ingrid, then unblock Jonas.',
-    openQuestions: 'Do we roll Denmark and Sweden together, or keep them sequential?',
+    status: 'active', pinned: true, activityDaysAgo: 0, openedDaysAgo: 0, color: '#f43f5e',
     deadlineInDays: 38
   })
-  const cDiscovery = await lane(checkout, 'Discovery', 0)
-  const cBuild = await lane(checkout, 'Build', 1)
-  const cRollout = await lane(checkout, 'Rollout', 2)
 
   await member(await me(dayJob), checkout, 'Project manager')
-  await member(jonas, checkout, 'Tech lead, Release approver', true)
+  await member(jonas, checkout, 'Tech lead, Release approver')
   await member(priya, checkout, 'Design, Content')
-  await member(mari, checkout, 'Product owner, Stakeholder', true)
+  await member(mari, checkout, 'Product owner, Stakeholder')
   await member(tom, checkout, 'QA')
 
-  await task({ projectId: checkout, laneId: cRollout, title: 'Sign off 50% traffic ramp for Norway', dueInDays: 0, column: 'In progress' })
-  await task({ projectId: checkout, laneId: cBuild, title: 'Error-state designs', kind: 'delegated', assignee: priya, dueInDays: 3 })
-  await task({ projectId: checkout, laneId: cBuild, title: 'Swedish tax rules — confirm with finance', dueInDays: -3, column: 'In progress', details: 'Jonas is blocked until this lands.' })
-  await task({ projectId: checkout, laneId: cRollout, title: 'Prepare the leadership demo', dueInDays: 4 })
-  await task({ projectId: checkout, laneId: cBuild, title: 'Load test the new payment adapter', dueInDays: 6, column: 'In progress', assignee: jonas })
-  await task({ projectId: checkout, laneId: cDiscovery, title: 'Write up the Denmark rollout options', dueInDays: 9 })
-  await task({ projectId: checkout, laneId: cRollout, title: 'Norway 25% ramp', done: true, completedDaysAgo: 2 })
-  await task({ projectId: checkout, laneId: cBuild, title: 'Test plan review with Tom', kind: 'delegated', dueInDays: 2, assignee: tom })
+  await task({ projectId: checkout, title: 'Sign off 50% traffic ramp for Norway', dueInDays: 0, column: 'In progress' })
+  await task({ projectId: checkout, title: 'Error-state designs', kind: 'delegated', assignee: priya, dueInDays: 3 })
+  await task({ projectId: checkout, title: 'Swedish tax rules — confirm with finance', dueInDays: -3, column: 'In progress', details: 'Jonas is blocked until this lands.' })
+  await task({ projectId: checkout, title: 'Prepare the leadership demo', dueInDays: 4 })
+  await task({ projectId: checkout, title: 'Load test the new payment adapter', dueInDays: 6, column: 'In progress', assignee: jonas })
+  await task({ projectId: checkout, title: 'Write up the Denmark rollout options', dueInDays: 9 })
+  await task({ projectId: checkout, title: 'Norway 25% ramp', done: true, completedDaysAgo: 2 })
+  await task({ projectId: checkout, title: 'Test plan review with Tom', kind: 'delegated', dueInDays: 2, assignee: tom })
 
   await decision(checkout, 'Roll out market by market rather than all at once',
     'A single big-bang cutover puts every market at risk on the same night, and we cannot staff that. ' +
@@ -270,15 +255,11 @@ export async function loadSampleData(): Promise<void> {
     workspaceId: dayJob,
     name: 'Payments migration',
     summary: 'Moving off the old PSP before the contract ends.',
-    status: 'active', activityDaysAgo: 5, openedDaysAgo: 5,
-    currentState: 'Contract with the old provider ends in March and that date will not move. ' +
-      'Integration work has not started because the team is still on Checkout.',
-    nextAction: 'Book the kickoff with Ingrid and get two developers named.',
-    openQuestions: 'Who actually owns this once Checkout finishes — same team, or a new one?',
+    status: 'active', activityDaysAgo: 5, openedDaysAgo: 5, color: '#0ea5e9',
     deadlineInDays: 12
   })
   await member(await me(dayJob), payments, 'Project manager')
-  await member(ingrid, payments, 'Budget owner', true)
+  await member(ingrid, payments, 'Budget owner')
   await member(jonas, payments, 'Tech lead')
   await task({ projectId: payments, title: 'Read the old PSP termination clause', dueInDays: 4 })
   await task({ projectId: payments, title: 'Two developers named for the integration', kind: 'delegated', assignee: ingrid, dueInDays: -2 })
@@ -293,10 +274,7 @@ export async function loadSampleData(): Promise<void> {
     workspaceId: dayJob,
     name: 'Internal tooling',
     summary: 'The deploy dashboard and the on-call rota tool. I still write code on this one.',
-    status: 'active', activityDaysAgo: 26, openedDaysAgo: 26,
-    currentState: 'Deploy dashboard works. The rota tool is half-built and has been for a month — it stalls ' +
-      'every time something at Acme catches fire.',
-    nextAction: 'Finish the rota import, or admit it is not happening and delete the branch.'
+    status: 'active', activityDaysAgo: 26, openedDaysAgo: 26
   })
   await member(await me(dayJob), tooling, 'Developer')
   await member(tom, tooling, 'Occasional contributor')
@@ -311,15 +289,11 @@ export async function loadSampleData(): Promise<void> {
     workspaceId: own,
     name: 'Enthemed platform',
     summary: 'The product itself. Erik on engineering, Sofia commercial, me in between.',
-    status: 'active', pinned: true, activityDaysAgo: 1, openedDaysAgo: 1,
-    currentState: 'Three apps shipped, the fourth is in review. Revenue is small but growing every month. ' +
-      'The bottleneck is support load, not development.',
-    nextAction: 'Decide whether we hire support help or automate the top three ticket types.',
-    openQuestions: 'Do we raise, or stay bootstrapped and grow slower?'
+    status: 'active', pinned: true, activityDaysAgo: 1, openedDaysAgo: 1
   })
   await member(await me(own), platform, 'Co-founder, CEO')
-  await member(erik, platform, 'Co-founder, engineering', true)
-  await member(sofia, platform, 'Co-founder, commercial', true)
+  await member(erik, platform, 'Co-founder, engineering')
+  await member(sofia, platform, 'Co-founder, commercial')
   await task({ projectId: platform, title: 'Monthly numbers to Sofia', kind: 'delegated', dueInDays: 0 })
   await task({ projectId: platform, title: 'App review submission', dueInDays: 3 })
   await task({ projectId: platform, title: 'Board pack ready', dueInDays: 7 })
@@ -345,14 +319,10 @@ export async function loadSampleData(): Promise<void> {
     name: 'Nordic Retail — integration',
     summary: 'Building the order sync between their ERP and the webshop. Fixed-price, phase two.',
     status: 'active', activityDaysAgo: 9, openedDaysAgo: 9,
-    currentState: 'Phase one is delivered and invoiced. Phase two is scoped but not signed. Lena has been ' +
-      'sending edge cases from the legacy system that were not in the original scope.',
-    nextAction: 'Send Daniel the phase-two quote with the extra edge cases priced separately.',
-    openQuestions: 'Are the new edge cases in scope or a change request? They are a change request.',
     deadlineInDays: 54
   })
   await member(await me(consulting), nordic, 'Consultant, Developer')
-  await member(daniel, nordic, 'Client contact', true, 'Signs off the invoices. Escalate here, not to Lena.')
+  await member(daniel, nordic, 'Client contact', 'Signs off the invoices, not Lena.')
   await member(lena, nordic, 'Their developer')
   await task({ projectId: nordic, title: 'Phase-two quote to Daniel', dueInDays: 1 })
   await task({ projectId: nordic, title: 'Chase the phase-one invoice', kind: 'delegated', assignee: daniel, dueInDays: -6 })

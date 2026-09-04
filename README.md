@@ -29,32 +29,49 @@ itself with the workspace colour so it is always obvious where you are.
 The app ships with nothing in it; the first thing you do is create a workspace.
 
 A workspace has its **own settings page**, reached from the switcher — its name, colour
-and icon, what is inside it, the other workspaces, and archiving or deleting it. That is
-kept apart from **Settings** in the sidebar, which is about the app rather than any one
-area: your profile, where your data lives, and how to get it out.
+and icon, and archiving or deleting it. It says nothing about the other workspaces:
+switching between them is the switcher's job, not a settings screen's. That is kept apart from
+**Settings** in the sidebar, which is about the app rather than any one area: your
+profile, the theme, where your data lives, and how to get it out.
+
+Every settings screen — the app's, a workspace's, a project's — is the same shape: a
+short list of panes down the left, one pane at a time on the right. A long scroll of
+sections meant the thing you came to change was never where you left it; a pane is a
+place, and it stays put.
 
 ### Projects, and focus mode
 Projects are either **active or archived** — nothing finer to filter by, and the archived
 list is a quiet link beside the count rather than a row of tabs. The page is a grid of
 cards carrying what you check before opening anything:
-health, the hat you wear, its **deadline**, the one-line summary, your next action, who
-is on it, how much is open and when the next date lands.
+its **colour**, its **deadline**, the one-line summary, what it is asking for, who is on
+it, how much is open and when the next date lands. The hat you wear is on the project
+itself, not the card — you do not need reminding which role you hold in a project you
+are one click from opening.
 
-A project deadline is the date the whole thing has to land, separate from any task. It
-shows on the card — neutral while it is far off, amber inside a fortnight, red once it
-has passed — in the project header, and it counts against health from two weeks out, so
-a project drifting towards its date surfaces on Today by itself.
+A project takes its workspace's colour until you give it one of its own in project
+settings. It shows on the project's mark and in the fill of its deadline bar — never as a
+stripe down the card or a wash across it, which is decoration rather than information. It
+is there to be *found*: the project you keep coming back to is the one you should be able
+to pick out of a grid without reading a word of it.
+
+A project deadline is the date the whole thing has to land, separate from any task. On
+the card it is a **bar measuring from the day the project was created**, because a date
+on its own is arithmetic: "the 12th" tells you nothing until you work out that it is a
+fortnight away and you have already had three months. The fill carries the project's own
+colour while there is room and gives it up for amber inside a fortnight and red once the
+date has passed — for that window, urgency is worth more than identity. It also puts the
+project on Today's short list from two weeks out, so a project drifting towards its date
+surfaces by itself.
 
 Opening a project takes over the sidebar. The way out is the button at the top; while
 you are in there the navigation is **Today, Kanban, Meetings, Notes, Decisions, People**,
 with **Project settings** at the bottom, and nothing else. One thing at a time is the
 point.
 
-A project's Today is its front page — the re-entry brief, where-we-are, the links hub
-and the log. Project settings is everything *about* the project rather than in it: its
-icon, name and one-line summary, the hat you wear, its status, its worklanes, and
-archiving or deleting it. That split keeps configuration out of a header you look at
-all day.
+A project's Today is its front page — the re-entry brief, the links hub, what it is
+asking for, and the log. Project settings is everything *about* the project rather than in it: its
+icon, name and one-line summary, the hat you wear, its status, and archiving or deleting
+it. That split keeps configuration out of a header you look at all day.
 
 The swap is animated as a drill-down — the workspace list leaves to the left, the
 project's navigation arrives from the right and its items settle in sequence — so
@@ -70,12 +87,12 @@ reappears under Archived, ready to restore. Deleting is permanent and cascades �
 deleted workspace takes its projects, people, notes, meetings and decisions with it —
 so both delete buttons ask before committing.
 
-### Worklanes and the board
-Worklanes are optional structure inside a project, created and ordered in project
-settings. On the Kanban board the columns are
-workflow stages — To do, In progress, Blocked, Done — and worklanes become swimlanes
-across them when you turn that on. Ticking a task done anywhere in the app moves its
-card to Done, and dropping a card in Done ticks it: one truth, two views of it.
+### The board
+The Kanban board's columns are the workflow stages — To do, In progress, In review,
+Done — renamed, reordered and added to from the board itself. There is no second axis to
+file work along: worklanes were exactly that, and keeping them tidy cost more than the
+structure was worth. Ticking a task done anywhere in the app moves its card to Done, and
+dropping a card in Done ticks it: one truth, two views of it.
 
 ### Today
 One screen for the workspace you are in, grouped by urgency rather than by project:
@@ -115,10 +132,15 @@ before ten, is the one who actually approves budget — and a reverse view showi
 project they touch and their role in each.
 
 ### Re-entry
-Every project has a **Where we are / Next action / Open questions** block: a snapshot,
-deliberately overwritten, not a log. When you have genuinely been away, the project
-opens with a brief — how long since your last visit, what changed while you were gone,
-and the next action you left yourself.
+When you have genuinely been away, a project opens with a brief: how long since your last
+visit, and what changed while you were gone.
+
+There used to be a **Where we are / Next action / Open questions** block above it — a
+snapshot you overwrote by hand. It went, along with its columns, for the same reason the
+health level did: it was three fields to maintain, it went stale exactly when you needed
+it most (after a long absence), and everything it held is already recorded. The log keeps
+what happened, the items keep what is left, and *"needs a look"* works out what is
+pressing without being told.
 
 Two timestamps make this work, both maintained automatically: `last_opened_at` (you
 looked) and `last_activity_at` (something actually changed). Re-opening within thirty
@@ -147,11 +169,21 @@ Anything destructive opens a dialog that says what is about to happen and what i
 take with it, rather than a button that quietly turns into "Sure?". It works from inside
 other dialogs, and Escape or a click outside cancels.
 
-### Derived health
-Never self-reported. A status you have to remember to update is always wrong. Health is
-computed from overdue items and how overdue, a deadline approaching with open work under
-it, and active projects that have gone quiet for three weeks. The badge always explains itself: *"At risk — 3 overdue tasks, oldest 9
-days past due."* Thresholds live in one place, `src/main/lib/health.ts`.
+### Needs a look
+Never self-reported. A status you have to remember to update is always wrong, so Today
+works out for itself which projects are asking for attention and says why in plain words:
+*"2 overdue items, oldest 9 days past due"*, *"deadline in 3 days with 4 items still
+open"*, *"standing still for 12 days"*.
+
+Only the most pressing fact is shown, because a list of six projects each with three
+caveats is not a short list. A project that is paused, dormant or done is in that state
+on purpose and never gets dragged back into view. Thresholds live in one place,
+`src/main/lib/attention.ts`.
+
+This used to be a coloured health dot on every project surface — green, amber, red, with
+the explanation hidden behind a tooltip. The colour was a thing you had to learn to read,
+and it competed with the workspace colours for meaning; the reason itself turned out to be
+the only part worth showing. Colour on a project now means identity, nothing more.
 
 ### Capturing something
 `⌘N` opens one dialog for the four things worth capturing in a hurry — a **task**, a
@@ -205,7 +237,7 @@ Nothing leaves the machine. Back it up by copying the folder.
 Outlook integration is deliberately absent: the calendar is behind a corporate tenant
 and was not available through the local macOS Calendar store either. Rather than fight
 an AD policy, the **commitment** item type covers it — a date with no work attached, like
-a demo or a board meeting — and it flows through Today, Timeline and health exactly as a
+a demo or a board meeting — and it flows through Today and the Timeline exactly as a
 calendar event would. If access ever becomes possible, it drops in behind the same
 `commitment` shape without disturbing anything else.
 
@@ -243,9 +275,10 @@ npm run verify:upgrade  # open a database written by an older version
 ```
 
 On first launch the app asks you to create a workspace. If you would rather look around
-first, **load the sample data** — from that screen or from Settings — for a realistic set
-of three workspaces with projects, people, meetings and history. **Settings → Delete
-everything** clears it again.
+first, **load the sample data** from that screen for a realistic set of three workspaces
+with projects, people, meetings and history. Settings has no reset button: emptying the
+database is a thing you do to the data folder, not something to leave a click away from
+your own work.
 
 ### The menu, and shortcuts
 
@@ -264,7 +297,7 @@ drive the same actions the buttons and keyboard do rather than a parallel set of
 | `⌘,` | Settings |
 | `⌘⇧O` | Reveal the data folder |
 | `⌘↵` | Save and close a dialog |
-| `Esc` | Close a dialog |
+| `Esc` | Close a dialog, or leave a settings screen |
 
 ## How it is built
 
@@ -313,6 +346,6 @@ current code, which is the only way that class of bug gets caught before launch.
 ### Tests
 
 `npm run verify` stubs Electron and drives the real IPC handlers end to end — sample data,
-health derivation, workspace isolation, the Today and review dashboards, the re-entry
+the attention reasons, workspace isolation, the Today and review dashboards, the re-entry
 brief, board stages, meetings, search, cascade deletes and both exports — in plain Node,
 with no window and no display.

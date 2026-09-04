@@ -44,7 +44,7 @@ workspace and quietly returning everything.
 
 **Main** (`src/main/`) owns the database, the filesystem and the shell; none of them ever
 reach the renderer. `ipc/` holds handlers grouped by domain, `lib/` the logic that is not
-a handler (health, board columns, profile, markdown mirror, activity log, sample data,
+a handler (attention reasons, board columns, profile, markdown mirror, activity log, sample data,
 icon storage), `db/` the client, schema and row mapping.
 
 **Renderer** (`src/renderer/src/`) is React 19 + TanStack Query + React Router in hash
@@ -58,10 +58,13 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - **Workspace isolation is a hard boundary.** Every scoped channel takes an explicit
   `workspaceId`; there is no implicit "all". The active workspace is ambient state in
   `lib/workspace.tsx`, persisted in settings. No screen may mix two workspaces.
-- **Health is derived, never stored.** `src/main/lib/health.ts` computes it from overdue
-  work, deadline proximity, staleness and a missing next action, and every level carries
-  the reasons that produced it. Thresholds live in one place. Do not add a status field
-  the user has to maintain by hand — that is the central product constraint.
+- **Attention is derived, never stored.** `src/main/lib/attention.ts` computes it from
+  overdue work, deadline proximity and staleness, and returns the single most pressing
+  fact in plain words — never a level, a badge or a colour. Thresholds live in one place.
+  Do not add a status field the user has to maintain by hand — that is the central product
+  constraint. (The graded health level this replaced was removed deliberately: the colour
+  had to be decoded and clashed with the workspace palette. Colour on a project now means
+  identity only.)
 - **Every mutation logs activity.** `logActivity()` inserts a row and bumps
   `last_activity_at`, which is what makes the re-entry brief possible. Handlers that
   change project content also call `mirrorProject()` to rewrite the Markdown mirror.
@@ -73,6 +76,10 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - **One right-click system.** `lib/contextMenu.tsx` — call sites describe items;
   positioning, edge-flipping, dismissal and the confirmation step for destructive actions
   are handled centrally. Do not reimplement a confirm at a call site.
+- **Settings screens are panes, not scrolls.** App, workspace and project settings all
+  render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
+  a time on the right. Add a pane rather than another section stacked below the last one,
+  and if a screen needs more than about five, the screen is doing too much.
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
   weight. Nothing is fetched at runtime; add a path rather than a dependency.
 - **Dates use `components/DateField.tsx`**, never `<input type="date">`.
@@ -104,6 +111,26 @@ identifiers, so Electron's lock does not span them), and `before-quit` deferring
 `closeDb()` resolves. If an index is damaged anyway, Postgres reports `XX002` on startup and
 `applySchema()` reindexes and carries on rather than refusing to open — row data is never
 what is damaged in that failure.
+
+Postgres does not always notice. A foreign key can lose its `pg_constraint` row while
+the triggers enforcing it survive; the table then refuses every insert with `cache lookup
+failed for constraint N` from `ri_LoadConstraintInfo`, and keeps refusing.
+`orphanedForeignKeys()` looks for exactly that on every launch. It has to be a sequential
+scan over `pg_constraint`: `pg_get_constraintdef()` returns null for a constraint it
+cannot find instead of raising, so it sails straight past the damage.
+
+The repair turns on one distinction. A stranded trigger whose `tgconstrrelid` names a
+relation `pg_class` no longer has is **debris** — the other side of the relationship is
+gone, so it cannot be enforcing anything and only breaks inserts; `clearStrandedTriggers()`
+deletes it. A stranded trigger whose referenced table still exists was a **real** key, and
+modern Postgres keeps a foreign key's shape in `pg_constraint` alone (`tgargs` is empty),
+so nothing survives to rebuild it from. Those are reported and left; deleting them would
+restore writes while quietly abandoning referential integrity. Do not.
+
+Writing to the catalog directly does not invalidate the relation cache, so `initDb()`
+reconnects after a repair — otherwise the connection keeps the trigger list it already
+read and every insert goes on failing until the next launch. That reconnect is the
+difference between the fix landing now and landing the second time the app is opened.
 
 ## macOS naming
 

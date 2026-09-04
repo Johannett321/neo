@@ -7,7 +7,7 @@ const SEARCH_SQL = /* sql */ `
 SELECT 'project' AS kind, p.id, p.id AS project_id, p.name AS title,
        w.name AS subtitle, left(p.summary, 160) AS snippet, w.color AS color, 0 AS rank
 FROM project p JOIN workspace w ON w.id = p.workspace_id
-WHERE p.workspace_id = $2 AND p.archived_at IS NULL AND (p.name ILIKE $1 OR p.summary ILIKE $1 OR p.current_state ILIKE $1)
+WHERE p.workspace_id = $2 AND p.archived_at IS NULL AND (p.name ILIKE $1 OR p.summary ILIKE $1)
 
 UNION ALL
 SELECT 'person', pe.id, NULL, pe.name, COALESCE(NULLIF(pe.org, ''), 'No organisation'),

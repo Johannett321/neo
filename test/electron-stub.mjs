@@ -11,6 +11,7 @@ const dir = process.env.PM_TEST_DIR || mkdtempSync(join(tmpdir(), 'projectmanage
 export const app = {
   isPackaged: false,
   getPath: () => dir,
+  getVersion: () => '0.0.0-test',
   setName: () => {},
   setPath: () => {},
   whenReady: async () => {}

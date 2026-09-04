@@ -14,6 +14,8 @@ export function IconPicker({
   icon,
   onChange,
   size = 52,
+  layout = 'row',
+  noun = 'icon',
   hint = 'PNG, JPG, WebP, GIF or SVG, up to 2 MB. Without one, the initial is used.'
 }: {
   name: string
@@ -21,6 +23,10 @@ export function IconPicker({
   icon: string | null
   onChange: (next: { iconPath: string; icon: string | null }) => void
   size?: number
+  /** Stacked and centred where the picture is the subject of the panel, not a field in it. */
+  layout?: 'row' | 'column'
+  /** What the buttons call the image — a person has a photo, not an icon. */
+  noun?: string
   hint?: string
 }): React.JSX.Element {
   const [error, setError] = useState('')
@@ -36,15 +42,23 @@ export function IconPicker({
     }
   }
 
+  const column = layout === 'column'
+
   return (
-    <div>
-      <div className="flex items-center gap-4">
-        <Mark name={name || '?'} color={color} icon={icon} size={size} rounded="rounded-[12px]" />
-        <div className="flex flex-col gap-1.5">
+    <div className={column ? 'text-center' : ''}>
+      <div className={`flex gap-4 ${column ? 'flex-col items-center' : 'items-center'}`}>
+        <Mark
+          name={name || '?'}
+          color={color}
+          icon={icon}
+          size={size}
+          rounded={column ? 'rounded-full' : 'rounded-[12px]'}
+        />
+        <div className={`flex flex-col gap-1.5 ${column ? 'items-center' : ''}`}>
           <div className="flex gap-1.5">
             <button type="button" className="btn btn-sm gap-1.5" onClick={() => void choose()}>
               <Icon name="folder" size={13} />
-              {icon ? 'Replace icon' : 'Upload icon'}
+              {icon ? `Replace ${noun}` : `Upload ${noun}`}
             </button>
             {icon && (
               <button
@@ -56,7 +70,9 @@ export function IconPicker({
               </button>
             )}
           </div>
-          <span className="text-[11px] leading-snug text-base-content/40">{hint}</span>
+          <span className={`text-[11px] leading-snug text-base-content/40 ${column ? 'max-w-[16rem]' : ''}`}>
+            {hint}
+          </span>
         </div>
       </div>
       {error && <p className="mt-2 text-[12px] text-error">{error}</p>}

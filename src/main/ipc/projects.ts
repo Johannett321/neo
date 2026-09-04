@@ -1,7 +1,7 @@
-import type { Lane, Project, ProjectDetail, ReentryBrief } from '@shared/types'
+import type { Project, ProjectDetail, ReentryBrief } from '@shared/types'
 import { daysSince, exec, q, q1 } from '../db/client'
 import {
-  mapActivity, mapCast, mapColumn, mapDecision, mapJournal, mapLane, mapLink, mapMeeting, mapNote,
+  mapActivity, mapCast, mapColumn, mapDecision, mapJournal, mapLink, mapMeeting, mapNote,
   mapProject
 } from '../db/map'
 import { projectSummaries, projectSummary, taskViews } from '../db/queries'
@@ -97,15 +97,14 @@ export function registerProjectHandlers(): void {
     }
 
     await ensureColumns(id)
-    const [columns, lanes, tasks, cast, links, notes, meetings, decisions, journal, activity] = await Promise.all([
+    const [columns, tasks, cast, links, notes, meetings, decisions, journal, activity] = await Promise.all([
       q<any>('SELECT * FROM board_column WHERE project_id = $1 ORDER BY sort_order, created_at', [id]),
-      q<any>('SELECT * FROM lane WHERE project_id = $1 ORDER BY sort_order, created_at', [id]),
       taskViews('t.project_id = $1', [id]),
       q<any>(
         `SELECT m.*, p.name, p.org, p.email, p.avatar_color, p.avatar_path, p.is_me, p.how_to_work_with
          FROM membership m JOIN person p ON p.id = m.person_id
          WHERE m.project_id = $1
-         ORDER BY p.is_me DESC, m.is_escalation DESC, p.name`,
+         ORDER BY p.is_me DESC, p.name`,
         [id]
       ),
       q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order, label', [id]),
@@ -136,7 +135,6 @@ export function registerProjectHandlers(): void {
       project,
       brief,
       columns: columns.map(mapColumn),
-      lanes: lanes.map(mapLane),
       tasks,
       cast: await Promise.all(cast.map(async (c) => mapCast(c, await readIcon(c.avatar_path ?? '')))),
       links: links.map(mapLink),
@@ -151,8 +149,7 @@ export function registerProjectHandlers(): void {
 
   handle('project:save', async (draft) => {
     const fields = pick(draft as Partial<Project>, [
-      'workspaceId', 'name', 'summary', 'iconPath', 'deadline', 'status', 'isPinned',
-      'currentState', 'nextAction', 'openQuestions'
+      'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'isPinned'
     ])
 
     let orphan = ''
@@ -175,12 +172,6 @@ export function registerProjectHandlers(): void {
         [mePersonId, project.id]
       )
       await logActivity(project.id, 'project_created', `Project created: ${project.name}`)
-    } else if (
-      fields.currentState !== undefined ||
-      fields.nextAction !== undefined ||
-      fields.openQuestions !== undefined
-    ) {
-      await logActivity(project.id, 'state_updated', 'Updated where-we-are')
     }
     await mirrorProject(project.id)
     return project
@@ -244,28 +235,5 @@ export function registerProjectHandlers(): void {
 
   handle('column:reorder', async ({ ids }) => {
     await reorder('board_column', ids)
-  })
-
-  handle('lane:save', async (draft) => {
-    const isNew = !draft.id
-    if (isNew && draft.sortOrder === undefined && draft.projectId) {
-      const max = await q1<{ n: number }>(
-        'SELECT COALESCE(max(sort_order), -1) + 1 AS n FROM lane WHERE project_id = $1',
-        [draft.projectId]
-      )
-      draft.sortOrder = max?.n ?? 0
-    }
-    const row = await upsert<any>('lane', pick(draft as Partial<Lane>, ['projectId', 'name', 'sortOrder']), draft.id)
-    const lane = mapLane(row)
-    if (isNew) await logActivity(lane.projectId, 'lane_added', `Worklane added: ${lane.name}`)
-    return lane
-  })
-
-  handle('lane:delete', async ({ id }) => {
-    await exec('DELETE FROM lane WHERE id = $1', [id])
-  })
-
-  handle('lane:reorder', async ({ ids }) => {
-    await reorder('lane', ids)
   })
 }

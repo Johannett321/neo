@@ -6,7 +6,6 @@ import { RoleBadges } from '@/components/RoleInput'
 import { JournalTab } from '@/components/project/JournalTab'
 import { LinksPanel } from '@/components/project/LinksPanel'
 import { ReentryBrief } from '@/components/project/ReentryBrief'
-import { WhereWeAre } from '@/components/project/WhereWeAre'
 import { useProject } from './ProjectLayout'
 
 /**
@@ -15,18 +14,15 @@ import { useProject } from './ProjectLayout'
  * read for thirty seconds after three weeks away.
  */
 export function ProjectToday(): React.JSX.Element {
-  const { project, brief, cast, links, journal, activity, tasks, meetings, decisions } = useProject()
-  const openTasks = tasks.filter((t) => t.status === 'open')
-  const nextMeeting = meetings[0]
+  const { project, brief, cast, links, journal, activity, meetings } = useProject()
+  const lastMeeting = meetings[0]
 
   return (
     <>
-      <ReentryBrief brief={brief} project={project} />
+      <ReentryBrief brief={brief} />
 
       <div className="grid gap-x-10 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0">
-          <WhereWeAre project={project} />
-
           <Section title="Log" count={journal.length}>
             <JournalTab projectId={project.id} entries={journal.slice(0, 8)} />
           </Section>
@@ -40,11 +36,9 @@ export function ProjectToday(): React.JSX.Element {
               <dl className="space-y-2 text-[12px]">
                 {[
                   ['Deadline', project.deadline ? formatDate(project.deadline) : 'None set'],
-                  ['Open items', String(openTasks.length)],
                   ['Overdue', project.overdueTasks > 0 ? `${project.overdueTasks}` : 'None'],
                   ['Next due', project.nextDue ? formatDate(project.nextDue) : 'Nothing dated'],
-                  ['Decisions logged', String(decisions.length)],
-                  ['Last meeting', nextMeeting ? formatDate(nextMeeting.occurredOn) : 'None recorded'],
+                  ['Last meeting', lastMeeting ? formatDate(lastMeeting.occurredOn) : 'None recorded'],
                   ['Last opened', relativeFromIso(project.previousOpenedAt ?? project.lastOpenedAt)]
                 ].map(([label, value]) => (
                   <div key={label} className="flex justify-between gap-3">
@@ -97,11 +91,6 @@ export function ProjectToday(): React.JSX.Element {
                       <span className="block truncate text-[12px]">{member.name}</span>
                       <RoleBadges value={member.role} className="mt-0.5" />
                     </span>
-                    {member.isEscalation && (
-                      <span className="tooltip text-warning" data-tip="Escalation path">
-                        <Icon name="flag" size={11} />
-                      </span>
-                    )}
                   </Link>
                 ))}
                 {cast.length > 6 && (

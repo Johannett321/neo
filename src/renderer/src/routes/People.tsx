@@ -8,6 +8,7 @@ import { differs, plural, STATUS_LABEL } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
 import { RoleBadges } from '@/components/RoleInput'
+import { Pending } from '@/components/PageTransition'
 import {
   Avatar, ConfirmButton, EmptyState, Field, Modal, PageHeader, Panel, Section
 } from '@/components/primitives'
@@ -131,9 +132,7 @@ export function PersonPage(): React.JSX.Element {
   const { data, isLoading } = useApi('person:get', { id })
   const remove = useApiMutation('person:delete')
 
-  if (isLoading || !data) {
-    return <div className="py-20 text-center text-sm text-base-content/40">Loading…</div>
-  }
+  if (isLoading || !data) return <Pending />
 
   const { person, projects } = data
 
@@ -194,11 +193,6 @@ export function PersonPage(): React.JSX.Element {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[13px] font-medium">{membership.projectName}</span>
-                        {membership.isEscalation && (
-                          <span className="tooltip text-warning" data-tip="Escalation path here">
-                            <Icon name="flag" size={11} />
-                          </span>
-                        )}
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                         <RoleBadges value={membership.role} />

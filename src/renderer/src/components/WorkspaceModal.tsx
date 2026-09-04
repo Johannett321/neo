@@ -9,6 +9,9 @@ export const WORKSPACE_COLORS = [
   '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#0ea5e9', '#8b5cf6', '#14b8a6', '#f43f5e'
 ]
 
+/** Projects choose from the same palette; an empty choice means "use the workspace's". */
+export const PROJECT_COLORS = WORKSPACE_COLORS
+
 export function WorkspaceModal({
   open,
   onClose,

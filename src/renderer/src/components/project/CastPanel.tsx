@@ -90,14 +90,6 @@ export function CastPanel({
                       You
                     </span>
                   )}
-                  {member.isEscalation && (
-                    <span
-                      className="tooltip tooltip-right text-warning"
-                      data-tip="Escalation path — go here when it is stuck"
-                    >
-                      <Icon name="flag" size={11} />
-                    </span>
-                  )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                   {member.isMe && !member.role.trim() ? (
@@ -159,7 +151,6 @@ export function CastPanel({
 
 interface Form {
   roles: string[]
-  isEscalation: boolean
   note: string
 }
 
@@ -190,12 +181,11 @@ function CastMemberModal({
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState<Person | null>(null)
   const [creating, setCreating] = useState<{ name: string; org: string; avatarPath: string; avatar: string | null } | null>(null)
-  const [form, setForm] = useState<Form>({ roles: [], isEscalation: false, note: '' })
+  const [form, setForm] = useState<Form>({ roles: [], note: '' })
 
   const original: Form = useMemo(
     () => ({
       roles: parseRoles(member?.role ?? ''),
-      isEscalation: member?.isEscalation ?? false,
       note: member?.note ?? ''
     }),
     [member]
@@ -245,7 +235,6 @@ function CastMemberModal({
       personId,
       projectId,
       role: formatRoles(form.roles),
-      isEscalation: form.isEscalation,
       note: form.note
     })
     onClose()
@@ -420,23 +409,6 @@ function CastMemberModal({
             onChange={(roles) => setForm((f) => ({ ...f, roles }))}
           />
         </Field>
-
-        <label className="flex cursor-pointer items-center gap-2.5 text-sm">
-          <input
-            type="checkbox"
-            className="checkbox checkbox-sm"
-            checked={form.isEscalation}
-            onChange={(e) => setForm((f) => ({ ...f, isEscalation: e.target.checked }))}
-          />
-          <span>
-            Escalation path
-            <span className="block text-[11px] text-base-content/45">
-              {member?.isMe
-                ? 'You are where this escalates to.'
-                : 'The person you go to when this project is stuck.'}
-            </span>
-          </span>
-        </label>
 
         <Field label="Note" hint="Anything specific to their part in this project.">
           <input
