@@ -4,10 +4,10 @@
 
 # Neo
 
-**A personal command centre for running several working lives at once.**
+**The command centre for project managers running more projects than fit in one head.**
 
-A day job managing multiple teams, hands-on development, a company of your own, a
-consulting client — without holding all of it in your head.
+For the person leading four or five projects at once, across different teams and
+stakeholders, who is expected to know the state of every one of them on demand.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#install)
@@ -22,20 +22,43 @@ consulting client — without holding all of it in your head.
   <img src="docs/screenshots/02-today.png" width="900" alt="Today — everything overdue, due and coming up, across every project in the workspace">
 </p>
 
-It is not a replacement for Jira, Linear or Notion. Those are where work gets
-executed. This is the layer above them that answers the three questions no single
-tool does:
+Jira, Linear and Notion track **the team's work**. None of them track **yours** — the
+follow-ups you are owed, the approver you need to catch, the project nobody has touched in
+three weeks. That work lives in your head, in a notebook, and in the gap between six
+browser tabs. Neo is the layer above the delivery tools that holds it instead.
 
-1. **What is on fire today, across every context?**
-2. **Who is who on this project again?**
+It answers the three questions no single tool does:
+
+1. **What is on fire today, across every project?**
+2. **Who is who on this one again?**
 3. **Where the hell were we on this?**
 
-Everything is designed around one constraint: *it must survive neglect*. If keeping
-it accurate is work, it gets abandoned in three weeks. So capture is cheap, almost
-nothing needs manual upkeep, and every screen stays useful when the data is a month old.
+## The problems it is actually for
 
-Everything is **free and open source**, and everything stays **on your own machine** —
-no account, no server, no telemetry, no paid tier. There is nothing to sign up for.
+| The bit that hurts | What Neo does about it |
+|---|---|
+| **You lead five projects, and reloading one costs you twenty minutes.** Every context switch means opening the board, scrolling the channel and rereading last month's notes before you can say anything useful. | Opening a project starts with a **re-entry brief**: what changed since you last looked, what is overdue, what you are owed and by whom. You are back in the conversation in thirty seconds. |
+| **Status reporting is manual, and stale the day after you write it.** RAG ratings and percent-complete only stay true if you keep them true, and you do not, because it is nobody's actual job. | **Attention is derived, never entered.** Overdue work, deadline proximity and how long a project has gone untouched are computed and stated in plain words — *"1 overdue item, oldest 18 days past due"*. There is **no status field to maintain**, anywhere, on purpose. |
+| **Something is quietly rotting and you find out too late.** The loud project gets all your attention; the one nobody has mentioned in a month is the one that surprises you. | **Needs a look** ranks projects by the most pressing fact about each, and staleness counts. The quiet one that has not moved surfaces before it becomes a problem. |
+| **You delegated it three weeks ago and never followed up.** Work you have handed to someone else disappears from your view the moment you hand it over. | **Delegated items** are a first-class kind of task, with an owner and a due date, sitting on your board and in your Today list — not theirs. You are chasing from a list, not from memory. |
+| **Eight stakeholders, and you cannot remember who approves what.** Who signs off the release, who needs the one-pager first, who says no clearly and who says yes and means maybe. | Every project has a **cast**: who is on it, the roles they actually hold, and a line on how to work with them. Read it in the thirty seconds before the meeting. |
+| **"Why did we decide it that way?"** Six weeks later nobody remembers, so the settled argument gets reopened — usually by whoever lost it. | A **decision log** per project: what was decided, by whom, the reasoning, and **what was rejected**. The rejected option is the half that comes back. |
+| **Meeting actions die in the notes.** You write "Priya: error states by Friday", and it stays a sentence in a document nobody opens again. | Meeting write-ups are prose, and the to-dos inside them **become real items on the board**, owned and dated, counted as still owed until they are done. |
+| **Everything you know about a project is in your head.** Which makes annual leave stressful, handover impossible, and your own memory the single point of failure. | Notes, journal, decisions, links and people live with the project and are mirrored to **plain Markdown on disk**. If you get hit by a bus — or just go on holiday — it is all readable without this app. |
+
+Everything is designed around one constraint: *it must survive neglect*. A tool that only
+works while you are diligent about it is abandoned in three weeks, and you go back to the
+notebook. So capture is cheap, almost nothing needs manual upkeep, and **every screen stays
+useful when the data is a month old**.
+
+It is not a replacement for Jira or Linear. Those are where the team executes; put a link
+to the board on the project and carry on. This is the view of the portfolio that you, the
+person accountable for all of it, do not currently have anywhere.
+
+Everything is **free and open source**, and everything stays **on your own machine** — no
+account, no server, no telemetry, no paid tier. Nothing about the projects you manage
+leaves your laptop, which matters when your notes say what you actually think about a
+stakeholder.
 
 ## Install
 
@@ -78,9 +101,9 @@ first launch, inside a plain folder in your Documents. To get a real application
 instead of a development window, run `npm run dist`.
 
 On that first launch it introduces itself and asks for two things: your name, and one
-working life to put in it. If you would rather look around first, **load the sample
-data** from that first panel — three workspaces with projects, people, meetings and
-history, which is what every screenshot below is showing.
+area of work to put your projects in. If you would rather look around first, **load the
+sample data** from that first panel — a realistic portfolio of projects, people, meetings
+and history, which is what every screenshot below is showing.
 
 ## A look around
 
@@ -98,7 +121,7 @@ history, which is what every screenshot below is showing.
 <td><img src="docs/screenshots/07-decisions.png" alt="Decisions"><br><b>Decisions</b><br>What was decided, by whom, why — and what was rejected, which is the half that gets re-litigated.</td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/09-workspaces.png" alt="Workspaces"><br><b>Workspaces</b><br>A working life each, and a hard boundary: no screen ever mixes two of them.</td>
+<td><img src="docs/screenshots/09-workspaces.png" alt="Workspaces"><br><b>Workspaces</b><br>A portfolio each — a department, a client, a programme — and a hard boundary: no screen ever mixes two of them.</td>
 <td><img src="docs/screenshots/10-search.png" alt="Search"><br><b>Search everything</b><br><code>⌘K</code> over tasks, notes, meetings, decisions, journal and people in the current workspace.</td>
 </tr>
 <tr>
@@ -110,9 +133,11 @@ history, which is what every screenshot below is showing.
 ## The features, and why each one exists
 
 ### Workspaces are separate areas
-A workspace is a working life — a day job, your own company, a client. It has a name,
-a colour and an optional uploaded icon, and it is a **hard boundary**: no screen mixes
-two of them. Today, Projects, People, Timeline, the weekly review and search are all
+A workspace is a set of projects that belong together and should never be looked at
+alongside anything else — a department, a client, a programme, a side of your job. It has
+a name, a colour and an optional uploaded icon, and it is a **hard boundary**: no screen
+mixes two of them. If you run projects for two different clients, neither one ever appears
+in the other's Today list, search results or reports. Today, Projects, People, Timeline, the weekly review and search are all
 fenced to the workspace you are in, and people belong to a workspace rather than
 floating above them. Switching happens at the bottom-left of the sidebar, which tints
 itself with the workspace colour so it is always obvious where you are.
@@ -137,7 +162,7 @@ panel behaves.
 The app opens the first time on an introduction rather than a form: what this is for,
 the three questions above, and the one constraint everything else follows from — it has
 to survive neglect. Only then does it ask for anything, and it asks for two things:
-your name, and one working life to put in it. Nothing is written until the last button,
+your name, and one area of work to put your projects in. Nothing is written until the last button,
 so leaving halfway through leaves nothing behind.
 
 The name field starts filled in from the machine's own account, the workspace name
@@ -410,8 +435,8 @@ what you are looking at.
 
 It runs on **your own OpenAI key**, entered in workspace settings under Assistant, and
 the key lives on the workspace rather than on the app — a workspace *is* a separate
-working life, and the key a client is billed through should not be the one your day job's
-questions go out on. The key is stored in the same folder as everything else and is never
+separate area of work, and the key one client is billed through should not be the one
+another client's questions go out on. The key is stored in the same folder as everything else and is never
 sent back out of the main process; the settings screen is only ever told whether there
 is one.
 
@@ -458,17 +483,18 @@ nothing leaves at all.
 
 ## Calendar
 
-Outlook integration is deliberately absent: the calendar is behind a corporate tenant
-and was not available through the local macOS Calendar store either. Rather than fight
-an AD policy, the **commitment** item type covers it — a date with no work attached, like
-a demo or a board meeting — and it flows through Today and the Timeline exactly as a
-calendar event would. If access ever becomes possible, it drops in behind the same
+Outlook integration is deliberately absent. Most project managers' calendars sit behind a
+corporate tenant that will not hand them to a local app, and asking IT to change that is
+not a fight worth having to see your own meetings twice. The **commitment** item type
+covers the part that matters — a date with no work attached, like a steering group, a demo
+or a go-live — and it flows through Today and the Timeline exactly as a calendar event
+would. If access ever becomes possible in a given org, it drops in behind the same
 `commitment` shape without disturbing anything else.
 
 ## The name and the icon
 
-Neo, as in new — the app is where a thing that is new to you gets written down, and where
-you pick it back up. The icon is three white squares stepping down a diagonal on a
+Neo, as in new — where something new gets written down, and where you pick it back up
+after you have been away from it. The icon is three white squares stepping down a diagonal on a
 rose-to-amber gradient: separate things, held in one line of sight.
 
 `build/icon.svg` records the design; `scripts/make-icon.mjs` produces `icon.png`, the

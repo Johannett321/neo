@@ -42,7 +42,12 @@ jobs:
 
       - run: npm ci
 
-      - name: Build and package
+      # electron-builder only packages what is already in out/; it does not
+      # compile anything itself.
+      - name: Typecheck and compile
+        run: npm run build
+
+      - name: Package
         run: npx electron-builder ${{ matrix.args }} --publish never
         env:
           # There is no Developer ID certificate in CI, so do not go looking for

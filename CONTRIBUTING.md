@@ -1,7 +1,8 @@
 # Contributing to Neo
 
-Thanks for taking a look. This is a small, opinionated app; the fastest way to get a
-change merged is to understand what it is trying to be before you change it.
+Thanks for taking a look. This is a small, opinionated app built for project managers and
+team leads running several projects at once; the fastest way to get a change merged is to
+understand what it is trying to be before you change it.
 
 Start with [`README.md`](README.md) — it explains what every feature is for and why it
 exists, and most of those decisions were arrived at deliberately. [`CLAUDE.md`](CLAUDE.md)
@@ -50,11 +51,12 @@ in a few seconds. You cannot run one assertion in isolation — run the script.
 These are the product, not implementation details. A pull request that breaks one of them
 will be asked to change, however good the code is.
 
-- **No status field the user maintains by hand.** Attention is *derived* — from overdue
-  work, deadline proximity and staleness — in `src/main/lib/attention.ts`, and it returns
-  the single most pressing fact in plain words, never a level, a badge or a colour. If a
-  feature needs the user to keep something accurate for it to stay useful, it will be
-  abandoned in three weeks, and the whole app is designed around not being.
+- **No status field the user maintains by hand.** No RAG rating, no percent-complete, no
+  health dropdown. Attention is *derived* — from overdue work, deadline proximity and
+  staleness — in `src/main/lib/attention.ts`, and it returns the single most pressing fact
+  in plain words, never a level, a badge or a colour. A project manager will not keep a
+  status field true across five projects, so a feature that depends on them doing so is
+  abandoned in three weeks and takes the rest of the app with it.
 - **Workspace isolation is a hard boundary.** Every scoped IPC channel takes an explicit
   `workspaceId`; there is no implicit "all", and no screen may mix two workspaces.
 - **Every mutation logs activity** via `logActivity()`, and handlers that change project
