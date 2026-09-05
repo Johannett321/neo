@@ -355,6 +355,32 @@ async function main(): Promise<void> {
      (await call('person:list', { workspaceId: consultancy })).length === 3,
      `${dayJobPeople.length} in Day job`)
 
+  // Assigning work offers the project's cast, not everyone in the workspace: an item
+  // belongs to one project, so the people who can own it are the people on it.
+  const checkoutDetail = await call('project:get', { id: checkout.id, touch: false })
+  const checkoutCast = await call('person:list', { workspaceId: dayJob, projectId: checkout.id })
+  ok('person:list narrows to a project\'s cast',
+     checkoutCast.length === checkoutDetail.cast.length &&
+     checkoutCast.length < dayJobPeople.length &&
+     checkoutCast.every((p: any) => checkoutDetail.cast.some((c: any) => c.personId === p.id)),
+     `${checkoutCast.length} on the project, ${dayJobPeople.length} in the workspace`)
+
+  ok('you are always among them, so work can be kept',
+     checkoutCast.some((p: any) => p.isMe))
+
+  // Somebody in the workspace but not on this project must not be offered for it.
+  const offProject = dayJobPeople.find(
+    (p: any) => !checkoutCast.some((c: any) => c.id === p.id))
+  ok('a workspace colleague who is not on the project is not offered',
+     Boolean(offProject) && !checkoutCast.some((p: any) => p.id === offProject.id),
+     offProject?.name)
+
+  // The project id is joined back to the workspace rather than trusted, so one from
+  // another workspace narrows the list to nothing instead of widening it.
+  const foreign = await call('person:list', { workspaceId: own, projectId: checkout.id })
+  ok('a project from another workspace matches nobody', foreign.length === 0,
+     `${foreign.length} returned`)
+
   const person = dayJobPeople.find((p: any) => p.name === 'Jonas Berg')
   const personDetail = await call('person:get', { id: person.id })
   ok('person shows every project and role', personDetail.projects.length === 2,

@@ -63,7 +63,15 @@ export interface ApiMap {
   'task:delete': { in: { id: string }; out: void }
   'task:reorder': { in: { ids: string[] }; out: void }
 
-  'person:list': { in: Scope & { query?: string }; out: (Person & { projectCount: number })[] }
+  /**
+   * `projectId` narrows the list to that project's cast. Assigning work is the reason
+   * this is here: an item belongs to one project, so the people who can own it are the
+   * people on that project, not everyone in the workspace.
+   */
+  'person:list': {
+    in: Scope & { query?: string; projectId?: string }
+    out: (Person & { projectCount: number })[]
+  }
   'person:get': { in: { id: string }; out: { person: Person; projects: PersonProject[] } }
   'person:save': { in: Draft<Person>; out: Person }
   'person:delete': { in: { id: string }; out: void }

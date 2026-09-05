@@ -39,7 +39,15 @@ export function TaskDialog({
   columns?: BoardColumn[]
 }): React.JSX.Element {
   const workspace = useWorkspace()
-  const people = useApi('person:list', { workspaceId: workspace.id }, { enabled: open })
+  /**
+   * The project's cast, not the workspace's people. An item belongs to one project, so
+   * the people who can own it are the people on it.
+   */
+  const people = useApi(
+    'person:list',
+    { workspaceId: workspace.id, projectId: task?.projectId ?? '' },
+    { enabled: open && Boolean(task?.projectId) }
+  )
   const save = useApiMutation('task:save')
   const remove = useApiMutation('task:delete')
 
@@ -67,6 +75,18 @@ export function TaskDialog({
 
   const me = (people.data ?? []).find((p) => p.isMe)
   const assignee = (people.data ?? []).find((p) => p.id === state.assigneePersonId)
+
+  /**
+   * Whoever owns this item today, if they have since been taken off the project. The
+   * cast no longer contains them, so without this the picker would show a blank box and
+   * saving would quietly hand the item to nobody. Shown, marked, and replaceable — but
+   * not silently discarded, because losing an owner is a worse outcome than an odd
+   * entry in a list.
+   */
+  const departed =
+    state.assigneePersonId && !assignee && task?.assigneePersonId === state.assigneePersonId
+      ? { id: state.assigneePersonId, name: task.assigneeName ?? 'Someone', color: task.assigneeColor }
+      : null
 
   const submit = async (): Promise<void> => {
     if (!task || !state.title.trim()) return
@@ -141,13 +161,17 @@ export function TaskDialog({
         <div className="grid grid-cols-2 gap-4">
           <Field label="Assigned to">
             <div className="flex items-center gap-2">
-              {assignee && (
+              {assignee ? (
                 <Avatar
                   name={assignee.name}
                   color={assignee.avatarColor}
                   image={assignee.avatar}
                   size={26}
                 />
+              ) : (
+                departed && (
+                  <Avatar name={departed.name} color={departed.color ?? '#64748b'} size={26} />
+                )
               )}
               <select
                 className="select select-bordered w-full"
@@ -160,6 +184,9 @@ export function TaskDialog({
                     {p.isMe ? 'Me' : p.name}
                   </option>
                 ))}
+                {departed && (
+                  <option value={departed.id}>{departed.name} — no longer on this project</option>
+                )}
               </select>
             </div>
           </Field>

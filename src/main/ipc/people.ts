@@ -9,16 +9,41 @@ import { handle, pick, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerPeopleHandlers(): void {
-  handle('person:list', async ({ workspaceId, query }) => {
+  handle('person:list', async ({ workspaceId, query, projectId }) => {
     const term = query?.trim()
+
+    // Built up rather than written out: either filter is optional, so the placeholder
+    // numbers move, and $2 meaning two different things depending on the caller is how
+    // this goes wrong quietly.
+    const params: unknown[] = [workspaceId]
+    const where: string[] = []
+
+    // The project is joined back to the workspace, not trusted from the renderer — a
+    // project id belonging to another workspace must narrow the list to nothing rather
+    // than widen it to that workspace's cast.
+    if (projectId) {
+      params.push(projectId)
+      where.push(
+        `EXISTS (SELECT 1 FROM membership m
+                 JOIN project pr ON pr.id = m.project_id
+                 WHERE m.person_id = p.id AND m.project_id = $${params.length}
+                   AND pr.workspace_id = $1)`
+      )
+    }
+    if (term) {
+      params.push(`%${term}%`)
+      where.push(`(p.name ILIKE $${params.length} OR p.org ILIKE $${params.length}
+                   OR p.email ILIKE $${params.length})`)
+    }
+
     const rows = await q<any>(
       `SELECT p.*, COALESCE(c.n, 0) AS project_count
        FROM person p
        LEFT JOIN LATERAL (SELECT count(*)::int AS n FROM membership m WHERE m.person_id = p.id) c ON true
        WHERE p.workspace_id = $1
-       ${term ? 'AND (p.name ILIKE $2 OR p.org ILIKE $2 OR p.email ILIKE $2)' : ''}
+       ${where.map((clause) => `AND ${clause}`).join('\n       ')}
        ORDER BY p.is_me DESC, p.name`,
-      term ? [workspaceId, `%${term}%`] : [workspaceId]
+      params
     )
     return Promise.all(
       rows.map(async (r) => ({

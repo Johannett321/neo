@@ -58,7 +58,6 @@ export function CreateDialog({
 }): React.JSX.Element {
   const workspace = useWorkspace()
   const projects = useApi('project:list', { workspaceId: workspace.id }, { enabled: open })
-  const people = useApi('person:list', { workspaceId: workspace.id }, { enabled: open })
 
   const saveTask = useApiMutation('task:save')
   const saveDecision = useApiMutation('decision:save')
@@ -73,8 +72,6 @@ export function CreateDialog({
   // Whether the project on show was chosen or merely offered — it changes what the
   // row is allowed to say about itself, and nothing else.
   const [picked, setPicked] = useState(false)
-
-  const me = useMemo(() => (people.data ?? []).find((p) => p.isMe), [people.data])
 
   useEffect(() => {
     if (!open) return
@@ -112,6 +109,29 @@ export function CreateDialog({
 
   const targetProject = projectId ?? chosen
   const project: ProjectSummary | undefined = (projects.data ?? []).find((p) => p.id === targetProject)
+
+  /**
+   * Only the project's cast, never the whole workspace. An item belongs to one project,
+   * so the people who can own it are the people on it — offering the other forty makes
+   * assigning work to somebody with no part in it a one-key mistake. Changing the project
+   * re-fetches, which is what should happen: the answer to "who can own this" changed.
+   */
+  const people = useApi(
+    'person:list',
+    { workspaceId: workspace.id, projectId: targetProject },
+    { enabled: open && Boolean(targetProject) }
+  )
+
+  const me = useMemo(() => (people.data ?? []).find((p) => p.isMe), [people.data])
+
+  /**
+   * Switching project drops whoever was selected. They were picked out of the old
+   * project's cast and are very likely not in this one's; leaving the id in place
+   * would submit an assignee the picker is no longer even showing.
+   */
+  useEffect(() => {
+    setDraft((d) => (d.assigneePersonId ? { ...d, assigneePersonId: '' } : d))
+  }, [targetProject])
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((d) => ({ ...d, [key]: value }))
