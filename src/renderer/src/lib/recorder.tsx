@@ -382,14 +382,22 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
     if (computer.stream) context.createMediaStreamSource(computer.stream).connect(bus)
 
     if (taps) {
-      const feed = await createSystemAudioFeed(context)
-      if (feed) {
+      try {
+        const feed = createSystemAudioFeed(context, taps.sampleRate)
         feed.node.connect(bus)
         tap.current = feed
-      } else {
+      } catch (error) {
+        // Whatever went wrong here is worth saying out loud rather than reducing to
+        // "could not be mixed in": the last time this failed silently it cost an
+        // evening to find, and the reason was one line of policy.
         void call('systemAudio:stop')
         taps = null
-        computer = { stream: null, note: 'The computer’s sound could not be mixed in.' }
+        computer = {
+          stream: null,
+          note: `Could not mix the computer’s sound in: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        }
       }
     }
 

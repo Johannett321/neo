@@ -186,8 +186,15 @@ hear another. `native/audiotap/main.swift` is a Swift command-line tool that ope
 **Core Audio process tap** (public, macOS 14.4+, driver-free), mixes to mono and
 writes raw s16le PCM on stdout with JSON status lines on stderr.
 `lib/recording/systemAudio.ts` spawns it and forwards the bytes to the renderer, where
-`lib/systemAudioNode.ts` feeds them into an `AudioWorkletNode` and mixes them with the
-microphone. Built by `scripts/build-audiotap.mjs` (universal, best-effort, skipped
+`lib/systemAudioNode.ts` schedules them as short `AudioBufferSourceNode`s on the same
+bus as the microphone.
+
+**Not an `AudioWorkletNode`, and this is load-bearing:** a worklet is loaded as a
+*script*, and `index.html` sets `script-src 'self'`, so one built from a blob is
+blocked — silently, in dev and packaged alike, surfacing only as "could not be mixed
+in". Allowing `blob:` would trade a real property of the whole renderer for one node.
+Buffers need no script. Do not reintroduce a worklet here without changing the policy
+on purpose. Built by `scripts/build-audiotap.mjs` (universal, best-effort, skipped
 without a Swift toolchain) and shipped as `extraResources`, found by looking for the
 file — never by `app.isPackaged`, which lies in development.
 
@@ -205,11 +212,12 @@ one Electron's headers and a crash in it takes the app down. Stopping is done by
 closing its stdin, never by killing it, because it has to hand the private aggregate
 device back to Core Audio — verify asserts nothing is left behind.
 
-Two clocks meet in the worklet's ring buffer (the tap runs on the output device, the
-mic on its own), so it outputs silence when empty — which is most of a meeting, since
-a tap produces nothing while nothing is playing — and drops the oldest past
-`SYSTEM_AUDIO_BUFFER_MS`. The context runs at the *tap's* rate so its samples are not
-resampled; the mic is, and of the two it is the one that can afford it.
+Two clocks meet in the schedule (the tap runs on the output device, the mic on its
+own), so it is allowed to slip: behind the clock it restarts just ahead of now, and
+more than `SYSTEM_AUDIO_BUFFER_MS` ahead it drops a chunk. Nothing is scheduled while
+nothing is playing, which is most of a meeting — a tap produces no audio then. The
+context runs at the *tap's* rate so its samples are not resampled; the mic is, and of
+the two it is the one that can afford it.
 
 The virtual-device path (BlackHole, an aggregate) is still there as the fallback for
 macOS before 14.4 or a refused permission. Echo cancellation stays on for the
