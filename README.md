@@ -16,6 +16,8 @@ stakeholders, who is expected to know the state of every one of them on demand.
 [![Electron](https://img.shields.io/badge/Electron-44-47848F.svg)](https://www.electronjs.org/)
 [![Local first](https://img.shields.io/badge/data-100%25%20local-success.svg)](#your-data)
 
+**[johannett321.github.io/neo](https://johannett321.github.io/neo/)** · [Download](https://github.com/Johannett321/neo/releases/latest)
+
 </div>
 
 <p align="center">
