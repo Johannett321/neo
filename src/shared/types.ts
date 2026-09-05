@@ -288,12 +288,30 @@ export interface ProjectDetail {
   activity: Activity[]
 }
 
+/**
+ * A meeting that still owes something. A to-do agreed in a room and never closed is
+ * the easiest thing in the app to lose: it is not a card, so it is on no board, and
+ * nothing about it is dated, so no overdue list will ever raise it. This is what
+ * carries it up to Today rather than leaving it for you to remember to go and look.
+ */
+export interface MeetingOwing {
+  meetingId: string
+  projectId: string
+  projectName: string
+  projectColor: string
+  title: string
+  occurredOn: string
+  openTodos: number
+}
+
 export interface TodayView {
   today: string
   overdue: TaskView[]
   dueToday: TaskView[]
   soon: TaskView[]
   needsAttention: ProjectSummary[]
+  /** Meetings across the workspace with to-dos still open, newest first. */
+  owedFromMeetings: MeetingOwing[]
   stats: { openTasks: number; activeProjects: number; peopleTracked: number }
 }
 

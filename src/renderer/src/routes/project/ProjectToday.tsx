@@ -16,6 +16,10 @@ import { useProject } from './ProjectLayout'
 export function ProjectToday(): React.JSX.Element {
   const { project, brief, cast, links, journal, activity, meetings } = useProject()
   const lastMeeting = meetings[0]
+  // Agreed in a room and never closed. Nothing else on this page would ever raise it:
+  // it is not a card, so no board holds it, and it carries no date, so nothing calls
+  // it late.
+  const owing = meetings.reduce((total, m) => total + m.openTodos, 0)
 
   return (
     <>
@@ -37,6 +41,7 @@ export function ProjectToday(): React.JSX.Element {
                 {[
                   ['Deadline', project.deadline ? formatDate(project.deadline) : 'None set'],
                   ['Overdue', project.overdueTasks > 0 ? `${project.overdueTasks}` : 'None'],
+                  ['Open to-dos', owing > 0 ? `${owing}` : 'None'],
                   ['Next due', project.nextDue ? formatDate(project.nextDue) : 'Nothing dated'],
                   ['Last meeting', lastMeeting ? formatDate(lastMeeting.occurredOn) : 'None recorded'],
                   ['Last opened', relativeFromIso(project.previousOpenedAt ?? project.lastOpenedAt)]
@@ -45,7 +50,10 @@ export function ProjectToday(): React.JSX.Element {
                     <dt className="text-base-content/45">{label}</dt>
                     <dd
                       className={`truncate text-right ${
-                        label === 'Overdue' && project.overdueTasks > 0 ? 'font-medium text-error' : ''
+                        (label === 'Overdue' && project.overdueTasks > 0) ||
+                        (label === 'Open to-dos' && owing > 0)
+                          ? 'font-medium text-error'
+                          : ''
                       }`}
                     >
                       {value}

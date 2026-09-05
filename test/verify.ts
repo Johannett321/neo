@@ -332,6 +332,33 @@ async function main(): Promise<void> {
      detached.todos[3].taskId === null &&
      (await call('task:list', { projectId: checkout.id })).some((t: any) => t.id === card.taskId))
 
+  // A to-do agreed in a room is on no board and carries no date, so nothing else on
+  // Today would ever raise it. The workspace screen carries it up itself.
+  const owedNow = await call('dashboard:today', { workspaceId: dayJob })
+  const owedHere = owedNow.owedFromMeetings.find((m: any) => m.meetingId === withItem.id)
+  ok('Today carries what a meeting still owes',
+     Boolean(owedHere) && owedHere.openTodos === 4 && owedHere.projectName === 'Checkout rewrite',
+     `${owedHere?.openTodos} owing on "${owedHere?.title}"`)
+
+  // Promoted items are answered by their card here too, exactly as the meeting list
+  // counts them — asking the row's own `done` would report closed work as owing.
+  await call('meetingTodo:promote', { id: item.id })
+  const promotedCard = (await call('project:get', { id: checkout.id, touch: false }))
+    .meetings[0].todos[3]
+  await call('task:setStatus', { id: promotedCard.taskId, status: 'done' })
+  const afterClosing = await call('dashboard:today', { workspaceId: dayJob })
+  ok('closing the card it became stops Today counting it',
+     afterClosing.owedFromMeetings.find((m: any) => m.meetingId === withItem.id)?.openTodos === 3,
+     `${afterClosing.owedFromMeetings.find((m: any) => m.meetingId === withItem.id)?.openTodos} left`)
+
+  ok('what a meeting owes never crosses a workspace',
+     (await call('dashboard:today', { workspaceId: own }))
+       .owedFromMeetings.every((m: any) => m.projectId !== checkout.id))
+
+  await call('task:setStatus', { id: promotedCard.taskId, status: 'open' })
+  await call('meetingTodo:save', { id: item.id, taskId: null })
+  await call('task:delete', { id: promotedCard.taskId })
+
   await call('meetingTodo:delete', { id: item.id })
   ok('a to-do can be removed',
      (await call('project:get', { id: checkout.id })).meetings[0].todos.length === 3)

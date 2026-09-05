@@ -92,7 +92,9 @@ export function TodayPage(): React.JSX.Element {
             className={`grid gap-x-10 ${
               // The rail only reserves its column when it has something in it —
               // otherwise every list on the page was narrowed for an empty gutter.
-              data.needsAttention.length > 0 ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''
+              data.needsAttention.length > 0 || data.owedFromMeetings.length > 0
+                ? 'lg:grid-cols-[minmax(0,1fr)_320px]'
+                : ''
             }`}
           >
             <div>
@@ -131,6 +133,49 @@ export function TodayPage(): React.JSX.Element {
                         </span>
                         <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
                           {project.attention}
+                        </span>
+                      </Link>
+                    ))}
+                  </Panel>
+                </Section>
+              )}
+
+              {/*
+                Things a meeting left owing. They belong on this screen and nowhere
+                else would put them here: a to-do agreed in a room is not a card, so
+                no board holds it, and it carries no date, so no overdue list will
+                ever call it late. Red because the whole point is that it is not
+                closed — the same red the overdue list uses, for the same reason.
+              */}
+              {data.owedFromMeetings.length > 0 && (
+                <Section
+                  title="Open to-dos from meetings"
+                  count={data.owedFromMeetings.reduce((total, m) => total + m.openTodos, 0)}
+                  tone="danger"
+                >
+                  <Panel padded={false}>
+                    {data.owedFromMeetings.map((meeting) => (
+                      <Link
+                        key={meeting.meetingId}
+                        to={`/projects/${meeting.projectId}/meetings/${meeting.meetingId}`}
+                        className="row-hover hairline block border-b px-3 py-2.5 last:border-b-0"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Dot
+                            color={projectColor({
+                              projectColor: meeting.projectColor,
+                              workspaceColor: workspace.color
+                            })}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-[13px]">
+                            {meeting.title || 'Meeting'}
+                          </span>
+                          <span className="shrink-0 text-[11px] font-medium tabular-nums text-error">
+                            {meeting.openTodos}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
+                          {meeting.projectName} · {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
                         </span>
                       </Link>
                     ))}

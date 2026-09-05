@@ -20,7 +20,7 @@ export function registerDashboardHandlers(): void {
     const soonEdge = addDays(now, SOON_DAYS)
     const inWorkspace = 'p.workspace_id = $1 AND p.archived_at IS NULL'
 
-    const [overdue, dueToday, soon, projects, stats] = await Promise.all([
+    const [overdue, dueToday, soon, projects, owed, stats] = await Promise.all([
       taskViews(
         `${inWorkspace} AND t.status = 'open' AND t.due_date IS NOT NULL AND t.due_date < $2`,
         [workspaceId, now],
@@ -33,6 +33,27 @@ export function registerDashboardHandlers(): void {
         't.due_date'
       ),
       projectSummaries("p.workspace_id = $2 AND p.archived_at IS NULL AND p.status <> 'done'", [workspaceId]),
+      // A to-do that was promoted to a card is answered by the card, exactly as the
+      // meeting list counts it — the row's own `done` stops being read the moment
+      // `task_id` is set, so asking it here instead would report closed work as owing.
+      //
+      // Only active projects, for the same reason attention skips the others: paused,
+      // dormant and done are deliberate states, and dragging their leftovers onto Today
+      // is how a list you are meant to act on fills up with things you are not.
+      q<any>(
+        `SELECT m.id, m.title, m.occurred_on, m.project_id,
+                p.name AS project_name, p.color AS project_color,
+                count(*)::int AS open_todos
+         FROM meeting_todo mt
+         JOIN meeting m ON m.id = mt.meeting_id
+         JOIN project p ON p.id = m.project_id
+         LEFT JOIN task tk ON tk.id = mt.task_id
+         WHERE p.workspace_id = $1 AND p.archived_at IS NULL AND p.status = 'active'
+           AND NOT COALESCE(tk.status = 'done', mt.done)
+         GROUP BY m.id, m.title, m.occurred_on, m.project_id, p.name, p.color
+         ORDER BY m.occurred_on DESC, m.created_at DESC`,
+        [workspaceId]
+      ),
       q<any>(
         `SELECT
            (SELECT count(*)::int FROM task t JOIN project p ON p.id = t.project_id
@@ -57,6 +78,15 @@ export function registerDashboardHandlers(): void {
       dueToday,
       soon,
       needsAttention,
+      owedFromMeetings: owed.map((r: any) => ({
+        meetingId: r.id,
+        projectId: r.project_id,
+        projectName: r.project_name,
+        projectColor: r.project_color ?? '',
+        title: r.title,
+        occurredOn: r.occurred_on,
+        openTodos: r.open_todos
+      })),
       stats: {
         openTasks: stats[0]?.open_tasks ?? 0,
         activeProjects: stats[0]?.active_projects ?? 0,

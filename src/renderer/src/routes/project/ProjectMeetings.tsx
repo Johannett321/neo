@@ -36,7 +36,12 @@ export function ProjectMeetings(): React.JSX.Element {
         {last && (
           <span className="text-[11px] text-base-content/40">
             Last one {formatDate(last.occurredOn)} · {plural(last.attendees.length, 'person', 'people')}
-            {owing > 0 && ` · ${owing} still to do across all of them`}
+          </span>
+        )}
+        {owing > 0 && (
+          <span className="badge badge-error badge-sm gap-1 font-medium">
+            <Icon name="checkbox" size={11} />
+            {plural(owing, 'open to-do', 'open to-dos')}
           </span>
         )}
       </div>
@@ -74,9 +79,9 @@ export function ProjectMeetings(): React.JSX.Element {
               <div className="flex items-baseline gap-3">
                 <span className="flex-1 truncate text-[13px] font-medium">{meeting.title || 'Meeting'}</span>
                 {meeting.openTodos > 0 && (
-                  <span className="hairline flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-px text-[10.5px] text-base-content/70">
+                  <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-error/12 px-2 py-px text-[10.5px] font-medium text-error">
                     <Icon name="checkbox" size={10} />
-                    {meeting.openTodos} still to do
+                    {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
                   </span>
                 )}
                 <span className="shrink-0 text-[11px] tabular-nums text-base-content/45">
