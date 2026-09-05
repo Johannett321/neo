@@ -22,6 +22,11 @@ extraResources:
   # already copes with.
   - from: out/native/neo-audiotap
     to: native/neo-audiotap
+# Runs after the bundle is assembled and before a real signature would be applied.
+# See the script: without it macOS never reads the microphone and audio-capture
+# usage strings, and refuses both without ever asking.
+afterPack: scripts/sign-adhoc.mjs
+
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
