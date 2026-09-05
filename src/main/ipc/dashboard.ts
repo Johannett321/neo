@@ -37,7 +37,8 @@ export function registerDashboardHandlers(): void {
         `SELECT
            (SELECT count(*)::int FROM task t JOIN project p ON p.id = t.project_id
              WHERE p.workspace_id = $1 AND p.archived_at IS NULL AND t.status = 'open') AS open_tasks,
-           (SELECT count(*)::int FROM project WHERE workspace_id = $1 AND status = 'active') AS active_projects,
+           (SELECT count(*)::int FROM project
+             WHERE workspace_id = $1 AND status = 'active' AND archived_at IS NULL) AS active_projects,
            (SELECT count(*)::int FROM person WHERE workspace_id = $1) AS people_tracked`,
         [workspaceId]
       )

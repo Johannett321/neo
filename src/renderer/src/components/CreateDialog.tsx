@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ProjectSummary } from '@shared/types'
 import { useApi, useApiMutation } from '@/lib/api'
-import { differs, todayStr } from '@/lib/format'
+import { differs, projectColor, todayStr } from '@/lib/format'
 import { useToast } from '@/lib/toast'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon, type IconName } from './Icon'
@@ -44,12 +44,15 @@ export function CreateDialog({
   open,
   onClose,
   projectId,
+  columnId,
   only
 }: {
   open: boolean
   onClose: () => void
   /** Set when opened from inside a project: the chooser disappears entirely. */
   projectId?: string
+  /** Which board column a new task lands in. Without one it goes to the first. */
+  columnId?: string
   /** Lock the dialog to one kind, for entry points where it cannot be anything else. */
   only?: Kind
 }): React.JSX.Element {
@@ -67,6 +70,9 @@ export function CreateDialog({
   const [chosen, setChosen] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>(blank())
+  // Whether the project on show was chosen or merely offered — it changes what the
+  // row is allowed to say about itself, and nothing else.
+  const [picked, setPicked] = useState(false)
 
   const me = useMemo(() => (people.data ?? []).find((p) => p.isMe), [people.data])
 
@@ -76,7 +82,33 @@ export function CreateDialog({
     setDraft(blank())
     setPickerOpen(false)
     setChosen(projectId ?? '')
+    setPicked(false)
   }, [open, projectId, only])
+
+  /**
+   * The project you had open last, offered as the answer rather than asked for.
+   *
+   * An empty chooser makes the first thing in the dialog a decision, and a decision
+   * before you have typed the thing you opened it to type. Nine times in ten this is
+   * already the right project — you pressed ⌘N seconds after closing it — so it
+   * arrives filled in, says where it came from, and is one click from any other.
+   */
+  const suggested = useMemo(() => {
+    const opened = (projects.data ?? []).filter((p) => p.lastOpenedAt)
+    if (opened.length > 0) {
+      const [first] = [...opened].sort((a, b) => (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? ''))
+      return first ? { id: first.id, why: 'Last opened' } : null
+    }
+    // Nothing has been opened yet, so the list's own order — pinned, then whatever
+    // moved most recently — is the best guess available, and says so.
+    const first = projects.data?.[0]
+    return first ? { id: first.id, why: 'Most recent' } : null
+  }, [projects.data])
+
+  useEffect(() => {
+    if (!open || projectId || chosen || picked || !suggested) return
+    setChosen(suggested.id)
+  }, [open, projectId, chosen, picked, suggested])
 
   const targetProject = projectId ?? chosen
   const project: ProjectSummary | undefined = (projects.data ?? []).find((p) => p.id === targetProject)
@@ -99,7 +131,8 @@ export function CreateDialog({
         // Work you handed to someone else is tracked differently from your own.
         kind: assignedElsewhere ? 'delegated' : 'task',
         assigneePersonId: draft.assigneePersonId || null,
-        dueDate: draft.dueDate || null
+        dueDate: draft.dueDate || null,
+        ...(columnId ? { columnId } : {})
       })
       toast({
         title: `Task added to ${where}`,
@@ -183,7 +216,7 @@ export function CreateDialog({
               {project ? (
                 <Mark
                   name={project.name}
-                  color={project.workspaceColor}
+                  color={projectColor(project)}
                   icon={project.icon}
                   size={30}
                   rounded="rounded-[8px]"
@@ -201,6 +234,10 @@ export function CreateDialog({
                   {project?.name ?? 'Choose a project'}
                 </span>
               </span>
+              {/* A default you cannot see the reason for is a default you distrust. */}
+              {project && !picked && suggested?.id === project.id && (
+                <span className="shrink-0 text-[11px] text-base-content/35">{suggested.why}</span>
+              )}
               <Icon name={pickerOpen ? 'chevronUp' : 'chevronDown'} size={14} className="text-base-content/35" />
             </button>
 
@@ -213,12 +250,13 @@ export function CreateDialog({
                     className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition hover:bg-base-200"
                     onClick={() => {
                       setChosen(option.id)
+                      setPicked(true)
                       setPickerOpen(false)
                     }}
                   >
                     <Mark
                       name={option.name}
-                      color={option.workspaceColor}
+                      color={projectColor(option)}
                       icon={option.icon}
                       size={20}
                       rounded="rounded-[6px]"

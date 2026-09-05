@@ -37,7 +37,10 @@ profile, the theme, where your data lives, and how to get it out.
 Every settings screen — the app's, a workspace's, a project's — is the same shape: a
 short list of panes down the left, one pane at a time on the right. A long scroll of
 sections meant the thing you came to change was never where you left it; a pane is a
-place, and it stays put.
+place, and it stays put. Which pane is open lives in the address, so anything that knows
+what needs changing can send you to the pane itself rather than to the front of the
+screen with an instruction to go and find it — which is how the assistant's "no key yet"
+panel behaves.
 
 ### The first launch
 The app opens the first time on an introduction rather than a form: what this is for,
@@ -114,10 +117,24 @@ file work along: worklanes were exactly that, and keeping them tidy cost more th
 structure was worth. Ticking a task done anywhere in the app moves its card to Done, and
 dropping a card in Done ticks it: one truth, two views of it.
 
+A card can be added straight into the column you are looking at — the `+` that appears
+on a column's header when the pointer is over it, or the button an empty column shows
+in place of the blank space it used to be. The board's own **Add item** still lands in
+the first column, because that is what it has always meant.
+
 ### Today
 One screen for the workspace you are in, grouped by urgency rather than by project:
 overdue, due today, the next seven days, and the projects the app thinks need a look,
-with the reason attached.
+with the reason attached. Each row carries a rule in **its project's** colour rather
+than its workspace's — every row on this screen belongs to the same workspace, so that
+colour was the same on all of them and told you nothing.
+
+Having nothing due and having nothing at all are different facts and get opposite
+screens. A workspace with projects in it and a clear week says so and sends you off to
+work. A workspace with nothing in it yet is not congratulated for being on top of
+things: it says the next step is one project, explains what a project is for, and
+offers the button — because this is the one screen in the app that has nothing to
+derive an answer from.
 
 ### You
 You are a person too. One profile — name and photo, edited in Settings — mirrored into
@@ -262,7 +279,10 @@ the only part worth showing. Colour on a project now means identity, nothing mor
 `⌘N` opens one dialog for the four things worth capturing in a hurry — a **task**, a
 **decision**, a **log entry** or a **meeting**. The project comes first and is shaped
 differently from the fields under it, because it is the question you answer before any
-of them; inside a project it is already answered and is not asked at all. A task takes a
+of them; inside a project it is already answered and is not asked at all. Outside one it
+arrives **already filled in with the project you had open last**, which is nearly always
+the one you mean — and it says so on the row, because a default you cannot see the
+reason for is a default you learn to distrust. Any other project is one click away. A task takes a
 title, a note, an assignee (including yourself) and an optional due date, and always lands
 in the board's first column; a meeting takes just a name, which is optional, and a date
 that defaults to today — the notes and attendees can come afterwards.
@@ -288,7 +308,9 @@ question is asked in one place rather than reimplemented at each call site.
 
 ### Command palette
 `⌘K` searches projects, people, tasks, notes, decisions and journal entries at once —
-within the current workspace only.
+within the current workspace only. Before you have typed anything it is not an empty box
+with an instruction in it: it lists the projects you have opened most recently, most
+recent first, because that is what you were going to search for.
 
 ### The assistant
 A panel down the right-hand side, opened with the button beside **New** or with `⌘J`. It

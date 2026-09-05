@@ -109,7 +109,13 @@ export function ProjectKanban(): React.JSX.Element {
   const [dragging, setDragging] = useState<string | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [editing, setEditing] = useState<TaskView | null>(null)
-  const [adding, setAdding] = useState(false)
+  /**
+   * Which column a new card is going into. `''` is the board's own button, which
+   * lands in the first column the way it always has; a column id is the `+` on that
+   * column's own header. Capturing straight into the stage you are looking at saves
+   * the drag that otherwise always follows.
+   */
+  const [adding, setAdding] = useState<string | null>(null)
   const [addingColumn, setAddingColumn] = useState(false)
   const [newColumn, setNewColumn] = useState('')
   const [menuFor, setMenuFor] = useState<string | null>(null)
@@ -140,7 +146,7 @@ export function ProjectKanban(): React.JSX.Element {
   return (
     <div>
       <div className="mb-4 flex items-center gap-2">
-        <button className="btn btn-primary btn-sm gap-1.5" onClick={() => setAdding(true)}>
+        <button className="btn btn-primary btn-sm gap-1.5" onClick={() => setAdding('')}>
           <Icon name="plus" size={13} />
           Add item
         </button>
@@ -170,6 +176,7 @@ export function ProjectKanban(): React.JSX.Element {
               onMove={(delta) => moveColumn(index, delta)}
               onDelete={() => deleteColumn.mutate({ id: column.id })}
               onEditTask={setEditing}
+              onAddTask={() => setAdding(column.id)}
               onDragStartTask={setDragging}
               allColumns={columns}
             />
@@ -221,9 +228,10 @@ export function ProjectKanban(): React.JSX.Element {
       </div>
 
       <CreateDialog
-        open={adding}
-        onClose={() => setAdding(false)}
+        open={adding !== null}
+        onClose={() => setAdding(null)}
         projectId={project.id}
+        columnId={adding || undefined}
         only="task"
       />
       <TaskDialog
@@ -253,6 +261,7 @@ function BoardColumnView({
   onMove,
   onDelete,
   onEditTask,
+  onAddTask,
   onDragStartTask,
   allColumns
 }: {
@@ -272,6 +281,7 @@ function BoardColumnView({
   onMove: (delta: number) => void
   onDelete: () => void
   onEditTask: (task: TaskView) => void
+  onAddTask: () => void
   onDragStartTask: (id: string) => void
   allColumns: BoardColumn[]
 }): React.JSX.Element {
@@ -288,6 +298,8 @@ function BoardColumnView({
       onDrop={onDrop}
       onContextMenu={(e) =>
         openMenu(e, [
+          { label: 'Add an item here', icon: 'plus', onSelect: onAddTask },
+          'separator',
           { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(true) },
           { label: 'Move left', icon: 'arrowLeft', disabled: index === 0, onSelect: () => onMove(-1) },
           {
@@ -357,8 +369,19 @@ function BoardColumnView({
             )}
             <span className="text-[11px] tabular-nums text-base-content/30">{tasks.length}</span>
 
+            {/* Quiet until the pointer is on the column, because four of these
+                competing with the board's own button would be four primary actions. */}
             <button
-              className={`ml-auto flex size-6 shrink-0 items-center justify-center rounded-field text-base-content/45 transition hover:bg-base-content/10 hover:text-base-content ${
+              className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-field text-base-content/45 opacity-0 transition hover:bg-base-content/10 hover:text-base-content focus-visible:opacity-100 group-hover/column:opacity-100"
+              onClick={onAddTask}
+              title={`Add an item to ${column.name}`}
+              aria-label={`Add an item to ${column.name}`}
+            >
+              <Icon name="plus" size={14} />
+            </button>
+
+            <button
+              className={`flex size-6 shrink-0 items-center justify-center rounded-field text-base-content/45 transition hover:bg-base-content/10 hover:text-base-content ${
                 menuOpen ? 'bg-base-content/10 text-base-content' : ''
               }`}
               onClick={onMenuToggle}
@@ -445,6 +468,17 @@ function BoardColumnView({
             onDragStart={() => onDragStartTask(task.id)}
           />
         ))}
+        {/* An empty column was dead space you could only drop onto. It is the most
+            obvious place to put the first card, so it now says so. */}
+        {tasks.length === 0 && (
+          <button
+            className="hairline flex h-[4.5rem] w-full items-center justify-center gap-1.5 rounded-field border border-dashed text-[11px] text-base-content/30 transition hover:border-base-content/25 hover:text-base-content/55"
+            onClick={onAddTask}
+          >
+            <Icon name="plus" size={12} />
+            Add an item
+          </button>
+        )}
       </div>
     </div>
   )

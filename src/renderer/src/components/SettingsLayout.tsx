@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, type ReactNode } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from './Icon'
 import { PanelTransition } from './PageTransition'
 import { PageHeader } from './primitives'
@@ -23,6 +23,11 @@ export interface SettingsPane {
  *
  * The list is deliberately short. If a screen needs more than about five entries, the
  * screen is doing too much rather than the list being too small.
+ *
+ * Which pane is open lives in the URL rather than in this component, so anything that
+ * knows what it wants changed can send you straight to it — the assistant's "you have
+ * no key" panel sends you to the pane that holds the key, not to the front of the
+ * screen with an instruction to go and find it.
  */
 export function SettingsLayout({
   title,
@@ -39,9 +44,17 @@ export function SettingsLayout({
   exitTo: string
   panes: SettingsPane[]
 }): React.JSX.Element {
-  const [activeId, setActiveId] = useState(panes[0]?.id ?? '')
-  const active = panes.find((p) => p.id === activeId) ?? panes[0]
+  const [params, setParams] = useSearchParams()
+  // An unknown pane — a stale link, another screen's pane name — is not an error
+  // worth showing anyone; it just opens on the first one.
+  const active = panes.find((p) => p.id === params.get('pane')) ?? panes[0]
   const navigate = useNavigate()
+
+  /** Replaces rather than pushes: the panes are one screen, not a trail through it. */
+  const select = (id: string): void => {
+    if (id === panes[0]?.id) setParams({}, { replace: true })
+    else setParams({ pane: id }, { replace: true })
+  }
 
   /**
    * Settings is somewhere you go and come back from, so Escape leaves it — the same
@@ -78,7 +91,7 @@ export function SettingsLayout({
             return (
               <button
                 key={pane.id}
-                onClick={() => setActiveId(pane.id)}
+                onClick={() => select(pane.id)}
                 className={`mb-0.5 flex w-full items-center gap-2.5 rounded-field px-2.5 py-[7px] text-left text-[13px] transition ${
                   isActive
                     ? 'bg-base-200 font-medium text-base-content'

@@ -614,8 +614,8 @@ function NoKey(): React.JSX.Element {
         title="Add an API key to use the assistant"
         hint="The assistant runs on your own OpenAI key, and the key stays on this machine. Each workspace has its own, so the one you use for a client is never the one you use at work."
         action={
-          <a className="btn btn-primary btn-sm" href="#/workspace">
-            Workspace settings
+          <a className="btn btn-primary btn-sm" href="#/workspace?pane=assistant">
+            Add a key
           </a>
         }
       />

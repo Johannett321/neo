@@ -104,6 +104,13 @@ export const differs = (a: unknown, b: unknown): boolean => JSON.stringify(a) !=
  * A project shows its own colour once it has been given one, and its workspace's
  * until then — so a workspace still reads as one family, and the projects you have
  * deliberately marked stand out from it.
+ *
+ * Takes a project (`color`) or anything carrying a project's colour alongside its
+ * own (`projectColor` — a task view, say), because the fallback rule has to be the
+ * same one wherever a project's colour is drawn.
  */
-export const projectColor = (p: { color: string; workspaceColor: string }): string =>
-  p.color || p.workspaceColor
+export const projectColor = (p: {
+  color?: string
+  projectColor?: string
+  workspaceColor: string
+}): string => p.color || p.projectColor || p.workspaceColor

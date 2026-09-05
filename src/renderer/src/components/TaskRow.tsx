@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useContextMenu } from '@/lib/contextMenu'
 import type { TaskView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
-import { dueLabel, formatDate, KIND_LABEL } from '@/lib/format'
+import { dueLabel, formatDate, KIND_LABEL, projectColor } from '@/lib/format'
 import { Avatar, Dot } from './primitives'
 import { Icon } from './Icon'
 
@@ -26,6 +26,9 @@ export function TaskRow({
   const navigate = useNavigate()
   const openMenu = useContextMenu()
   const done = task.status === 'done'
+  // Its project's colour, not its workspace's: every row on a workspace-fenced
+  // screen shares the workspace colour, so that one could never tell them apart.
+  const colour = projectColor(task)
   const overdue = task.daysUntilDue !== null && task.daysUntilDue < 0 && !done
   const dueToday = task.daysUntilDue === 0 && !done
 
@@ -55,7 +58,7 @@ export function TaskRow({
         ])
       }
       className="row-hover hairline group flex items-center gap-3 border-b px-3 py-2.5 last:border-b-0"
-      style={showProject ? { boxShadow: `inset 2px 0 0 ${task.workspaceColor}` } : undefined}
+      style={showProject ? { boxShadow: `inset 2px 0 0 ${colour}` } : undefined}
     >
       <button
           className="flex size-[18px] items-center justify-center rounded-[5px] border border-base-content/25 text-transparent transition hover:border-primary hover:text-primary/50 data-[done=true]:border-primary data-[done=true]:bg-primary data-[done=true]:text-primary-content"
@@ -76,7 +79,7 @@ export function TaskRow({
         <span className="flex min-w-0 items-center gap-2 text-[11px] text-base-content/45">
           {showProject && (
             <span className="flex min-w-0 items-center gap-1.5">
-              <Dot color={task.workspaceColor} size={5} />
+              <Dot color={colour} size={5} />
               <span className="truncate">{task.projectName}</span>
             </span>
           )}

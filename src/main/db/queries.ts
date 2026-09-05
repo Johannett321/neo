@@ -93,7 +93,7 @@ export async function projectSummary(id: string): Promise<ProjectSummary | null>
 }
 
 const TASK_SELECT = /* sql */ `
-SELECT t.*, p.name AS project_name, p.workspace_id,
+SELECT t.*, p.name AS project_name, p.color AS project_color, p.workspace_id,
        w.name AS workspace_name, w.color AS workspace_color,
        asg.name AS assignee_name, asg.avatar_path AS assignee_avatar_path,
        asg.avatar_color AS assignee_color, COALESCE(asg.is_me, false) AS assignee_is_me

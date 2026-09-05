@@ -166,6 +166,13 @@ export interface Task {
 /** A task decorated with its project, workspace and blocking person. */
 export interface TaskView extends Task {
   projectName: string
+  /**
+   * The project's own colour, empty until it has been given one. Paired with
+   * `workspaceColor` through `projectColor()`, this is what lets a list of items
+   * from six projects be grouped by eye — the workspace colour alone is the same
+   * on every row of a workspace-fenced screen, which is every screen there is.
+   */
+  projectColor: string
   workspaceId: string
   workspaceName: string
   workspaceColor: string

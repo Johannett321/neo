@@ -119,8 +119,23 @@ async function main(): Promise<void> {
   // A colour is optional and inherited until set; it must survive a round trip.
   const painted = await call('project:save', { id: idle.id, color: '#0ea5e9' })
   ok('a project can be given its own colour', painted.color === '#0ea5e9', painted.color)
+
+  /*
+   * A task view carries its project's colour alongside its workspace's. On any
+   * workspace-fenced list — which is every list there is — the workspace colour is
+   * identical on every row, so it is the project's that tells one row from another.
+   */
+  const paintedTasks = await call('task:list', { projectId: idle.id })
+  ok('a task carries the colour of the project it belongs to',
+     paintedTasks.length > 0 && paintedTasks.every((t: any) => t.projectColor === '#0ea5e9'),
+     `${paintedTasks.length} tasks`)
+
   ok('and can hand it back to the workspace',
      (await call('project:save', { id: idle.id, color: '' })).color === '')
+  const unpaintedTasks = await call('task:list', { projectId: idle.id })
+  ok('a task on a project with no colour of its own falls back to the workspace',
+     unpaintedTasks.length > 0 &&
+     unpaintedTasks.every((t: any) => t.projectColor === '' && t.workspaceColor !== ''))
 
   const today = await call('dashboard:today', { workspaceId: dayJob })
   ok('today: overdue populated', today.overdue.length >= 3, `${today.overdue.length} overdue`)
@@ -527,6 +542,9 @@ async function main(): Promise<void> {
   ok('an archived project drops out of Today',
      ![...archivedToday.overdue, ...archivedToday.dueToday, ...archivedToday.soon]
        .some((t: any) => t.projectName === 'Internal tooling'))
+  ok('and out of the project count Today reports',
+     archivedToday.stats.activeProjects === today.stats.activeProjects - 1,
+     `${archivedToday.stats.activeProjects} of ${today.stats.activeProjects}`)
   ok('and out of search',
      (await call('search:query', { workspaceId: dayJob, q: 'rota' })).length === 0)
   ok('but it still opens', (await call('project:get', { id: tooling.id })).project.name === 'Internal tooling')

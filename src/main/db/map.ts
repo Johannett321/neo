@@ -116,6 +116,7 @@ export const mapTaskView = (r: Row): TaskView => {
   return {
     ...mapTask(r),
     projectName: r.project_name,
+    projectColor: r.project_color ?? '',
     workspaceId: r.workspace_id,
     workspaceName: r.workspace_name,
     workspaceColor: r.workspace_color,
