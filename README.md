@@ -381,7 +381,18 @@ hands an application its own output.
 
 Whatever happens, the panel says which it got — *Microphone and computer audio*, or
 *Microphone only* and why — while it is still recording, because that is the only
-moment the answer can still be changed.
+moment the answer can still be changed. **Settings → Recording → Test it** plays the
+whole thing out in two seconds and reports how many bytes it heard, so you find out at
+a desk rather than at the end of a meeting.
+
+One wrinkle worth knowing if you build this yourself or run an unsigned release.
+macOS reads a privacy usage string out of the bundle only when the Info.plist is
+covered by the code signature, and a build with signing skipped keeps Electron's own
+signature, which does not cover it — so the request to record audio is refused with no
+prompt at all, which looks exactly like the feature being broken. `npm run dist`
+therefore ad-hoc signs the bundle with the app's own identifier. That does nothing for
+Gatekeeper, and because the permission is remembered against the signature you are
+asked again after every rebuild.
 
 **It is built to survive the machine.** Audio is appended to disk every second and
 never buffered anywhere else, so the most a power cut can cost is that second. Every

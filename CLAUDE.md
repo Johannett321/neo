@@ -191,6 +191,15 @@ microphone. Built by `scripts/build-audiotap.mjs` (universal, best-effort, skipp
 without a Swift toolchain) and shipped as `extraResources`, found by looking for the
 file — never by `app.isPackaged`, which lies in development.
 
+**An unsigned bundle silently breaks this.** macOS only reads a privacy usage string
+whose Info.plist is covered by the signature, and a build with signing skipped keeps
+Electron's own linker-signed one — `Identifier=Electron`, plist not bound — so
+`NSAudioCaptureUsageDescription` is never read and the tap is refused with no prompt.
+`scripts/sign-adhoc.mjs` runs as electron-builder's `afterPack` and re-signs ad-hoc
+with `com.svartdal.neo` to bind it. Check with `codesign -dv` that the identifier is
+the app's and `Info.plist entries=` appears. A real Developer ID signs afterwards and
+replaces it.
+
 A **child process, not a native module**, deliberately: a module is compiled against
 one Electron's headers and a crash in it takes the app down. Stopping is done by
 closing its stdin, never by killing it, because it has to hand the private aggregate
