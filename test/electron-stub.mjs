@@ -22,6 +22,11 @@ export const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) }
 export const shell = { openPath: async () => '', openExternal: async () => {} }
 // Tests never open a picker; icon uploads are exercised by passing a stored filename.
 export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
-export class BrowserWindow {}
+// The assistant pushes its stream at every open window; in a test there are none,
+// so a run reports through the events nobody is listening to and the loop is
+// exercised all the same.
+export class BrowserWindow {
+  static getAllWindows = () => []
+}
 export const __handlers = handlers
 export const __dataDir = dir

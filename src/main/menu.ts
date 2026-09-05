@@ -12,6 +12,7 @@ export type MenuCommand =
   | 'new-project'
   | 'new-workspace'
   | 'search'
+  | 'assistant'
   | 'settings'
   | 'workspace-settings'
   | 'back'
@@ -134,6 +135,8 @@ export function buildAppMenu(): void {
         goItem('Projects', '/projects', '2'),
         goItem('People', '/people', '3'),
         { type: 'separator' },
+        { label: 'Assistant', accelerator: 'CmdOrCtrl+J', click: () => send('assistant') },
+        { type: 'separator' as const },
         { label: 'Back', accelerator: 'CmdOrCtrl+[', click: () => send('back') },
         { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: () => send('forward') }
       ]

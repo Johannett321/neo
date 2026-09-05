@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
 import { initDb, orphanedForeignKeys, q } from '../src/main/db/client'
+import { mapWorkspace } from '../src/main/db/map'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
 /**
@@ -255,6 +256,42 @@ async function main(): Promise<void> {
 
   const projects = await q<{ name: string }>('SELECT name FROM project')
   ok('the project itself is untouched', projects[0]?.name === 'Legacy project')
+
+  // The assistant arrived long after this database was written. Its tables have to
+  // appear, its two columns have to land on a workspace table that predates them,
+  // and a workspace that has never seen a key must read as having none rather than
+  // as having an empty one that something later mistakes for a value.
+  const keys = await q<{ ai_api_key: string; ai_model: string }>(
+    'SELECT ai_api_key, ai_model FROM workspace ORDER BY name'
+  )
+  ok('an old workspace gains the assistant columns, empty',
+     keys.length === 2 && keys.every((w) => w.ai_api_key === '' && w.ai_model === ''))
+  ok('and maps to a workspace the renderer is told has no key',
+     (await q<any>('SELECT * FROM workspace ORDER BY name')).every((row) => mapWorkspace(row).aiKeySet === false))
+
+  const chatTables = await q<{ table_name: string }>(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name IN ('conversation', 'chat_message', 'chat_attachment')
+     ORDER BY table_name`
+  )
+  ok('the assistant\'s tables are created on an old database',
+     chatTables.length === 3, chatTables.map((t) => t.table_name).join(', '))
+
+  // A conversation is only meaningful inside its workspace, and must go when it does.
+  const [workspaceRow] = await q<{ id: string }>('SELECT id FROM workspace ORDER BY name LIMIT 1')
+  const [madeChat] = await q<{ id: string }>(
+    'INSERT INTO conversation (workspace_id, title) VALUES ($1, $2) RETURNING id',
+    [workspaceRow.id, 'Upgraded chat']
+  )
+  ok('a conversation can be written on an upgraded database', Boolean(madeChat?.id))
+
+  // An existing database has workspaces but no onboarding marker, which is exactly
+  // the pair the renderer reads: it is the *absence of any workspace, ever* that says
+  // this is a new install, so an upgrade lands in the app rather than in the pitch.
+  const marker = await q<{ value: string }>('SELECT value FROM setting WHERE key = $1', ['onboardedAt'])
+  const workspaceCount = await q<{ n: number }>('SELECT count(*)::int AS n FROM workspace')
+  ok('an upgraded database has no onboarding marker, and workspaces that make one unnecessary',
+     marker.length === 0 && workspaceCount[0]?.n === 2)
 
   // Running it a second time must be a no-op, not a failure.
   await initDb()

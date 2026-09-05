@@ -17,7 +17,7 @@ export function registerWorkspaceHandlers(): void {
   })
 
   handle('workspace:save', async (draft) => {
-    const fields = pick(draft as Partial<Workspace>, ['name', 'color', 'iconPath', 'sortOrder'])
+    const fields = pick(draft as Partial<Workspace>, ['name', 'color', 'iconPath', 'sortOrder', 'aiModel'])
 
     if (!draft.id && fields.sortOrder === undefined) {
       const max = await q1<{ n: number }>('SELECT COALESCE(max(sort_order), -1) + 1 AS n FROM workspace')

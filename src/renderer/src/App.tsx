@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { HashRouter, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
+import { AssistantPanel } from '@/components/AssistantPanel'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Icon } from '@/components/Icon'
 import { PageTransition } from '@/components/PageTransition'
 import { Sidebar } from '@/components/Sidebar'
 import { CreateDialog } from '@/components/CreateDialog'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
+import { useApi } from '@/lib/api'
+import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
 import { useTheme } from '@/lib/theme'
 import { WorkspaceProvider, useWorkspaces } from '@/lib/workspace'
 import { Onboarding } from '@/routes/Onboarding'
+import { Welcome } from '@/routes/Welcome'
 import { PeoplePage, PersonPage } from '@/routes/People'
 import { ProjectToday } from '@/routes/project/ProjectToday'
 import { ProjectKanban } from '@/routes/project/ProjectKanban'
@@ -37,7 +41,7 @@ function screenKey(pathname: string): string {
 }
 
 function Shell(): React.JSX.Element {
-  const { active, ready, switchTo } = useWorkspaces()
+  const { switchTo } = useWorkspaces()
   // Inside a project the target is already known, so it is never asked for.
   const inProject = useMatch('/projects/:id/*')
   const isBoard = Boolean(useMatch('/projects/:id/kanban'))
@@ -57,6 +61,7 @@ function Shell(): React.JSX.Element {
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
+  const assistant = useAssistant()
   // The preference lives in Settings; the shell only applies it.
   useTheme()
 
@@ -71,12 +76,13 @@ function Shell(): React.JSX.Element {
       else if (command === 'new-project') setNewProjectOpen(true)
       else if (command === 'new-workspace') setNewWorkspaceOpen(true)
       else if (command === 'search') setPaletteOpen(true)
+      else if (command === 'assistant') assistant.toggle()
       else if (command === 'settings') navigate('/settings')
       else if (command === 'workspace-settings') navigate('/workspace')
       else if (command === 'back') history.back()
       else if (command === 'forward') history.forward()
     })
-  }, [navigate])
+  }, [navigate, assistant])
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     const meta = e.metaKey || e.ctrlKey
@@ -86,17 +92,16 @@ function Shell(): React.JSX.Element {
     } else if (meta && e.key.toLowerCase() === 'n') {
       e.preventDefault()
       setQuickAddOpen(true)
+    } else if (meta && e.key.toLowerCase() === 'j') {
+      e.preventDefault()
+      assistant.toggle()
     }
-  }, [])
+  }, [assistant])
 
   useEffect(() => {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onKeyDown])
-
-  if (!ready) return <div className="h-full bg-base-100" />
-  // Nothing to show until there is a workspace to be inside.
-  if (!active) return <Onboarding />
 
   return (
     <div className="flex h-full bg-base-100 text-base-content">
@@ -115,7 +120,17 @@ function Shell(): React.JSX.Element {
             </button>
 
             <button
-              className="btn btn-primary btn-sm ml-auto gap-1.5"
+              className={`btn btn-sm ml-auto gap-1.5 ${assistant.open ? 'btn-active' : 'btn-ghost'}`}
+              onClick={assistant.toggle}
+              title="Assistant (⌘J)"
+              aria-pressed={assistant.open}
+            >
+              <Icon name="sparkle" size={14} className={assistant.open ? 'text-primary' : ''} />
+              Assistant
+            </button>
+
+            <button
+              className="btn btn-primary btn-sm gap-1.5"
               onClick={() => setQuickAddOpen(true)}
               title="New (⌘N)"
             >
@@ -162,6 +177,8 @@ function Shell(): React.JSX.Element {
         </main>
       </div>
 
+      <AssistantPanel />
+
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <CreateDialog
         open={quickAddOpen}
@@ -182,13 +199,48 @@ function Shell(): React.JSX.Element {
   )
 }
 
+/**
+ * Three ways in, and the difference between them is what the app is allowed to assume.
+ *
+ * A genuinely new install — nothing saved, not one workspace ever made — gets the
+ * introduction: it has to say what this is before it asks for anything. Someone who
+ * has been here for a year and has just deleted or archived their last workspace gets
+ * the short screen instead; they do not need the pitch again, which is the whole
+ * reason `onboardedAt` is written down rather than inferred from an empty database.
+ *
+ * The decision is latched on the first render that has the data, because finishing
+ * the flow falsifies its own condition: the workspace it creates would unmount the
+ * screen mid-save and let the app arrive behind it.
+ */
+function Gate(): React.JSX.Element {
+  const { active, ready, workspaces, archived } = useWorkspaces()
+  const settings = useApi('settings:get')
+  const [firstRun, setFirstRun] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (firstRun !== null || !ready || !settings.data) return
+    setFirstRun(
+      !settings.data.onboardedAt && workspaces.length === 0 && archived.length === 0
+    )
+  }, [firstRun, ready, settings.data, workspaces.length, archived.length])
+
+  if (!ready || firstRun === null) return <div className="h-full bg-base-100" />
+  if (firstRun) return <Welcome onDone={() => setFirstRun(false)} />
+  if (!active) return <Onboarding />
+  return (
+    <AssistantProvider workspaceId={active.id}>
+      <Shell />
+    </AssistantProvider>
+  )
+}
+
 export default function App(): React.JSX.Element {
   return (
     <HashRouter>
       <ToastProvider>
         <ContextMenuProvider>
           <WorkspaceProvider>
-            <Shell />
+            <Gate />
           </WorkspaceProvider>
         </ContextMenuProvider>
       </ToastProvider>

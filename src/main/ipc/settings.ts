@@ -1,6 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, shell } from 'electron'
+import { ASSISTANT_WIDTH } from '@shared/ai'
 import type { Settings } from '@shared/types'
 import { db, dataRoot, exportDir, exec, markdownDir, q } from '../db/client'
 import { DDL, MIGRATIONS } from '../db/ddl'
@@ -12,7 +13,8 @@ import { handle } from './util'
 const DEFAULTS = {
   theme: 'system' as const,
   staleAfterDays: THRESHOLDS.stillAfterDays,
-  horizonDays: 21
+  horizonDays: 21,
+  assistantWidth: ASSISTANT_WIDTH.default
 }
 
 async function readSettings(): Promise<Settings> {
@@ -36,9 +38,11 @@ async function readSettings(): Promise<Settings> {
     markdownDir: markdownDir(),
     appVersion: app.getVersion(),
     activeWorkspaceId,
+    onboardedAt: stored.onboardedAt ?? '',
     theme: (stored.theme as Settings['theme']) ?? DEFAULTS.theme,
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
-    horizonDays: num('horizonDays', DEFAULTS.horizonDays)
+    horizonDays: num('horizonDays', DEFAULTS.horizonDays),
+    assistantWidth: num('assistantWidth', DEFAULTS.assistantWidth)
   }
 }
 

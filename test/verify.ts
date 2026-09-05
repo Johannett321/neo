@@ -9,12 +9,27 @@ import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
+import { registerChatHandlers } from '../src/main/ipc/chat'
+import { TOOLS } from '../src/main/lib/ai/tools'
+import { apiOnly } from '../src/main/lib/ai/run'
+import { invokeChannel } from '../src/main/ipc/util'
 import { attentionReason } from '../src/main/lib/attention'
+import { exec, q } from '../src/main/db/client'
 
 const call = async (channel: string, input?: unknown): Promise<any> => {
   const fn = (__handlers as Map<string, any>).get(channel)
   if (!fn) throw new Error(`No handler: ${channel}`)
   return fn({}, input)
+}
+
+/** True when the call failed with a message saying what it should have said. */
+const threw = async (fn: () => Promise<unknown>, contains: string): Promise<boolean> => {
+  try {
+    await fn()
+    return false
+  } catch (e) {
+    return String((e as Error).message).includes(contains)
+  }
 }
 
 const ok = (label: string, cond: boolean, extra = ''): void => {
@@ -34,8 +49,18 @@ async function main(): Promise<void> {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerChatHandlers()
 
   ok('a fresh database has no workspaces', (await call('workspace:list')).length === 0)
+
+  // What the first-run introduction is gated on. It has to be written down rather
+  // than inferred from an empty database, because deleting your last workspace after
+  // a year of use empties it too and must not re-pitch the app at you.
+  ok('a fresh database has never been through onboarding',
+     (await call('settings:get')).onboardedAt === '')
+  const machineName = await call('profile:suggestName')
+  ok('the machine offers a name to start the profile off with',
+     typeof machineName.name === 'string', JSON.stringify(machineName.name))
 
   // A foreign-key trigger whose constraint has gone missing makes every insert into
   // that table fail with "cache lookup failed for constraint", and the database opens
@@ -385,6 +410,11 @@ async function main(): Promise<void> {
 
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
   ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
+
+  const finished = new Date().toISOString()
+  await call('settings:save', { onboardedAt: finished })
+  ok('finishing onboarding is remembered across launches',
+     (await call('settings:get')).onboardedAt === finished)
   ok('the app version is reported, not stored',
      settings.appVersion === '0.0.0-test' &&
      (await call('settings:save', { appVersion: '9.9.9' } as any)).appVersion === '0.0.0-test')
@@ -517,6 +547,145 @@ async function main(): Promise<void> {
   await call('project:delete', { id: doomed.id })
   ok('a project can be deleted outright',
      !(await call('project:list', { workspaceId: dayJob, status: 'all' })).some((p: any) => p.id === doomed.id))
+
+  /*
+   * The assistant. Everything except the model call itself is exercised here: the
+   * conversations, the tools, and the workspace fence they all sit behind. What is
+   * deliberately *not* tested is the run loop, which needs a key and a network.
+   */
+  const otherProject = (await call('project:list', { workspaceId: own, status: 'all' }))[0]
+
+  ok('a workspace starts with no key and no conversations',
+     (await call('workspace:list')).every((w: any) => w.aiKeySet === false) &&
+     (await call('chat:list', { workspaceId: dayJob })).length === 0)
+
+  await call('chat:setKey', { workspaceId: dayJob, apiKey: 'sk-test-not-a-real-key' })
+  const keyed = (await call('workspace:list')).find((w: any) => w.id === dayJob)
+  ok('a saved key is reported as set but never handed back',
+     keyed.aiKeySet === true && !('aiApiKey' in keyed) && JSON.stringify(keyed).indexOf('sk-test') === -1)
+
+  ok('sending without a key says so rather than failing obscurely',
+     await threw(() => call('chat:send', { workspaceId: own, text: 'hello' }), 'no API key'))
+
+  // Conversations are rows like anything else, so they are checked without a model.
+  const conversation = await q<{ id: string }>(
+    'INSERT INTO conversation (workspace_id, title) VALUES ($1, $2) RETURNING id', [dayJob, 'A chat'])
+  const conversationId = conversation[0].id
+  ok('conversations are listed in their own workspace only',
+     (await call('chat:list', { workspaceId: dayJob })).length === 1 &&
+     (await call('chat:list', { workspaceId: own })).length === 0)
+
+  await exec(
+    `INSERT INTO chat_message (conversation_id, role, blocks, tools, sort_order)
+     VALUES ($1, 'user', $2::jsonb, '{}'::jsonb, 0)`,
+    [conversationId, JSON.stringify([{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }])])
+  const loaded = await call('chat:get', { id: conversationId })
+  ok('a conversation replays its turns as the API sent them',
+     loaded.messages.length === 1 && loaded.messages[0].blocks[0].content[0].text === 'hi')
+
+  /*
+   * The SDK's stream helper returns a parsed response, hanging `parsed_arguments` on
+   * every function call and `parsed` on every text part. Those are the client's, not
+   * the wire's, and echoing one back is a 400 on the *second* request of a turn — so
+   * a conversation with no tool call in it looks entirely healthy and the bug only
+   * shows the first time the assistant looks something up.
+   */
+  const parsed = [
+    { type: 'function_call', call_id: 'c1', name: 'today', arguments: '{}', parsed_arguments: { a: 1 } },
+    { type: 'message', role: 'assistant',
+      content: [{ type: 'output_text', text: 'hello', parsed: { b: 2 } }] }
+  ]
+  const cleaned = apiOnly(parsed)
+  ok('the SDK\'s own fields are stripped before a turn goes back to the API',
+     !('parsed_arguments' in cleaned[0]) && !('parsed' in cleaned[1].content[0]),
+     JSON.stringify(cleaned))
+  ok('and everything the API does want survives that',
+     cleaned[0].call_id === 'c1' && cleaned[0].arguments === '{}' &&
+     cleaned[1].content[0].text === 'hello')
+  ok('stripping does not mutate what it was given',
+     'parsed_arguments' in parsed[0] && 'parsed' in (parsed[1] as any).content[0])
+
+  ok('a conversation can be renamed',
+     (await call('chat:rename', { id: conversationId, title: 'Renamed' })).title === 'Renamed')
+
+  // Tool catalogue. A write with no confirmation line is the one bug in this feature
+  // that would matter, so it is asserted rather than trusted.
+  ok('every tool has a name, a description and a schema',
+     TOOLS.every((t) => t.name && t.description && t.parameters.type === 'object'))
+  ok('no two tools share a name', new Set(TOOLS.map((t) => t.name)).size === TOOLS.length)
+  ok('every tool that writes can say what it is about to do',
+     TOOLS.filter((t) => t.writes).every((t) => typeof t.summary === 'function'),
+     TOOLS.filter((t) => t.writes && !t.summary).map((t) => t.name).join(', '))
+  ok('reads never ask for confirmation',
+     TOOLS.filter((t) => !t.writes).every((t) => t.summary === undefined))
+
+  const tool = (name: string): any => TOOLS.find((t) => t.name === name)
+  const dayJobCtx = { workspaceId: dayJob }
+
+  const listed = await tool('list_projects').run({}, dayJobCtx)
+  ok('a tool sees only its own workspace', listed.length === 3 &&
+     !listed.some((p: any) => p.id === otherProject.id))
+
+  ok('a project in another workspace is simply not found',
+     await threw(() => tool('get_project').run({ project: otherProject.name }, dayJobCtx),
+                 'No project in this workspace'))
+
+  const seenProject = await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
+  ok('get_project carries the board, the people and the write-ups',
+     seenProject.board.length > 0 && seenProject.people.length > 0 && Array.isArray(seenProject.meetings))
+
+  // Reading a project must not count as visiting it — the re-entry brief measures
+  // the gap since *you* last opened it, and the assistant is not you.
+  const clockBefore = await q<{ last_opened_at: string | null }>(
+    'SELECT last_opened_at FROM project WHERE id = $1', [seenProject.id])
+  await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
+  const clockAfter = await q<{ last_opened_at: string | null }>(
+    'SELECT last_opened_at FROM project WHERE id = $1', [seenProject.id])
+  ok('the assistant reading a project does not roll the re-entry clock',
+     String(clockBefore[0].last_opened_at) === String(clockAfter[0].last_opened_at))
+
+  ok('an ambiguous name is reported rather than guessed at',
+     await threw(() => tool('get_project').run({ project: 'e' }, dayJobCtx), 'Ask which one'))
+
+  const summary = await tool('create_task').summary(
+    { project: 'Checkout rewrite', title: 'Draft the brief', dueDate: '2026-10-01' }, dayJobCtx)
+  ok('a confirmation names the project rather than quoting an id',
+     summary.includes('Draft the brief') && summary.includes('Checkout rewrite') &&
+     summary.includes('2026-10-01') && !summary.includes(seenProject.id), summary)
+
+  ok('a bad date is refused before anything is written',
+     await threw(() => tool('create_task').summary(
+       { project: 'Checkout rewrite', title: 'x', dueDate: 'next Friday' }, dayJobCtx), 'YYYY-MM-DD'))
+
+  // The whole point of routing writes through the app's own channels: a task the
+  // assistant makes has to be indistinguishable from one made by a click.
+  const activityBefore = (await call('dashboard:activity', { workspaceId: dayJob })).length
+  const made = await tool('create_task').run(
+    { project: 'Checkout rewrite', title: 'Written by the assistant', dueDate: '2026-10-01' }, dayJobCtx)
+  const madeTask = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)
+  ok('a task the assistant writes lands on the board like any other',
+     Boolean(madeTask) && madeTask.columnId !== null && madeTask.dueDate === '2026-10-01')
+  ok('and logs activity, because it went through the same channel',
+     (await call('dashboard:activity', { workspaceId: dayJob })).length === activityBefore + 1)
+
+  await tool('set_task_status').run({ id: made.id, status: 'done' }, dayJobCtx)
+  const tickedCard = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)
+  ok('ticking a card off through a tool also moves it to the done column',
+     tickedCard.status === 'done' && tickedCard.columnId !== madeTask.columnId)
+
+  const foreignTask = (await invokeChannel('task:list', { projectId: otherProject.id }))[0]
+  const refused = await threw(
+    () => tool('set_task_status').run({ id: foreignTask.id, status: 'done' }, dayJobCtx),
+    'in this workspace')
+  const stillOpen = (await invokeChannel('task:list', { projectId: otherProject.id }))
+    .find((t: any) => t.id === foreignTask.id)
+  ok('a task in another workspace cannot be touched by id, even a real one',
+     refused && stillOpen?.status === foreignTask.status)
+
+  await call('chat:delete', { id: conversationId })
+  ok('deleting a conversation takes its turns with it',
+     (await call('chat:list', { workspaceId: dayJob })).length === 0 &&
+     (await q('SELECT id FROM chat_message WHERE conversation_id = $1', [conversationId])).length === 0)
 
   const md = await call('settings:exportMarkdown')
   ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)

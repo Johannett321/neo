@@ -3,7 +3,7 @@ import { exec, q } from '../db/client'
 import { mapCast, mapPerson, mapPersonProject } from '../db/map'
 import { logActivity } from '../lib/activity'
 import { deleteIcon, readIcon } from '../lib/icons'
-import { ensureMe, ensureMeEverywhere, readProfile, writeProfile } from '../lib/profile'
+import { ensureMe, ensureMeEverywhere, readProfile, suggestedName, writeProfile } from '../lib/profile'
 import { mirrorProject } from '../lib/markdown'
 import { handle, pick, upsert } from './util'
 
@@ -97,6 +97,8 @@ export function registerPeopleHandlers(): void {
     const stored = await readProfile()
     return { ...stored, avatar: await readIcon(stored.avatarPath) }
   })
+
+  handle('profile:suggestName', async () => ({ name: await suggestedName() }))
 
   handle('profile:save', async (patch) => {
     const current = await readProfile()

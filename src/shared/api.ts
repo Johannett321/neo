@@ -1,7 +1,8 @@
 import type {
-  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, LinkKind, Membership, Note,
-  Meeting, MeetingTodo, MeetingView, Person, PersonProject, Project, ProjectDetail, ProjectStatus,
-  ProjectSummary, Profile, SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, Workspace
+  Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
+  JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
+  PersonProject, Project, ProjectDetail, ProjectStatus, ProjectSummary, Profile, SearchHit,
+  Settings, Task, TaskKind, TaskStatus, TodayView, Workspace
 } from './types'
 
 /** Every scoped request names its workspace explicitly — there is no implicit "all". */
@@ -106,6 +107,8 @@ export interface ApiMap {
 
   'profile:get': { in: void; out: Profile }
   'profile:save': { in: Partial<Profile>; out: Profile }
+  /** What to put in the name field on first run, from the machine's own account. */
+  'profile:suggestName': { in: void; out: { name: string } }
 
   'settings:get': { in: void; out: Settings }
   'settings:save': { in: Partial<Settings>; out: Settings }
@@ -116,6 +119,38 @@ export interface ApiMap {
   'settings:wipe': { in: void; out: void }
 
   'shell:openExternal': { in: { url: string }; out: void }
+
+  /* ---------------------------------------------------------------- assistant */
+
+  'chat:list': { in: Scope; out: Conversation[] }
+  /** A conversation with its turns, oldest first. */
+  'chat:get': { in: { id: string }; out: { conversation: Conversation; messages: ChatMessage[] } }
+  'chat:rename': { in: { id: string; title: string }; out: Conversation }
+  'chat:delete': { in: { id: string }; out: void }
+  /**
+   * Ask. Returns as soon as the run has started — the reply itself arrives on the
+   * `ai` event channel, a token at a time, so it can be read while it is written.
+   * Without `conversationId` a new conversation is opened and named after the first
+   * exchange. `runId` is what `chat:respond` and `chat:cancel` refer to.
+   */
+  'chat:send': {
+    in: {
+      workspaceId: string
+      conversationId?: string
+      text: string
+      files?: AttachmentUpload[]
+      /** The project the panel was opened over, so "this project" has a referent. */
+      projectId?: string
+    }
+    /** `messageId` is the user's turn as saved, so the panel knows when to stop
+     *  drawing its optimistic copy of it. */
+    out: { runId: string; conversationId: string; messageId: string }
+  }
+  /** Answer the confirmation a write tool is waiting on. */
+  'chat:respond': { in: { runId: string; toolUseId: string; approved: boolean }; out: void }
+  'chat:cancel': { in: { runId: string }; out: void }
+  /** Write-only: the key goes in and never comes back out. Empty string clears it. */
+  'chat:setKey': { in: { workspaceId: string; apiKey: string }; out: Workspace }
 }
 
 export type Channel = keyof ApiMap

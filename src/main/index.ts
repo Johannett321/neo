@@ -6,6 +6,7 @@ import { buildAppMenu } from './menu'
 import { ensureColumnsEverywhere } from './lib/board'
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
+import { registerChatHandlers } from './ipc/chat'
 import { registerContentHandlers } from './ipc/content'
 import { registerDashboardHandlers } from './ipc/dashboard'
 import { registerMeetingHandlers } from './ipc/meetings'
@@ -16,7 +17,18 @@ import { registerSettingsHandlers } from './ipc/settings'
 import { registerTaskHandlers } from './ipc/tasks'
 import { registerWorkspaceHandlers } from './ipc/workspaces'
 
-const isDev = !app.isPackaged
+/**
+ * The dev server's own URL, set by electron-vite when there is one, and the only
+ * honest signal for which renderer to load.
+ *
+ * `app.isPackaged` cannot do this job here. Electron computes it from the name of
+ * the executable — anything but `Electron` counts as packaged — and dev-branding
+ * renames it to `Neo` so the dock stops lying about what you are running. That made
+ * every development launch believe it was packaged and load the last production
+ * build out of `out/renderer`, so nothing you changed in the renderer appeared and
+ * hot reload did nothing at all.
+ */
+const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
 // Set before the app is ready: after that, macOS has already built the menu bar and
 // it keeps saying "Electron" for the rest of the session.
@@ -74,8 +86,8 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  if (isDev && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
+  if (rendererUrl) {
+    void window.loadURL(rendererUrl)
   } else {
     void window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
@@ -93,6 +105,8 @@ function registerHandlers(): void {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  // Registered last: the assistant's tools call the channels above by name.
+  registerChatHandlers()
 }
 
 async function start(): Promise<void> {

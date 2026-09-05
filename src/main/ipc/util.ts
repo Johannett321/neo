@@ -2,11 +2,37 @@ import { ipcMain } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
 import { q1 } from '../db/client'
 
+/**
+ * Every registered handler, kept so the process can call its own channels.
+ *
+ * The assistant's tools are the same channels the renderer uses rather than a second
+ * set of writes beside them, which is what makes an assistant-made task identical to
+ * a hand-made one: it logs activity, rewrites the Markdown mirror and honours the
+ * column allowlist because it *is* that code path, not a copy of it that will drift.
+ */
+const registry = new Map<string, (input: unknown) => Promise<unknown>>()
+
 export function handle<C extends Channel>(
   channel: C,
   fn: (input: Input<C>) => Promise<Output<C>> | Output<C>
 ): void {
+  registry.set(channel, async (input) => fn(input as Input<C>))
   ipcMain.handle(channel, async (_event, input) => fn(input as Input<C>))
+}
+
+/**
+ * Call a channel from inside the main process. Channels that take an input require
+ * one, exactly as they do from the renderer — the same tuple trick, for the same
+ * reason: a workspace-scoped channel called with nothing would quietly return
+ * everything.
+ */
+export async function invokeChannel<C extends Channel>(
+  channel: C,
+  ...args: Input<C> extends void ? [input?: undefined] : [input: Input<C>]
+): Promise<Output<C>> {
+  const fn = registry.get(channel)
+  if (!fn) throw new Error(`No handler registered for ${channel}`)
+  return (await fn(args[0])) as Output<C>
 }
 
 const snake = (s: string): string => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)

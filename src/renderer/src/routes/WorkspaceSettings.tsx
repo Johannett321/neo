@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { DEFAULT_MODEL, MODELS } from '@shared/ai'
 import type { Workspace } from '@shared/types'
-import { useApi, useApiMutation } from '@/lib/api'
+import { call, useApi, useApiMutation } from '@/lib/api'
 import { useWorkspace, useWorkspaces } from '@/lib/workspace'
 import { plural } from '@/lib/format'
 import { Icon } from '@/components/Icon'
@@ -40,6 +42,13 @@ export function WorkspaceSettings(): React.JSX.Element {
             icon: 'sparkle',
             description: 'How you pick this workspace out of the switcher.',
             render: () => <IdentityPane workspace={workspace} />
+          },
+          {
+            id: 'assistant',
+            label: 'Assistant',
+            icon: 'sparkle',
+            description: 'The key it runs on, and which model it uses.',
+            render: () => <AssistantPane workspace={workspace} />
           },
           {
             id: 'archive',
@@ -111,6 +120,142 @@ function IdentityPane({ workspace }: { workspace: Workspace }): React.JSX.Elemen
           </div>
         </Field>
       </div>
+    </Panel>
+  )
+}
+
+/**
+ * The assistant's key lives on the workspace rather than on the app, because a
+ * workspace *is* a separate working life: the key a consultancy bills through should
+ * not be the one a day job's questions go out on, and the boundary the rest of the
+ * app enforces on data should hold for what leaves the machine too.
+ *
+ * The key is write-only across the bridge. It is stored beside everything else in
+ * `~/Documents/Neo` and never sent back to the renderer — all this screen is ever
+ * told is whether there is one, which is all it needs to know.
+ */
+function AssistantPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const client = useQueryClient()
+  const save = useApiMutation('workspace:save')
+  const [key, setKey] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setKey('')
+    setEditing(false)
+    setError('')
+  }, [workspace.id])
+
+  const setApiKey = async (value: string): Promise<void> => {
+    setSaving(true)
+    setError('')
+    try {
+      await call('chat:setKey', { workspaceId: workspace.id, apiKey: value })
+      await client.invalidateQueries()
+      setKey('')
+      setEditing(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Panel>
+      <Field
+        label="OpenAI API key"
+        hint="Kept in this workspace's own data and never sent anywhere but OpenAI. Get one at platform.openai.com."
+      >
+        {workspace.aiKeySet && !editing ? (
+          <div className="hairline flex items-center gap-2 rounded-field border bg-base-200/50 px-3 py-2">
+            <Icon name="check" size={14} className="text-success" />
+            <span className="flex-1 text-[13px] text-base-content/70">A key is saved for this workspace.</span>
+            <button className="btn btn-ghost btn-xs" onClick={() => setEditing(true)}>
+              Replace
+            </button>
+            <ConfirmButton
+              label="Remove"
+              title="Remove this key?"
+              body="The assistant stops working in this workspace until you add another. Nothing else is touched."
+              confirmLabel="Remove"
+              className="btn btn-ghost btn-xs text-base-content/50 hover:text-error"
+              onConfirm={() => void setApiKey('')}
+            />
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              type="password"
+              className="input input-bordered w-full font-mono text-[12.5px]"
+              placeholder="sk-…"
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && key.trim()) void setApiKey(key.trim())
+              }}
+            />
+            <button
+              className="btn btn-primary btn-sm shrink-0 self-center"
+              disabled={!key.trim() || saving}
+              onClick={() => void setApiKey(key.trim())}
+            >
+              Save
+            </button>
+            {workspace.aiKeySet && (
+              <button
+                className="btn btn-ghost btn-sm shrink-0 self-center"
+                onClick={() => {
+                  setKey('')
+                  setEditing(false)
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+      </Field>
+
+      {error && <p className="mt-2 text-[12px] text-error">{error}</p>}
+
+      <div className="hairline mt-5 border-t pt-5">
+        <Field label="Model" hint="Every question and every answer is billed to the key above.">
+          <div className="space-y-1">
+            {MODELS.map((model) => {
+              const isActive = (workspace.aiModel || DEFAULT_MODEL) === model.id
+              return (
+                <button
+                  key={model.id}
+                  className={`hairline flex w-full items-center gap-3 rounded-field border px-3 py-2 text-left transition ${
+                    isActive ? 'border-primary/40 bg-primary/5' : 'hover:bg-base-200/60'
+                  }`}
+                  onClick={() => save.mutate({ id: workspace.id, aiModel: model.id })}
+                >
+                  <span
+                    className={`size-3.5 shrink-0 rounded-full border-[1.5px] ${
+                      isActive ? 'border-primary bg-primary' : 'border-base-content/25'
+                    }`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium">{model.label}</span>
+                    <span className="block text-[11.5px] text-base-content/50">{model.hint}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </Field>
+      </div>
+
+      <p className="mt-5 text-[11.5px] leading-relaxed text-base-content/45">
+        The assistant can only see this workspace, and it asks before it changes anything — every
+        write is shown to you in plain words first, and nothing happens until you say yes.
+      </p>
     </Panel>
   )
 }

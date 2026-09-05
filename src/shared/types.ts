@@ -42,6 +42,14 @@ export interface Workspace {
   sortOrder: number
   /** Archived means out of the way, not gone: hidden everywhere, restorable in one click. */
   archivedAt: string | null
+  /**
+   * Whether an API key has been saved for this workspace. Never the key: that stays
+   * in the main process alongside the database, and the renderer is only ever told
+   * that there is one.
+   */
+  aiKeySet: boolean
+  /** Which model the assistant runs on. Empty means the default. */
+  aiModel: string
   createdAt: string
 }
 
@@ -306,7 +314,96 @@ export interface Settings {
   appVersion: string
   /** Remembered across restarts so you land back where you were. */
   activeWorkspaceId: string
+  /**
+   * When the first-run flow was finished, as an ISO timestamp; empty until it is.
+   * It only ever decides whether the app introduces itself: deleting your last
+   * workspace later gets you the short "create a workspace" screen, not the pitch
+   * for an app you have been using for a year.
+   */
+  onboardedAt: string
   theme: 'light' | 'dark' | 'system'
   staleAfterDays: number
   horizonDays: number
+  /** How wide you have dragged the assistant panel. */
+  assistantWidth: number
 }
+
+/* ------------------------------------------------------------------ assistant */
+
+/**
+ * A chat with the assistant. Conversations belong to a workspace like everything
+ * else — the assistant can only see the workspace it was opened in, so asking it
+ * about your day job cannot pull an answer out of a client's project.
+ */
+export interface Conversation {
+  id: string
+  workspaceId: string
+  /** Written by the model after the first exchange; empty until then. */
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** A file the user put into the conversation, stored beside the database. */
+export interface Attachment {
+  id: string
+  messageId: string | null
+  name: string
+  mime: string
+  bytes: number
+  /** Filename inside attachments/. The renderer never sees a path it can read. */
+  path: string
+}
+
+/**
+ * What happened when the assistant used a tool, kept apart from the API content
+ * blocks so those stay exactly what Claude sent and can be replayed unchanged.
+ */
+export interface ToolRecord {
+  name: string
+  /** What the tool did, in plain words. The same line the confirmation asked about. */
+  label: string
+  status: 'done' | 'declined' | 'error'
+  detail: string
+}
+
+/**
+ * One turn. `blocks` is the API's own content — text, tool_use, tool_result — so a
+ * conversation reopened tomorrow replays to the model precisely as it was, and the
+ * renderer derives what it draws from the same rows rather than a second copy.
+ */
+export interface ChatMessage {
+  id: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  /** Keyed by tool_use id. */
+  tools: Record<string, ToolRecord>
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  blocks: any[]
+  attachments: Attachment[]
+  sortOrder: number
+  createdAt: string
+}
+
+/** A file on its way in: read in the renderer, written to disk by main. */
+export interface AttachmentUpload {
+  name: string
+  mime: string
+  /** Base64, without the data: prefix. */
+  data: string
+}
+
+/**
+ * What the main process pushes at the panel while a turn is running. A reply is
+ * streamed rather than awaited, so the answer is readable while it is still being
+ * written, and a tool that wants to change something stops the run and asks.
+ */
+export type AiEvent =
+  | { runId: string; type: 'text'; delta: string }
+  | { runId: string; type: 'tool'; id: string; name: string; label: string; status: 'running' | 'done' | 'error'; detail: string }
+  /** The run is now waiting. Nothing is written until `ai:respond` says so. */
+  | { runId: string; type: 'approval'; id: string; name: string; label: string; detail: string }
+  | { runId: string; type: 'title'; conversationId: string; title: string }
+  /** The turn is over; the panel refetches and drops everything it was holding. */
+  | { runId: string; type: 'done'; conversationId: string }
+  | { runId: string; type: 'error'; message: string }

@@ -39,6 +39,26 @@ short list of panes down the left, one pane at a time on the right. A long scrol
 sections meant the thing you came to change was never where you left it; a pane is a
 place, and it stays put.
 
+### The first launch
+The app opens the first time on an introduction rather than a form: what this is for,
+the three questions above, and the one constraint everything else follows from — it has
+to survive neglect. Only then does it ask for anything, and it asks for two things:
+your name, and one working life to put in it. Nothing is written until the last button,
+so leaving halfway through leaves nothing behind.
+
+The name field starts filled in from the machine's own account, the workspace name
+offers the three people actually use, and the progress rail starts with a segment
+already complete, because installing it and opening it is not nothing.
+
+It is shown **once**, and only to a genuinely new installation — the flow writes down
+that it finished. Deleting or archiving your last workspace a year later gets the short
+"create a workspace" screen instead, which is also where the archived ones are listed
+for restoring. Someone upgrading from an older version never sees the introduction at
+all: they already have workspaces, which is the proof they do not need it.
+
+`Look around with sample data` is on that first panel too, for anyone who would rather
+see it working than be told about it.
+
 ### Projects, and focus mode
 Projects are either **active or archived** — nothing finer to filter by, and the archived
 list is a quiet link beside the count rather than a row of tabs. The page is a grid of
@@ -270,6 +290,40 @@ question is asked in one place rather than reimplemented at each call site.
 `⌘K` searches projects, people, tasks, notes, decisions and journal entries at once —
 within the current workspace only.
 
+### The assistant
+A panel down the right-hand side, opened with the button beside **New** or with `⌘J`. It
+pushes the page rather than covering it, because what you are asking about is usually
+what you are looking at.
+
+It runs on **your own OpenAI key**, entered in workspace settings under Assistant, and
+the key lives on the workspace rather than on the app — a workspace *is* a separate
+working life, and the key a client is billed through should not be the one your day job's
+questions go out on. The key is stored in the same folder as everything else and is never
+sent back out of the main process; the settings screen is only ever told whether there
+is one.
+
+It can **read everything in the workspace it was opened in** — the board, the people and
+how to work with them, the notes, the meeting write-ups, the decision log, the journal,
+the links, the activity — and nothing outside it. Ask it what needs you this week, where
+you got to on something, who to chase and about what.
+
+It can also **change things**, and every change stops and asks first. The confirmation is
+a sentence in plain words with the ids resolved out of it — *"Add "Draft the Q3 brief" to
+Website relaunch, for Priya, due 2026-10-01"* — because a confirmation you cannot check is
+one you learn to click through. Nothing is written until you say yes, and declining is
+final: it is told so, and told not to try another way round.
+
+Every write it makes goes through the same channel your own click goes through, so a task
+it creates is not a special kind of task. It logs activity, bumps the project's clock and
+lands in the Markdown mirror exactly as a hand-made one does, because it is the same code
+path rather than a second copy of it.
+
+Replies stream as they are written and render as real Markdown — headings, lists, tables,
+code. You can **attach files**: images, PDFs, and text or code files, dropped onto the
+panel or picked with the paperclip. Conversations are saved, listed in the panel's header
+and switchable; each one names itself from the first exchange rather than being called
+"New chat" forever or making you name it before you know what it is about.
+
 ## Your data
 
 Everything lives in **`~/Documents/Neo`**:
@@ -281,9 +335,13 @@ Everything lives in **`~/Documents/Neo`**:
   ever abandoned, the writing that matters survives in a format any editor opens.
 - `icons/` — the images you upload for workspaces, projects and people. Files nothing
   references any more are swept on launch.
+- `attachments/` — files you have dropped into a conversation with the assistant.
 - `exports/` — JSON dumps of the structured data, on demand.
 
-Nothing leaves the machine. Back it up by copying the folder.
+Nothing leaves the machine on its own. The one thing that ever does is a question you
+type into the assistant, which goes to OpenAI on your own key along with whatever it
+looked up to answer it — and only from the workspace you asked in. With no key saved,
+nothing leaves at all.
 
 ## Calendar
 
@@ -316,6 +374,13 @@ tooltip from LaunchServices' cache keyed on the **bundle identifier** — so all
 to change, and the stale LaunchServices entry has to be dropped, before the app stops
 calling itself Electron. It runs on `npm run dev` and after every install.
 
+Renaming the executable has one consequence worth knowing: `app.isPackaged` is derived
+from that name, so a development run reports itself as packaged. The window therefore
+decides which renderer to load from `ELECTRON_RENDERER_URL` — the dev server's own
+address, which only exists when there is one — rather than from `isPackaged`, which
+would send every `npm run dev` to the last production build in `out/` with no hot
+reload and no sign that anything was wrong.
+
 ## Running it## Running it
 
 ```bash
@@ -327,8 +392,9 @@ npm run verify          # exercise the whole backend headlessly
 npm run verify:upgrade  # open a database written by an older version
 ```
 
-On first launch the app asks you to create a workspace. If you would rather look around
-first, **load the sample data** from that screen for a realistic set of three workspaces
+On first launch the app introduces itself and then asks for your name and one workspace
+(see [The first launch](#the-first-launch)). If you would rather look around first,
+**load the sample data** from that first panel for a realistic set of three workspaces
 with projects, people, meetings and history. Settings has no reset button: emptying the
 database is a thing you do to the data folder, not something to leave a click away from
 your own work.

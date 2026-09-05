@@ -43,6 +43,7 @@ export function dataRoot(): string {
 export const dbDir = (): string => join(dataRoot(), 'db')
 export const iconDir = (): string => join(dataRoot(), 'icons')
 export const markdownDir = (): string => join(dataRoot(), 'markdown')
+export const attachmentDir = (): string => join(dataRoot(), 'attachments')
 export const exportDir = (): string => join(dataRoot(), 'exports')
 
 /**

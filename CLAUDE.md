@@ -45,7 +45,13 @@ workspace and quietly returning everything.
 **Main** (`src/main/`) owns the database, the filesystem and the shell; none of them ever
 reach the renderer. `ipc/` holds handlers grouped by domain, `lib/` the logic that is not
 a handler (attention reasons, board columns, profile, markdown mirror, activity log, sample data,
-icon storage), `db/` the client, schema and row mapping.
+icon storage, attachments, `ai/` the assistant), `db/` the client, schema and row mapping.
+
+`handle()` also records every handler in a registry, and `invokeChannel()` calls one from
+inside main. That exists for the assistant: its tools are the app's own channels rather
+than a second set of writes beside them, so a task it creates logs activity, bumps the
+project clock and lands in the Markdown mirror because it *is* that code path. Do not
+give a tool its own SQL — add the channel it needs and call it.
 
 **Renderer** (`src/renderer/src/`) is React 19 + TanStack Query + React Router in hash
 mode. `routes/` are screens, `components/` the shared pieces, `lib/` the app-wide systems
@@ -76,6 +82,15 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - **One right-click system.** `lib/contextMenu.tsx` — call sites describe items;
   positioning, edge-flipping, dismissal and the confirmation step for destructive actions
   are handled centrally. Do not reimplement a confirm at a call site.
+- **The introduction is shown once, and only to a new install.** `settings.onboardedAt`
+  is written when the first-run flow finishes, and `Gate` in `App.tsx` shows
+  `routes/Welcome.tsx` only when that is empty *and* there has never been a workspace,
+  live or archived. An empty database is not on its own proof of a new install — deleting
+  your last workspace is the other way to get one — which is why the marker exists.
+  The decision is latched in state on the first render that has the data, because the
+  workspace the flow creates falsifies its own condition: without the latch the screen
+  unmounts mid-save and the app appears behind it. Nothing is written until the last
+  button, so abandoning the flow leaves nothing behind.
 - **Settings screens are panes, not scrolls.** App, workspace and project settings all
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,
@@ -83,6 +98,20 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
   weight. Nothing is fetched at runtime; add a path rather than a dependency.
 - **Dates use `components/DateField.tsx`**, never `<input type="date">`.
+- **The assistant asks before every write.** `src/main/lib/ai/tools.ts` marks a tool
+  `writes: true`, and every one of those must have a `summary()` returning the sentence
+  the confirmation shows — ids resolved to names, dates validated, written for someone
+  who has not read the arguments. The run loop blocks on it; nothing is written until the
+  renderer answers. There is deliberately no allowlist of "safe" writes, and `summary()`
+  must fail on bad input *before* the question is asked rather than after it is answered.
+  `verify.ts` asserts every write tool has one.
+- **Reads are workspace-fenced by construction.** Every tool either filters on
+  `workspaceId` or resolves an id through a query joined back to it. A tool that takes a
+  bare id must confirm it belongs to this workspace first — see `resolveTask()`.
+- **Markdown is rendered by `components/Markdown.tsx`** and edited by `MarkdownEditor`;
+  both read the one parser in `lib/markdown.ts`. The editor leaves every character in
+  place because you are editing it; the renderer takes the syntax off because you are
+  not. Add syntax to the parser, not to either one of them.
 - Workspace colours are identifiers, not surfaces — a dot or a 2px rule, never a filled
   block. Theme tokens for `pm` / `pmdark` live in `styles.css`.
 
@@ -141,6 +170,13 @@ label), `CFBundleIdentifier` (LaunchServices' cached name) and the **bundle's fi
 `Electron.app` → `Neo.app` and rewriting `node_modules/electron/path.txt` — and drops the
 stale LaunchServices entry. It runs on `npm run dev` and after every install. If the dock
 starts saying "Electron" again, that script is where to look.
+
+One consequence of renaming the executable: Electron derives `app.isPackaged` from that
+name, so a development run reports itself as **packaged**. Anything choosing a behaviour
+by `isPackaged` will pick the production one under `npm run dev` — which is how the
+window came to load the stale build in `out/renderer` instead of the dev server, with no
+hot reload and no error. `createWindow()` now switches on `ELECTRON_RENDERER_URL`, which
+exists exactly when a dev server does. Do not reintroduce `isPackaged` as a dev check.
 
 `scripts/make-icon.mjs` generates `icon.png`, the iconset and the `.icns` from signed
 distance fields, drawing each size natively rather than downscaling one master. There is no

@@ -1,6 +1,7 @@
 import type {
-  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, Membership, MeetingTodo,
-  MeetingView, Note, Person, PersonProject, Project, ProjectStatus, Task, TaskView, Workspace
+  Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
+  JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
+  Project, ProjectStatus, Task, TaskView, Workspace
 } from '@shared/types'
 import { daysBetween, iso, isoOrNull, today } from './client'
 
@@ -15,6 +16,10 @@ export const mapWorkspace = (r: Row, icon: string | null = null): Workspace => (
   icon,
   sortOrder: r.sort_order,
   archivedAt: isoOrNull(r.archived_at),
+  // Whether there is a key, never the key. It stays in the database with everything
+  // else main owns, and the renderer is told only that the assistant can run.
+  aiKeySet: Boolean(r.ai_api_key),
+  aiModel: r.ai_model ?? '',
   createdAt: iso(r.created_at)
 })
 
@@ -191,5 +196,34 @@ export const mapActivity = (r: Row): Activity => ({
   projectId: r.project_id,
   kind: r.kind,
   summary: r.summary,
+  createdAt: iso(r.created_at)
+})
+
+export const mapConversation = (r: Row): Conversation => ({
+  id: r.id,
+  workspaceId: r.workspace_id,
+  title: r.title ?? '',
+  createdAt: iso(r.created_at),
+  updatedAt: iso(r.updated_at)
+})
+
+export const mapAttachment = (r: Row): Attachment => ({
+  id: r.id,
+  messageId: r.message_id ?? null,
+  name: r.name ?? '',
+  mime: r.mime ?? '',
+  bytes: r.bytes ?? 0,
+  path: r.path ?? ''
+})
+
+export const mapChatMessage = (r: Row, attachments: Attachment[] = []): ChatMessage => ({
+  id: r.id,
+  conversationId: r.conversation_id,
+  role: r.role,
+  // jsonb comes back parsed, but a row written by an older build could be a string.
+  blocks: typeof r.blocks === 'string' ? JSON.parse(r.blocks) : (r.blocks ?? []),
+  tools: typeof r.tools === 'string' ? JSON.parse(r.tools) : (r.tools ?? {}),
+  attachments,
+  sortOrder: r.sort_order,
   createdAt: iso(r.created_at)
 })

@@ -385,3 +385,292 @@ summary,
   text-underline-offset: 2px;
   text-decoration-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
 }
+
+/*
+ * The assistant's replies, read rather than edited.
+ *
+ * The editor above styles Markdown in place and leaves every character where it is,
+ * because you are still writing it. This is the other case entirely — the syntax is
+ * gone, and what is left is a document. Sizes are a touch smaller than the editor's:
+ * a 420px column is a narrow measure, and prose set at note size in it looks shouty.
+ */
+.md {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: color-mix(in oklch, var(--color-base-content) 88%, transparent);
+  overflow-wrap: break-word;
+}
+.md > *:first-child {
+  margin-top: 0;
+}
+.md > *:last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0.6em 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+  color: var(--color-base-content);
+  margin: 1.25em 0 0.45em;
+}
+.md h1 {
+  font-size: 1.32em;
+}
+.md h2 {
+  font-size: 1.16em;
+}
+.md h3 {
+  font-size: 1.04em;
+}
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 1em;
+  color: color-mix(in oklch, var(--color-base-content) 66%, transparent);
+}
+
+.md ul,
+.md ol {
+  margin: 0.55em 0;
+  padding-left: 1.35em;
+}
+.md li {
+  margin: 0.22em 0;
+  /* The drawn bullet and the drawn checkbox are both positioned against the item. */
+  position: relative;
+}
+.md ul {
+  list-style: none;
+}
+.md ul > li::before {
+  content: '•';
+  position: absolute;
+  left: -1em;
+  color: color-mix(in oklch, var(--color-base-content) 38%, transparent);
+}
+.md ol {
+  list-style: decimal;
+}
+.md ol > li::marker {
+  color: color-mix(in oklch, var(--color-base-content) 38%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+/* A checked box is drawn, not typed — the same one the editor draws. */
+.md li.task::before {
+  content: none;
+}
+.md .tick {
+  position: absolute;
+  left: -1.35em;
+  top: 0.32em;
+  width: 12px;
+  height: 12px;
+  border-radius: 3.5px;
+  border: 1.5px solid color-mix(in oklch, var(--color-base-content) 28%, transparent);
+}
+.md .tick.on {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.md .tick.on::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.3px;
+  width: 3.2px;
+  height: 6.5px;
+  border: solid var(--color-primary-content);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(43deg);
+}
+/* A wrapped continuation under an item is prose, not a second bullet. */
+.md .sub {
+  margin: 0.15em 0 0.35em;
+  color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+}
+.md .sub p {
+  margin: 0.2em 0;
+}
+
+.md blockquote {
+  margin: 0.7em 0;
+  padding-left: 0.85em;
+  border-left: 2px solid color-mix(in oklch, var(--color-base-content) 15%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 62%, transparent);
+}
+
+.md hr {
+  margin: 1.2em 0;
+  border: none;
+  border-top: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  padding: 0.12em 0.36em;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+}
+.md pre {
+  position: relative;
+  margin: 0.7em 0;
+  padding: 0.7em 0.85em;
+  border-radius: var(--radius-field);
+  background: var(--color-base-200);
+  /* Code sets its own width; the panel must never scroll sideways because of it. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.md pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.85em;
+  line-height: 1.6;
+  white-space: pre;
+}
+.md pre .lang {
+  position: absolute;
+  top: 0.4em;
+  right: 0.6em;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--color-base-content) 32%, transparent);
+  user-select: none;
+}
+
+/* Same rule as code: the table scrolls inside itself, the panel never does. */
+.md .tablewrap {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.94em;
+  min-width: 100%;
+}
+.md th,
+.md td {
+  padding: 0.35em 0.7em;
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  white-space: nowrap;
+}
+.md th {
+  background: var(--color-base-200);
+  font-weight: 600;
+  text-align: left;
+}
+
+.md b,
+.md strong {
+  font-weight: 600;
+  color: var(--color-base-content);
+}
+.md em {
+  font-style: italic;
+}
+.md s {
+  color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+}
+.md a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+  cursor: pointer;
+}
+
+/*
+ * First run, and nothing else.
+ *
+ * The app itself is deliberately quiet — hairlines, one accent, colour that means
+ * identity rather than decoration. None of that applies before there is anything to
+ * be quiet about: on the very first launch there is no data, no workspace and no
+ * reason to look at the screen except to be told what this is. So the introduction
+ * gets the one vivid surface in the product, drawn from the icon's own two colours
+ * with a violet between them, and hands the window back to the app afterwards.
+ */
+.welcome-sky {
+  background-color: oklch(62% 0.2 12);
+  background-image:
+    radial-gradient(72% 66% at 6% 2%, oklch(83% 0.16 78) 0%, transparent 58%),
+    radial-gradient(68% 68% at 94% 10%, oklch(60% 0.23 15) 0%, transparent 60%),
+    radial-gradient(85% 80% at 80% 98%, oklch(48% 0.25 292) 0%, transparent 64%),
+    linear-gradient(150deg, oklch(64% 0.22 8) 0%, oklch(50% 0.24 288) 100%);
+}
+
+/* The gradient is the mark's own, so it does not restate itself darker; the card
+   behind is what turns dark, and it needs the surround pulled down to sit on. */
+[data-theme='pmdark'] .welcome-sky::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: oklch(14% 0.02 275 / 0.42);
+  pointer-events: none;
+}
+
+/*
+ * Three soft lights moving behind the card at a speed you cannot watch — the point
+ * is that the surface is never quite the same twice, not that anything is happening.
+ * Transform and nothing else, so it stays on the compositor.
+ */
+.welcome-light {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.5;
+  will-change: transform;
+}
+@keyframes welcome-drift-a {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(9vw, 7vh, 0) scale(1.18);
+  }
+}
+@keyframes welcome-drift-b {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.1);
+  }
+  to {
+    transform: translate3d(-11vw, -6vh, 0) scale(0.92);
+  }
+}
+.welcome-light-a {
+  animation: welcome-drift-a 24s ease-in-out infinite alternate;
+}
+.welcome-light-b {
+  animation: welcome-drift-b 31s ease-in-out infinite alternate;
+}
+.welcome-light-c {
+  animation: welcome-drift-a 38s ease-in-out infinite alternate-reverse;
+}
+
+/*
+ * A superellipse, not a rounded rectangle: at this radius the tangent of a circular
+ * corner is visible as a flat spot on each side, and the shape stops reading as one
+ * continuous outline. `corner-shape` is ignored where it is not understood, which
+ * leaves the radius doing the job on its own.
+ */
+.squircle {
+  border-radius: 30px;
+  corner-shape: squircle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-light {
+    animation: none;
+  }
+}

@@ -173,6 +173,45 @@ CREATE TABLE IF NOT EXISTS setting (
   value text NOT NULL
 );
 
+-- A chat with the assistant. Scoped to a workspace like everything else, so the
+-- assistant opened inside a client's area cannot answer out of the day job's.
+CREATE TABLE IF NOT EXISTS conversation (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  title        text NOT NULL DEFAULT '',
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- One API turn. The blocks column is the message content exactly as the API sends
+-- and receives it — text, function calls, function output — so reopening a
+-- conversation replays it to the model unchanged rather than reconstructing it from
+-- a rendered copy. The tools column is the display record beside it: what each call
+-- did, and whether it was allowed to. Keeping the two apart is what stops the replay
+-- carrying fields the API would reject.
+CREATE TABLE IF NOT EXISTS chat_message (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  role            text NOT NULL,
+  blocks          jsonb NOT NULL DEFAULT '[]'::jsonb,
+  tools           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  sort_order      integer NOT NULL DEFAULT 0,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Files dropped into a conversation. The bytes live in attachments/ beside the
+-- icons, so a backup of the folder is still a backup of everything.
+CREATE TABLE IF NOT EXISTS chat_attachment (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  message_id      uuid REFERENCES chat_message(id) ON DELETE CASCADE,
+  name            text NOT NULL DEFAULT '',
+  mime            text NOT NULL DEFAULT '',
+  bytes           integer NOT NULL DEFAULT 0,
+  path            text NOT NULL DEFAULT '',
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
@@ -186,6 +225,9 @@ CREATE INDEX IF NOT EXISTS idx_meeting_todo       ON meeting_todo (meeting_id, s
 CREATE INDEX IF NOT EXISTS idx_link_project       ON link (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_journal_project    ON journal_entry (project_id);
 CREATE INDEX IF NOT EXISTS idx_activity_project   ON activity (project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversation_ws    ON conversation (workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_message_conv  ON chat_message (conversation_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_chat_attach_conv   ON chat_attachment (conversation_id);
 
 `
 
@@ -202,6 +244,10 @@ export const MIGRATIONS: string[] = [
   // 1. Columns first. Nothing below may reference a column added further down.
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
+  // The assistant's key is per workspace, because the workspace is the boundary it
+  // works inside. It is written through its own channel and never read back out.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS ai_api_key text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS ai_model text NOT NULL DEFAULT ''`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS deadline text`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT ''`,
