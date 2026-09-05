@@ -177,9 +177,9 @@ export async function loadSampleData(): Promise<void> {
     'QA lead. Wants the test plan a week ahead or it slips.')
   const ingrid = await person(dayJob, 'Ingrid Solheim', 'Acme Retail', 'ingrid@acme.example', '#8b5cf6',
     'Holds the payments budget. The actual approver, whatever the org chart says.')
-  const erik = await person(own, 'Erik Hauge', 'Enthemed', 'erik@enthemed.example', '#10b981',
+  const erik = await person(own, 'Erik Hauge', 'Northlight', 'erik@northlight.example', '#10b981',
     'Co-founder. Best thinking happens on a walk, not in a doc.')
-  const sofia = await person(own, 'Sofia Nilsen', 'Enthemed', 'sofia@enthemed.example', '#14b8a6',
+  const sofia = await person(own, 'Sofia Nilsen', 'Northlight', 'sofia@northlight.example', '#14b8a6',
     'Co-founder, handles the commercial side. Send numbers, not adjectives.')
   const daniel = await person(consulting, 'Daniel Vik', 'Nordic Retail AS', 'daniel@nordicretail.example', '#f59e0b',
     'Client contact. Responsive on email, invisible on Slack. Invoices go to accounts@, not to him.')
@@ -290,7 +290,7 @@ export async function loadSampleData(): Promise<void> {
   /* ------------------------------------------------------------ my company */
   const platform = await project({
     workspaceId: own,
-    name: 'Enthemed platform',
+    name: 'Northlight platform',
     summary: 'The product itself. Erik on engineering, Sofia commercial, me in between.',
     status: 'active', pinned: true, activityDaysAgo: 1, openedDaysAgo: 1
   })

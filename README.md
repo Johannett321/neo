@@ -1,8 +1,24 @@
+<div align="center">
+
+<img src="build/icon.png" width="104" alt="Neo">
+
 # Neo
 
-A personal command centre for running several working lives at once — a day job
-managing multiple teams, hands-on development, a company of your own, a consulting
-client — without holding all of it in your head.
+**A personal command centre for running several working lives at once.**
+
+A day job managing multiple teams, hands-on development, a company of your own, a
+consulting client — without holding all of it in your head.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#running-it)
+[![Electron](https://img.shields.io/badge/Electron-44-47848F.svg)](https://www.electronjs.org/)
+[![Local first](https://img.shields.io/badge/data-100%25%20local-success.svg)](#your-data)
+
+</div>
+
+<p align="center">
+  <img src="docs/screenshots/02-today.png" width="900" alt="Today — everything overdue, due and coming up, across every project in the workspace">
+</p>
 
 It is not a replacement for Jira, Linear or Notion. Those are where work gets
 executed. This is the layer above them that answers the three questions no single
@@ -15,6 +31,55 @@ tool does:
 Everything is designed around one constraint: *it must survive neglect*. If keeping
 it accurate is work, it gets abandoned in three weeks. So capture is cheap, almost
 nothing needs manual upkeep, and every screen stays useful when the data is a month old.
+
+Everything is **free and open source**, and everything stays **on your own machine** —
+no account, no server, no telemetry, no paid tier. There is nothing to sign up for.
+
+## Quick start
+
+You need [Node.js](https://nodejs.org/) 22 or newer. That is the whole list — there is no
+database server to install, no Docker, no backend to run in a second terminal.
+
+```bash
+git clone https://github.com/johannett321/neo.git
+cd neo
+npm install && npm run dev
+```
+
+Clone it, then one line, and the app is open — there is no second terminal, no database
+to provision and no `.env` to fill in. It creates its own embedded PostgreSQL database on
+first launch, inside a plain folder in your Documents. To get a real application bundle
+instead of a development window, run `npm run dist`.
+
+On that first launch it introduces itself and asks for two things: your name, and one
+working life to put in it. If you would rather look around first, **load the sample
+data** from that first panel — three workspaces with projects, people, meetings and
+history, which is what every screenshot below is showing.
+
+## A look around
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/03-projects.png" alt="Projects"><br><b>Projects</b><br>One card each, with what is overdue and how long since you last touched it. No status field to keep up to date — the card works it out.</td>
+<td width="50%"><img src="docs/screenshots/04-project-today.png" alt="Re-entry brief"><br><b>Re-entry</b><br>Opening a project you have been away from starts with what changed while you were gone, then the log, the links and the cast.</td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/05-kanban.png" alt="Board"><br><b>The board</b><br>Tasks, delegated items and commitments in the same lane. Ticking one off moves it to Done; moving it to Done ticks it off.</td>
+<td><img src="docs/screenshots/08-people.png" alt="Cast"><br><b>People</b><br>Who is on this, what they decide, and how to work with them — the thing you actually need before a meeting.</td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/06-meetings.png" alt="Meetings"><br><b>Meetings</b><br>Write the notes as prose; the to-dos in them become real items on the board.</td>
+<td><img src="docs/screenshots/07-decisions.png" alt="Decisions"><br><b>Decisions</b><br>What was decided, by whom, why — and what was rejected, which is the half that gets re-litigated.</td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/09-workspaces.png" alt="Workspaces"><br><b>Workspaces</b><br>A working life each, and a hard boundary: no screen ever mixes two of them.</td>
+<td><img src="docs/screenshots/10-search.png" alt="Search"><br><b>Search everything</b><br><code>⌘K</code> over tasks, notes, meetings, decisions, journal and people in the current workspace.</td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/11-today-dark.png" alt="Dark mode"><br><b>Dark mode</b><br>A real second theme, not an inverted first one.</td>
+<td><img src="docs/screenshots/01-welcome.png" alt="First launch"><br><b>First launch</b><br>Shown once, and only to a genuinely new install.</td>
+</tr>
+</table>
 
 ## The features, and why each one exists
 
@@ -403,23 +468,29 @@ address, which only exists when there is one — rather than from `isPackaged`, 
 would send every `npm run dev` to the last production build in `out/` with no hot
 reload and no sign that anything was wrong.
 
-## Running it## Running it
+## Running it
+
+Node.js 22 or newer, and nothing else — the database is embedded, so there is no server
+to start and no second terminal to keep open.
 
 ```bash
 npm install
 npm run dev             # development, with hot reload
 npm run build           # typecheck + production build
-npm run dist            # packaged application
+npm run package         # unpacked application into dist/
+npm run dist            # packaged, signed-if-possible application
+npm run typecheck       # both TypeScript projects
 npm run verify          # exercise the whole backend headlessly
 npm run verify:upgrade  # open a database written by an older version
 ```
 
-On first launch the app introduces itself and then asks for your name and one workspace
-(see [The first launch](#the-first-launch)). If you would rather look around first,
-**load the sample data** from that first panel for a realistic set of three workspaces
-with projects, people, meetings and history. Settings has no reset button: emptying the
-database is a thing you do to the data folder, not something to leave a click away from
-your own work.
+`npm run dist` produces a `.dmg` and a `.zip` on macOS, an NSIS installer on Windows and
+an AppImage on Linux. It is developed on macOS, which is where the window chrome, the
+menu bar and the icon pipeline have actually been exercised; the other two build from the
+same source but have had far less use, and reports are welcome.
+
+Settings has no reset button: emptying the database is a thing you do to the data folder,
+not something to leave a click away from your own work.
 
 ### The menu, and shortcuts
 
@@ -490,3 +561,28 @@ current code, which is the only way that class of bug gets caught before launch.
 the attention reasons, workspace isolation, the Today and review dashboards, the re-entry
 brief, board stages, meetings, search, cascade deletes and both exports — in plain Node,
 with no window and no display.
+
+There is no linter and no test framework. `test/verify.ts` and `test/upgrade.ts` are
+single scripts of `ok(label, condition)` assertions run end to end, so there is no way to
+run one in isolation — run the whole script, which takes a few seconds. Add an assertion
+to `verify.ts` for any backend behaviour you change, and to `upgrade.ts` when you change
+the schema.
+
+## Contributing
+
+Contributions are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers how to get set up
+and what to run before opening a pull request; [`CLAUDE.md`](CLAUDE.md) is a longer tour
+of the architecture and the conventions that are load-bearing, written for an AI coding
+assistant but just as useful to a person.
+
+The one thing worth knowing before you propose a feature: **there is no status field a
+user has to maintain by hand**, anywhere, and there is not going to be one. Attention is
+derived from overdue work, deadline proximity and staleness, in `src/main/lib/attention.ts`.
+That constraint is the product, not an implementation detail.
+
+## Licence
+
+[MIT](LICENSE) © Johan Svartdal.
+
+Free, in both senses. There is no paid tier, no account, no hosted version, and nothing
+about the app that phones home.

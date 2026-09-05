@@ -5,6 +5,23 @@
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",
   "license": "MIT",
+  "homepage": "https://github.com/johannett321/neo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johannett321/neo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/johannett321/neo/issues"
+  },
+  "keywords": [
+    "electron",
+    "project-management",
+    "local-first",
+    "pglite",
+    "postgres",
+    "desktop",
+    "personal-knowledge-management"
+  ],
   "type": "module",
   "scripts": {
     "build": "npm run typecheck && electron-vite build",
