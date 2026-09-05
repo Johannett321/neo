@@ -212,6 +212,122 @@ CREATE TABLE IF NOT EXISTS chat_attachment (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
+-- Recording a meeting.
+--
+-- One row per recorded meeting, and it is a state machine rather than a file: three
+-- steps (words, speakers, recap) each with their own state, error and attempt count,
+-- so an interruption in any of them is resumed at the step it reached rather than
+-- from the beginning. Nothing here is derived from a process being alive — a machine
+-- that loses power leaves these rows exactly as they were, and the pipeline reads
+-- them on the next launch and carries on.
+CREATE TABLE IF NOT EXISTS recording (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  meeting_id          uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+
+  -- recording | interrupted | stopped
+  capture_state       text NOT NULL DEFAULT 'recording',
+  started_at          timestamptz NOT NULL DEFAULT now(),
+  stopped_at          timestamptz,
+  -- Bumped by the renderer that holds the microphone. Gone quiet means gone.
+  heartbeat_at        timestamptz NOT NULL DEFAULT now(),
+  duration_ms         bigint NOT NULL DEFAULT 0,
+  bytes               bigint NOT NULL DEFAULT 0,
+  -- Set when the audio is thrown away and the words are kept.
+  audio_deleted_at    timestamptz,
+  mime                text NOT NULL DEFAULT 'audio/webm',
+
+  transcript_state    text NOT NULL DEFAULT 'pending',
+  transcript_error    text NOT NULL DEFAULT '',
+  transcript_attempts integer NOT NULL DEFAULT 0,
+  transcript_engine   text NOT NULL DEFAULT '',
+  transcript_model    text NOT NULL DEFAULT '',
+  transcribed_at      timestamptz,
+
+  speaker_state       text NOT NULL DEFAULT 'pending',
+  speaker_error       text NOT NULL DEFAULT '',
+  speaker_attempts    integer NOT NULL DEFAULT 0,
+  -- label -> { name, personId }. Renaming a speaker is one row, not a rewrite of
+  -- every line they said.
+  speakers            jsonb NOT NULL DEFAULT '{}'::jsonb,
+
+  summary_state       text NOT NULL DEFAULT 'pending',
+  summary_error       text NOT NULL DEFAULT '',
+  summary_attempts    integer NOT NULL DEFAULT 0,
+  summary_engine      text NOT NULL DEFAULT '',
+  summary_model       text NOT NULL DEFAULT '',
+  summary             text NOT NULL DEFAULT '',
+  recap               jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- What the meeting would be called, if it is still called nothing. Only ever used
+  -- to name an untitled meeting; a name you typed is never overwritten.
+  suggested_title     text NOT NULL DEFAULT '',
+  summarised_at       timestamptz,
+  -- When the recap was appended to the write-up. Once, and only once: after that the
+  -- write-up is a document you edit, and nothing rewrites it.
+  recap_written_at    timestamptz,
+  -- And, separately, when its commitments became the meeting's to-do items. Two
+  -- markers rather than one because they can fail apart: if creating the to-dos went
+  -- wrong, retrying must not append the recap to the write-up a second time.
+  recap_todos_at      timestamptz,
+
+  -- The runner will not look at this row again before this instant. Backoff lives in
+  -- the database rather than in a timer, so a restart does not lose it.
+  next_attempt_at     timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+
+-- One file of audio, five minutes of it, and the unit everything else is resumed by.
+CREATE TABLE IF NOT EXISTS recording_segment (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  recording_id uuid NOT NULL REFERENCES recording(id) ON DELETE CASCADE,
+  ord          integer NOT NULL,
+  -- Filename inside recordings/<recording id>/. Emptied when the audio is deleted.
+  path         text NOT NULL DEFAULT '',
+  bytes        bigint NOT NULL DEFAULT 0,
+  duration_ms  bigint NOT NULL DEFAULT 0,
+  -- Where this segment starts on the recording's own clock.
+  offset_ms    bigint NOT NULL DEFAULT 0,
+  -- False while it is still being written to. A segment that is still open when the
+  -- machine dies is the only audio at risk, and it is at most five minutes of it.
+  closed       boolean NOT NULL DEFAULT false,
+  state        text NOT NULL DEFAULT 'pending',
+  error        text NOT NULL DEFAULT '',
+  attempts     integer NOT NULL DEFAULT 0,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (recording_id, ord)
+);
+
+-- One phrase, timed against the whole recording rather than against its own segment,
+-- so the transcript can follow the playhead across a segment boundary without
+-- knowing there is one.
+CREATE TABLE IF NOT EXISTS transcript_cue (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  recording_id uuid NOT NULL REFERENCES recording(id) ON DELETE CASCADE,
+  segment_id   uuid REFERENCES recording_segment(id) ON DELETE CASCADE,
+  ord          integer NOT NULL,
+  start_ms     bigint NOT NULL DEFAULT 0,
+  end_ms       bigint NOT NULL DEFAULT 0,
+  speaker      text NOT NULL DEFAULT '',
+  text         text NOT NULL DEFAULT ''
+);
+
+-- A long meeting is summarised in passes: notes over a slice of transcript, then one
+-- pass over the notes. The slices are rows so that a summary interrupted two thirds
+-- of the way through resumes at the slice it reached.
+CREATE TABLE IF NOT EXISTS summary_part (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  recording_id uuid NOT NULL REFERENCES recording(id) ON DELETE CASCADE,
+  ord          integer NOT NULL,
+  from_cue     integer NOT NULL DEFAULT 0,
+  to_cue       integer NOT NULL DEFAULT 0,
+  state        text NOT NULL DEFAULT 'pending',
+  notes        text NOT NULL DEFAULT '',
+  error        text NOT NULL DEFAULT '',
+  attempts     integer NOT NULL DEFAULT 0,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (recording_id, ord)
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
@@ -228,6 +344,10 @@ CREATE INDEX IF NOT EXISTS idx_activity_project   ON activity (project_id, creat
 CREATE INDEX IF NOT EXISTS idx_conversation_ws    ON conversation (workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_message_conv  ON chat_message (conversation_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_chat_attach_conv   ON chat_attachment (conversation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recording_meeting ON recording (meeting_id);
+CREATE INDEX IF NOT EXISTS idx_recording_segment ON recording_segment (recording_id, ord);
+CREATE INDEX IF NOT EXISTS idx_transcript_cue    ON transcript_cue (recording_id, ord);
+CREATE INDEX IF NOT EXISTS idx_summary_part      ON summary_part (recording_id, ord);
 
 `
 
@@ -248,6 +368,20 @@ export const MIGRATIONS: string[] = [
   // works inside. It is written through its own channel and never read back out.
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS ai_api_key text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS ai_model text NOT NULL DEFAULT ''`,
+  // How this workspace turns a recording into words and then into a recap. Beside
+  // the key rather than in app settings, because "may this leave the machine" is a
+  // question you answer once per working life, not once per meeting.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS transcribe_engine text NOT NULL DEFAULT 'openai'`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS transcribe_model text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS transcribe_base_url text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS transcribe_language text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_engine text NOT NULL DEFAULT 'openai'`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_model text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_base_url text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_prompt text NOT NULL DEFAULT ''`,
+  `ALTER TABLE recording ADD COLUMN IF NOT EXISTS suggested_title text NOT NULL DEFAULT ''`,
+  `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_written_at timestamptz`,
+  `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_todos_at timestamptz`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS deadline text`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT ''`,

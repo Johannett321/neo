@@ -4,6 +4,7 @@ import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
 import { registerTaskHandlers } from '../src/main/ipc/tasks'
 import { registerMeetingHandlers } from '../src/main/ipc/meetings'
+import { registerRecordingHandlers } from '../src/main/ipc/recordings'
 import { registerPeopleHandlers } from '../src/main/ipc/people'
 import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
@@ -16,6 +17,10 @@ import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '
 import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
 import { attentionReason } from '../src/main/lib/attention'
+import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
+import { recapMarkdown } from '../src/main/lib/recording/summarise'
+import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
+import { helperPath } from '../src/main/lib/recording/systemAudio'
 import { exec, q } from '../src/main/db/client'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -27,6 +32,16 @@ const call = async (channel: string, input?: unknown): Promise<any> => {
   const fn = (__handlers as Map<string, any>).get(channel)
   if (!fn) throw new Error(`No handler: ${channel}`)
   return fn({}, input)
+}
+
+/** Poll until something is ready, for the pipeline, which runs on its own clock. */
+const until = async <T>(check: () => Promise<T | null>, tries = 60): Promise<T | null> => {
+  for (let i = 0; i < tries; i++) {
+    const result = await check()
+    if (result) return result
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return null
 }
 
 /** True when the call failed with a message saying what it should have said. */
@@ -53,6 +68,7 @@ async function main(): Promise<void> {
   registerPeopleHandlers()
   registerContentHandlers()
   registerMeetingHandlers()
+  registerRecordingHandlers()
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
@@ -339,6 +355,348 @@ async function main(): Promise<void> {
   ok('an item can be taken off the board, and the card stays there',
      detached.todos[3].taskId === null &&
      (await call('task:list', { projectId: checkout.id })).some((t: any) => t.id === card.taskId))
+
+  /* ------------------------------------------------------------------ recording
+   *
+   * The pipeline itself is not exercised here — it calls out to a transcription
+   * service, and a test that needs one is a test that does not run. What *is*
+   * exercised is everything that has to be true whether or not that service ever
+   * answers: that the audio is on disk, that the timeline adds up, that a capture
+   * cut off by a power failure comes back as something you can resume, and that a
+   * transcript survives its audio being deleted.
+   */
+  const recMeeting = await call('meeting:save', {
+    projectId: checkout.id,
+    title: 'Recorded steering call',
+    occurredOn: '2024-05-02'
+  })
+
+  const started = await call('recording:start', { meetingId: recMeeting.id })
+  ok('recording a meeting starts one capture, still running',
+     started.captureState === 'recording' && started.segmentCount === 0)
+  ok('pressing record twice picks the same capture back up rather than opening a second',
+     (await call('recording:start', { meetingId: recMeeting.id })).id === started.id)
+
+  // What the renderer does every second: claim a file, hand over bytes, and be told
+  // how big the file is now. Every byte is flushed before the call resolves.
+  const seg1 = await call('recording:openSegment', { id: started.id })
+  const appended = await call('recording:appendChunk', {
+    segmentId: seg1.segmentId,
+    data: Buffer.from('first-second-of-audio').toString('base64')
+  })
+  await call('recording:appendChunk', {
+    segmentId: seg1.segmentId,
+    data: Buffer.from('-and-the-next').toString('base64')
+  })
+  ok('audio is appended to the segment file and its size reported back',
+     appended.bytes === 21 && existsSync(join(recordingDir(), started.id, '0000.webm')),
+     `${appended.bytes} bytes after the first chunk`)
+
+  await call('recording:closeSegment', { segmentId: seg1.segmentId, durationMs: 300_000 })
+  const seg2 = await call('recording:openSegment', { id: started.id })
+  await call('recording:appendChunk', {
+    segmentId: seg2.segmentId,
+    data: Buffer.from('after-the-rollover').toString('base64')
+  })
+  await call('recording:closeSegment', { segmentId: seg2.segmentId, durationMs: 120_000 })
+
+  const twoParts = await call('recording:get', { meetingId: recMeeting.id })
+  ok('a rolled-over recording is two files on one timeline',
+     twoParts.recording.segments.length === 2 &&
+     twoParts.recording.segments[0].offsetMs === 0 &&
+     twoParts.recording.segments[1].offsetMs === 300_000 &&
+     twoParts.recording.durationMs === 420_000,
+     `${twoParts.recording.durationMs} ms across ${twoParts.recording.segments.length} parts`)
+  ok('the size shown is the size on disk, summed over the parts',
+     twoParts.recording.bytes === 34 + 18, String(twoParts.recording.bytes))
+
+  // The machine loses power. Nothing gets to run; the rows are simply as they were.
+  const interruptedCount = await recoverRecordings()
+  const afterCrash = await call('recording:get', { meetingId: recMeeting.id })
+  ok('a capture that was running when the app died comes back as interrupted, not lost',
+     interruptedCount === 1 && afterCrash.recording.captureState === 'interrupted' &&
+     afterCrash.recording.bytes === 52,
+     afterCrash.recording.captureState)
+
+  // ...and it can be picked back up, appending to the audio that is already there.
+  await call('recording:resume', { id: started.id })
+  const seg3 = await call('recording:openSegment', { id: started.id })
+  await call('recording:appendChunk', {
+    segmentId: seg3.segmentId,
+    data: Buffer.from('the-meeting-carried-on').toString('base64')
+  })
+  await call('recording:closeSegment', { segmentId: seg3.segmentId, durationMs: 60_000 })
+  const resumed = await call('recording:get', { meetingId: recMeeting.id })
+  ok('resuming an interrupted capture keeps what was already recorded and adds to it',
+     resumed.recording.segments.length === 3 &&
+     resumed.recording.segments[2].offsetMs === 420_000 &&
+     resumed.recording.durationMs === 480_000)
+
+  // A renderer that dies without the app dying stops sending its heartbeat.
+  await exec(`UPDATE recording SET heartbeat_at = now() - interval '5 minutes' WHERE id = $1`, [
+    started.id
+  ])
+  await reapDeadCaptures()
+  ok('a capture whose window went away is marked interrupted by main on its own',
+     (await call('recording:get', { meetingId: recMeeting.id })).recording.captureState === 'interrupted')
+
+  const stopped = await call('recording:stop', { id: started.id, durationMs: 480_000 })
+  ok('stopping closes every open segment and hands the recording to the pipeline',
+     stopped.captureState === 'stopped' &&
+     (await q<any>('SELECT closed FROM recording_segment WHERE recording_id = $1', [stopped.id]))
+       .every((row: any) => row.closed))
+
+  /*
+   * This workspace has no API key, so the pipeline that just picked the recording up
+   * cannot transcribe it. What matters is that it stops and says why in words a
+   * person can act on, rather than retrying a wrong key every twenty seconds until
+   * the end of time.
+   */
+  const settled = await until(async () => {
+    const row = (await q<any>('SELECT transcript_state, transcript_error FROM recording WHERE id = $1',
+                              [stopped.id]))[0]
+    return ['done', 'failed'].includes(row.transcript_state) ? row : null
+  })
+  ok('a recording it cannot transcribe fails once, permanently, and says what to fix',
+     settled?.transcript_state === 'failed' && /API key/i.test(settled.transcript_error ?? ''),
+     settled?.transcript_error)
+  ok('a stopped recording refuses to be recorded over',
+     await threw(() => call('recording:start', { meetingId: recMeeting.id }), 'already has a recording'))
+  // Deleting the audio is only ever a trade of sound for words. Before the words
+  // exist there is nothing to trade, so it is refused rather than quietly obeyed.
+  ok('audio cannot be thrown away before it has been turned into words',
+     await threw(() => call('recording:deleteAudio', { id: stopped.id }), 'not been transcribed'))
+
+  // Stand in for the transcription and the recap, which need a service to produce.
+  const recordingId = stopped.id
+  for (const [i, line] of ['Shall we ship on Friday?', 'Yes. I will do the release notes.'].entries()) {
+    await exec(
+      `INSERT INTO transcript_cue (recording_id, ord, start_ms, end_ms, speaker, text)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [recordingId, i, i * 5000, i * 5000 + 4000, `Speaker ${i + 1}`, line]
+    )
+  }
+  await exec(
+    `UPDATE recording SET transcript_state = 'done', transcript_model = 'whisper-1',
+            speaker_state = 'done', speakers = $2::jsonb, summary_state = 'done',
+            summary = $3, recap = $4::jsonb
+     WHERE id = $1`,
+    [
+      recordingId,
+      JSON.stringify({ 'Speaker 1': { name: '', personId: null }, 'Speaker 2': { name: '', personId: null } }),
+      'A short call about the release.',
+      JSON.stringify({
+        decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
+        commitments: [{ who: 'Ida', what: 'Write the release notes', due: '' }],
+        insights: ['Nobody has checked the migration yet.']
+      })
+    ]
+  )
+
+  const speakerNamed = await call('recording:nameSpeaker', {
+    id: recordingId,
+    label: 'Speaker 2',
+    name: 'Ida Berg'
+  })
+  ok('a speaker is named once, against the label rather than against every line',
+     speakerNamed.speakers['Speaker 2'].name === 'Ida Berg' &&
+     (await q<any>('SELECT speaker FROM transcript_cue WHERE recording_id = $1 ORDER BY ord', [recordingId]))[1]
+       .speaker === 'Speaker 2')
+
+  /*
+   * A recap that sits behind a button on a second screen is a recap nobody reads, so
+   * the pipeline folds it into the meeting itself the moment it is written: into the
+   * write-up, onto the name if there is not one, and onto the to-do list for every
+   * commitment somebody made out loud. All of it through the ordinary channels, so
+   * what arrives is indistinguishable from what you would have typed.
+   */
+  await exec(`UPDATE recording SET suggested_title = 'Friday release call' WHERE id = $1`, [
+    recordingId
+  ])
+  await exec(`UPDATE meeting SET title = '' WHERE id = $1`, [recMeeting.id])
+
+  ok('a recap that has not been folded into its meeting yet says so',
+     (await call('recording:get', { meetingId: recMeeting.id })).recording.recapWrittenAt === null)
+
+  const applied = await call('recording:applyRecap', { id: recordingId })
+  ok('the recap lands in the write-up on its own, as ordinary Markdown',
+     applied.body.includes('Ship on Friday') && applied.body.includes('release notes'),
+     applied.body.replace(/\n/g, ' ').slice(0, 70))
+  ok('and a meeting nobody named is given the name the recap suggested',
+     applied.title === 'Friday release call', applied.title)
+  ok('someone saying they will do something becomes one of the meeting\'s to-do items',
+     applied.todos.some((t: any) => t.text.includes('Write the release notes') && t.text.includes('Ida')),
+     applied.todos.map((t: any) => t.text).join(' | '))
+
+  ok('and once it has been, it says that instead',
+     (await call('recording:get', { meetingId: recMeeting.id })).recording.recapWrittenAt !== null)
+
+  const again = await call('recording:applyRecap', { id: recordingId })
+  ok('folding it in twice changes nothing — after the first time the write-up is yours',
+     again.body === applied.body && again.todos.length === applied.todos.length)
+
+  // A name you typed is never replaced by one a model came up with.
+  await exec(
+    `UPDATE recording SET recap_written_at = NULL, suggested_title = 'Something else' WHERE id = $1`,
+    [recordingId]
+  )
+  await exec(`UPDATE meeting SET title = 'The name I gave it' WHERE id = $1`, [recMeeting.id])
+  const renamed = await call('recording:applyRecap', { id: recordingId })
+  ok('a meeting you have named keeps the name you gave it', renamed.title === 'The name I gave it')
+  ok('and a commitment already on the list is not added to it again',
+     renamed.todos.filter((t: any) => t.text.includes('release notes')).length === 1,
+     renamed.todos.map((t: any) => t.text).join(' | '))
+
+  /*
+   * The same thing again, but the way it actually happens: nobody calls the channel.
+   * A recap sitting in the database with neither marker set is a row the runner finds
+   * and finishes on its own — which is what carries a recap written by an older build,
+   * or one whose meeting was busy at the time, over the line.
+   */
+  await exec(
+    `UPDATE recording SET recap_written_at = NULL, recap_todos_at = NULL, recap = $2::jsonb
+     WHERE id = $1`,
+    [
+      recordingId,
+      JSON.stringify({
+        decisions: [],
+        commitments: [{ who: 'Tom', what: 'Book the migration window', due: '' }],
+        insights: []
+      })
+    ]
+  )
+  await exec(`UPDATE meeting SET body = '' WHERE id = $1`, [recMeeting.id])
+  kick()
+
+  const folded = await until(async () => {
+    const view = await call('recording:get', { meetingId: recMeeting.id })
+    return view.recording.recapWrittenAt ? view : null
+  })
+  const byRunner = await call('project:get', { id: checkout.id, touch: false })
+  const runnerMeeting = byRunner.meetings.find((m: any) => m.id === recMeeting.id)
+  ok('the runner folds a waiting recap in on its own, with nobody pressing anything',
+     Boolean(folded) && runnerMeeting.body.includes('Book the migration window') &&
+     runnerMeeting.todos.some((t: any) => t.text.includes('Book the migration window')),
+     runnerMeeting?.todos.map((t: any) => t.text).join(' | '))
+
+  /*
+   * The two halves are marked off separately, and this is why: a to-do list that
+   * failed to be written must be retried without the write-up gaining a second copy
+   * of the recap. Clearing only the to-do marker is exactly that situation.
+   */
+  const bodyOnce = runnerMeeting.body
+  await exec(`UPDATE recording SET recap_todos_at = NULL WHERE id = $1`, [recordingId])
+  await call('recording:applyRecap', { id: recordingId })
+  const retried = (await call('project:get', { id: checkout.id, touch: false }))
+    .meetings.find((m: any) => m.id === recMeeting.id)
+  ok('retrying the to-do half does not append the recap to the write-up twice',
+     retried.body === bodyOnce &&
+     retried.todos.filter((t: any) => t.text.includes('Book the migration window')).length === 1)
+
+  // Asking for the recap again means you want the new answer on the to-do list — but
+  // not a second copy of it in a write-up you have been editing.
+  await call('recording:retry', { id: recordingId, step: 'summary' })
+  const afterRetry = (await q<any>(
+    'SELECT recap_written_at, recap_todos_at FROM recording WHERE id = $1', [recordingId]
+  ))[0]
+  ok('asking for the recap again reopens the to-do list but not the write-up',
+     afterRetry.recap_written_at !== null && afterRetry.recap_todos_at === null)
+  // Put it back the way it was: what follows is about a finished recording, and a
+  // test that leaves the world half-rewritten behind it is a test that fails the
+  // next one for reasons that have nothing to do with the next one.
+  await exec(
+    `UPDATE recording SET summary_state = 'done', recap_todos_at = now() WHERE id = $1`,
+    [recordingId]
+  )
+
+  ok('a meeting carries its recording, so a list can say what state it is in',
+     (await call('project:get', { id: checkout.id, touch: false }))
+       .meetings.find((m: any) => m.id === recMeeting.id)?.recording?.summaryState === 'done')
+
+  /*
+   * A cascade in the database frees no disk. Deleting a meeting takes its recording
+   * row with it through the foreign keys, and the audio — the only large thing this
+   * app writes — would sit in the folder forever if nothing went and got it.
+   */
+  const mistake = await call('meeting:save', {
+    projectId: checkout.id,
+    title: 'Recorded by mistake',
+    occurredOn: '2024-05-03'
+  })
+  const scrap = await call('recording:start', { meetingId: mistake.id })
+  const scrapSegment = await call('recording:openSegment', { id: scrap.id })
+  await call('recording:appendChunk', {
+    segmentId: scrapSegment.segmentId,
+    data: Buffer.from('forty-minutes-of-a-keyboard').toString('base64')
+  })
+  const scrapDir = join(recordingDir(), scrap.id)
+  ok('a recording in progress has a folder of its own on disk', existsSync(scrapDir))
+
+  await call('meeting:delete', { id: mistake.id })
+  ok('deleting a meeting takes its audio off the disk, not just its rows',
+     !existsSync(scrapDir))
+
+  // The backstop, for audio orphaned by a route that forgot to sweep — and it must
+  // only ever take the folders that no row answers for.
+  const orphan = join(recordingDir(), '00000000-0000-4000-8000-00000000dead')
+  mkdirSync(orphan, { recursive: true })
+  writeFileSync(join(orphan, '0000.webm'), 'stale')
+  const survivor = join(recordingDir(), recordingId)
+  const swept = await pruneRecordings()
+  ok('the sweep removes audio no recording answers for, and only that',
+     swept === 1 && !existsSync(orphan) && existsSync(survivor),
+     `${swept} folder(s) swept`)
+
+  // The whole point of keeping the words separately from the sound.
+  const stripped = await call('recording:deleteAudio', { id: recordingId })
+  const stillThere = await call('recording:get', { meetingId: recMeeting.id })
+  ok('deleting the audio frees the disk and keeps every word of the transcript',
+     stripped.bytes === 0 && stripped.audioDeletedAt !== null &&
+     !existsSync(join(recordingDir(), recordingId)) &&
+     stillThere.cues.length === 2 && stillThere.recording.summary !== '',
+     `${stillThere.cues.length} lines kept`)
+
+  ok('the recap renders the same Markdown everywhere it is written',
+     recapMarkdown('A short call.', {
+       decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
+       commitments: [{ who: 'Ida', what: 'Write the release notes', due: '2024-05-03' }],
+       insights: []
+     }).includes('- **Ida**: Write the release notes (by 2024-05-03)'))
+
+  /*
+   * The native audio tap: a helper binary, not a module, so the question the app has
+   * to answer before it offers anything is simply whether the file is there. In a
+   * headless test it is — the build put it in `out/native` — and the answer must not
+   * depend on `app.isPackaged`, which lies in development because dev-branding
+   * renames the executable.
+   */
+  ok('the app can say whether it is able to record the computer\'s own sound',
+     typeof (await call('systemAudio:available')).available === 'boolean')
+  ok('and finds the helper by looking for the file rather than by asking if it is packaged',
+     process.platform !== 'darwin' || existsSync(helperPath()) === (await call('systemAudio:available')).available,
+     helperPath() || '(no helper built)')
+
+  // What a recording listens to is about this machine, not about a working life, so
+  // it lives in app settings beside the theme rather than on the workspace.
+  const audio = await call('settings:save', {
+    captureSystemAudio: false,
+    systemAudioDevice: 'BlackHole 2ch'
+  })
+  ok('what a recording listens to is remembered on this machine',
+     audio.captureSystemAudio === false && audio.systemAudioDevice === 'BlackHole 2ch')
+  ok('and trying to catch the computer\'s own sound is on until it is turned off',
+     (await call('settings:save', { captureSystemAudio: true })).captureSystemAudio === true)
+
+  const engines = await call('workspace:save', {
+    id: dayJob,
+    transcribeEngine: 'local',
+    transcribeBaseUrl: 'http://127.0.0.1:9000/v1',
+    recapPrompt: 'Only the decisions, nothing else.'
+  })
+  ok('a workspace chooses its own engines, and they come back on the workspace',
+     engines.transcribeEngine === 'local' &&
+     engines.transcribeBaseUrl === 'http://127.0.0.1:9000/v1' &&
+     engines.recapPrompt === 'Only the decisions, nothing else.')
 
   // A to-do agreed in a room is on no board and carries no date, so nothing else on
   // Today would ever raise it. The workspace screen carries it up itself.

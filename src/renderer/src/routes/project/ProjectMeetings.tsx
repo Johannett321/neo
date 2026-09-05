@@ -1,7 +1,8 @@
 import { Link, useNavigate } from 'react-router-dom'
+import type { RecordingView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
-import { formatDate, plural } from '@/lib/format'
+import { formatBytes, formatDate, plural } from '@/lib/format'
 import { excerpt } from '@/lib/markdown'
 import { Icon } from '@/components/Icon'
 import { Avatar, EmptyState } from '@/components/primitives'
@@ -83,6 +84,7 @@ export function ProjectMeetings(): React.JSX.Element {
                     {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
                   </span>
                 )}
+                {meeting.recording && <RecordingBadge recording={meeting.recording} />}
                 <span className="shrink-0 text-[11px] tabular-nums text-base-content/45">
                   {formatDate(meeting.occurredOn)}
                 </span>
@@ -117,5 +119,32 @@ export function ProjectMeetings(): React.JSX.Element {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A recorded meeting says so on its row, and says what state the recording is in —
+ * because the work happens without you watching it, and "is that transcript ready
+ * yet" is otherwise a question you can only answer by opening the meeting.
+ */
+function RecordingBadge({ recording }: { recording: RecordingView }): React.JSX.Element {
+  const [label, tone] =
+    recording.captureState === 'recording'
+      ? ['Recording', 'text-error']
+      : recording.captureState === 'interrupted'
+        ? ['Interrupted', 'text-warning']
+        : recording.transcriptState === 'failed' || recording.summaryState === 'failed'
+          ? ['Needs a look', 'text-warning']
+          : recording.summaryState === 'done'
+            ? [recording.audioDeletedAt ? 'Transcript' : formatBytes(recording.bytes), 'text-base-content/45']
+            : recording.transcriptState === 'done'
+              ? ['Writing the recap…', 'text-base-content/45']
+              : ['Transcribing…', 'text-base-content/45']
+
+  return (
+    <span className={`flex shrink-0 items-center gap-1 text-[10.5px] ${tone}`}>
+      <Icon name={recording.captureState === 'recording' ? 'mic' : 'waveform'} size={11} />
+      {label}
+    </span>
   )
 }

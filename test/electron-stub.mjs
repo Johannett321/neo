@@ -23,6 +23,15 @@ export const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) }
 export const shell = { openPath: async () => '', openExternal: async () => {}, showItemInFolder: () => {} }
 // Tests never open a picker; icon uploads are exercised by passing a stored filename.
 export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
+// A headless run has no microphone and nothing to ask about it. The recording
+// pipeline is exercised by writing bytes straight into a segment, which is what the
+// renderer does anyway once the browser has handed them over.
+export const systemPreferences = { askForMediaAccess: async () => false }
+export const protocol = { registerSchemesAsPrivileged: () => {}, handle: () => {} }
+export const powerMonitor = { on: () => {} }
+export const session = {
+  defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} }
+}
 // The assistant pushes its stream at every open window; in a test there are none,
 // so a run reports through the events nobody is listening to and the loop is
 // exercised all the same.

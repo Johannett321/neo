@@ -89,6 +89,11 @@ from source with `npm run dist`, which is three commands below and produces the 
 You need [Node.js](https://nodejs.org/) 22 or newer. That is the whole list — there is no
 database server to install, no Docker, no backend to run in a second terminal.
 
+On a Mac, if the Xcode command line tools are present (`xcode-select --install`) the
+build also compiles `neo-audiotap`, the small Swift helper that lets a recording catch
+what the computer is playing. It is optional: without a Swift compiler the build says
+so and carries on, and recordings capture the microphone.
+
 ```bash
 git clone https://github.com/Johannett321/neo.git
 cd neo
@@ -323,6 +328,14 @@ project, so months later the record answers "who agreed to this" — which a pla
 never can. A new meeting starts with everyone on the project ticked; you untick whoever
 was absent, or untick all of them in one click and tick the two who turned up.
 
+The **name** has a small pair of stars beside it. Press them and the meeting is named
+from what is actually in it — the write-up, or the transcript if it was recorded — in
+the three to six words you would scan a list for, and about the subject rather than the
+ceremony: "Pricing for the Nordic launch", not "Weekly sync". It only suggests. The name
+lands in the field where you can read it, edit it or type straight over it, and it is
+kept by the same autosave as everything else on the page. It runs on whichever engine
+the workspace uses for recaps, so it works with a local model too.
+
 Writing one up is writing, so it gets a page rather than a dialog — the same Markdown
 editor a note uses down the middle, and everything a meeting has that a note does not
 in a rail down the right: the name, the date, who was there, and the to-do list. There
@@ -337,6 +350,106 @@ and **Add to the board** makes it a card in the first column, carrying a note of
 meeting it came from. The item then says where it went and which column it is sitting
 in, and from that moment the card is the one that knows whether it is finished: tick it
 on the board and it ticks on the meeting, and the two can never drift apart.
+
+### Recording a meeting
+Press **Record** in the meeting's rail and Neo captures the room, writes out what was
+said, and pulls the decisions, the commitments and the things worth knowing out of it.
+It is part of the meeting rather than a separate feature: the same page, the same
+attendees, the same to-do list — a commitment the recap finds becomes one of those
+items by itself.
+
+**It records both sides, with nothing to install.** The microphone is the easy half;
+the other half is what your computer is *playing*, which is where everyone else on a
+video call lives. Neo captures it through a **Core Audio process tap** — a public,
+driver-free macOS facility — and mixes the two into one recording. The first time you
+press record, macOS asks whether to allow it. You still hear the call exactly as
+before: nothing is muted, rerouted or made to go through anything.
+
+This is the one part of Neo that is not JavaScript. Chromium cannot reach Core Audio
+taps and its own loopback capture is Windows-only, so `native/audiotap/main.swift` is
+a small Swift helper that the main process spawns, reads audio from, and can lose
+without the recording stopping. A separate process rather than a native module on
+purpose: a module is compiled against one Electron's headers and breaks on the next,
+and a crash inside one takes the whole app down mid-meeting.
+
+It needs **macOS 14.4 or later**. Below that — or if the permission is refused, or the
+build was made without a Swift toolchain — Neo falls back to a virtual audio device if
+you have set one up: [BlackHole](https://existential.audio/blackhole/) is free, and
+**Settings → Recording** explains the Multi-Output Device you make so you can still
+hear the call. On Windows there is nothing to set up at all; the operating system
+hands an application its own output.
+
+Whatever happens, the panel says which it got — *Microphone and computer audio*, or
+*Microphone only* and why — while it is still recording, because that is the only
+moment the answer can still be changed.
+
+**It is built to survive the machine.** Audio is appended to disk every second and
+never buffered anywhere else, so the most a power cut can cost is that second. Every
+five minutes it rolls over into a new file, which bounds the damage a half-written
+file can do and gives everything downstream something to resume from. A Mac that goes
+to sleep mid-meeting closes the file it was writing, and opens a new one the moment
+the lid does — you will find a segment boundary in the recording and nothing else. A
+crash or a flat battery is the one case Neo will not decide for you: the next launch
+shows the meeting with **Recording was interrupted**, the audio it got, and two
+buttons — *Carry on*, because the meeting may still be happening, and *It is over*.
+
+Transcription starts on its own when you stop, and it is done one five-minute part at
+a time, each written down before the next begins. Then speakers, then the recap. All
+three run in the background whether or not the app is on that screen, all three
+remember where they got to, and a step that fails for a reason waiting will not fix —
+a wrong key, a model that does not exist — stops and says so instead of retrying
+forever.
+
+**Where it runs is yours to choose**, per workspace, under *Workspace settings →
+Recording*. A client's conversations can be transcribed and summarised entirely on
+your own machine while the day job's go to OpenAI. The two halves are set separately,
+because they are different questions: transcription sends the *audio* somewhere, the
+recap sends the *words*. One thing worth knowing — **Ollama cannot transcribe**; it
+runs language models and only those. So *on this Mac* for transcription means an
+OpenAI-compatible speech server you run yourself (whisper.cpp's `whisper-server`,
+faster-whisper-server, Speaches, LocalAI) and the setting asks for its address.
+Ollama is the natural choice for the recap half.
+
+**The recap becomes part of the meeting, on its own.** Nothing to press. The moment it
+is written it is appended to the write-up as ordinary Markdown you can edit, which is
+also why the meetings list starts showing what the meeting was about — the list has
+always shown the top of the write-up. A meeting you never got round to naming is given
+a name; one you named keeps yours. And every **commitment** — somebody saying out loud
+that they will do something — becomes one of the meeting's to-do items in the rail on
+the right, so it is counted as owing on Today and can be put on the board like any
+other. Folding it in is a step in the same queue as everything else, so a recap that
+was written before the machine went to sleep is folded in when it wakes.
+
+That happens once. After the first time, the write-up is yours: re-running the recap
+updates what the Recording screen shows and leaves your notes alone.
+
+**What the recap asks for is editable** and the default is opinionated: decisions,
+commitments and key insights, with small talk, scheduling chatter and restatements of
+the agenda thrown away. The *shape* of the answer is not editable, because the app
+reads it as data rather than prose — that is what lets a commitment become a to-do and
+a decision go into the decision log without being retyped.
+
+**Playing it back** puts the transcript beside the audio and moves through it as it
+plays; click any line to jump there. Speakers are labelled *Speaker 1*, *Speaker 2*
+and so on, and the panel is honest about where those come from: there is no
+voice-print model on a stock Mac, so the turns are worked out from the words rather
+than measured from the audio. They are usually right at the handovers and can be
+wrong in the middle of a monologue. Click one and put a real name to it from the
+people on the project — that is one row, and it is reversible.
+
+The recording says how big it is, everywhere it appears, and **delete means delete the
+audio** — the sound is the part that costs megabytes, and the transcript and the recap
+are a few kilobytes of text you will actually go back to. So the delete on the meeting
+page frees the space and keeps every word: the transcript, the speakers and the recap
+all stay exactly as they are. It is refused while there is nothing transcribed yet,
+because then the audio is the only copy of the meeting.
+
+Throwing the whole thing away — transcript and recap included — is a separate action,
+at the bottom of the Recording screen underneath everything it would destroy. It is
+for the recording you should not have made, not for saving space. Deleting a meeting,
+a project or a workspace takes its audio off the disk with it; a cascade in the
+database frees no space on its own, so Neo sweeps the folders itself, and again at
+launch as a backstop.
 
 ### Decision log
 A first-class record: what was decided, when, by whom, why, and **what was rejected**.
@@ -543,14 +656,24 @@ Everything lives in **`~/Documents/Neo`**:
 - `icons/` — the images you upload for workspaces, projects and people. Files nothing
   references any more are swept on launch.
 - `attachments/` — files you have dropped into a conversation with the assistant.
+- `recordings/` — the audio of recorded meetings, one folder per recording and one file
+  per five minutes. They are ordinary Opus files; drag one out and any player will open
+  it. Deleting a recording's audio from inside Neo removes the folder and keeps the
+  transcript.
 - `exports/` — JSON dumps of the structured data, on demand.
 
-Nothing leaves the machine on its own. Two things ever do, and both are things you asked
-for. A question typed into the assistant goes to OpenAI on your own key, along with
+The Markdown mirror covers recordings too: a recorded meeting writes its recap into the
+write-up file and its transcript into a second file beside it, so the words survive this
+app even if the audio has been deleted from inside it.
+
+Nothing leaves the machine on its own. Three things ever do, and all three are things you
+asked for. A question typed into the assistant goes to OpenAI on your own key, along with
 whatever it looked up to answer it, and only from the workspace you asked in — with no key
-saved, that channel is shut. And anything the Claude Desktop connector reads goes to
-Anthropic as part of the conversation you are having there; uninstalling the extension, or
-simply keeping Neo shut, closes that one.
+saved, that channel is shut. Anything the Claude Desktop connector reads goes to Anthropic
+as part of the conversation you are having there; uninstalling the extension, or simply
+keeping Neo shut, closes that one. And a meeting you record is sent wherever that
+workspace's *Recording* settings say — to OpenAI, or to a server on your own machine, or
+one of each for the audio and the words.
 
 ## Calendar
 

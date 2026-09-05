@@ -53,6 +53,21 @@ setKey('CFBundleDisplayName', NAME)
 // the other keys are set.
 setKey('CFBundleIdentifier', 'com.svartdal.neo.dev')
 
+// macOS terminates an application that asks for the microphone without declaring why
+// — and in development the bundle asking is Electron's own, which declares nothing.
+// Without this, pressing record in `npm run dev` kills the app outright. The packaged
+// build gets the same key from electron-builder.yml.
+setKey(
+  'NSMicrophoneUsageDescription',
+  "'Neo records the meetings you ask it to, so it can write out what was said.'"
+)
+// And the same for the computer's own audio, which Core Audio process taps need.
+// Without it, opening a tap in `npm run dev` is refused before it starts.
+setKey(
+  'NSAudioCaptureUsageDescription',
+  "'Neo records what your computer is playing, so a recorded meeting captures the whole call.'"
+)
+
 // The dock labels a running app after its executable, so rename that too — and keep
 // path.txt in step, or the electron launcher will not find the binary.
 const oldBinary = join(APP, 'Contents/MacOS/Electron')

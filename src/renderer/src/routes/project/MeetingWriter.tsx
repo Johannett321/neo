@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { CastMember, MeetingTodo, MeetingView } from '@shared/types'
-import { useApi, useApiMutation } from '@/lib/api'
+import { call, useApi, useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
-import { differs, relativeFromIso, todayStr } from '@/lib/format'
+import { useToast } from '@/lib/toast'
+import { differs, formatBytes, relativeFromIso, todayStr } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { DateField } from '@/components/DateField'
 import { MarkdownEditor } from '@/components/MarkdownEditor'
 import { Avatar, ConfirmButton, EmptyState, Field } from '@/components/primitives'
+import { RecorderRail } from '@/components/meeting/RecorderRail'
+import { RecordingPane } from '@/components/meeting/RecordingPane'
 
 /**
  * Writing up a meeting is writing, so it gets a page rather than a dialog.
@@ -35,6 +38,13 @@ export function MeetingWriter(): React.JSX.Element {
   const [occurredOn, setOccurredOn] = useState(todayStr())
   const [attendees, setAttendees] = useState<string[]>([])
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  /**
+   * Two things live in the middle of this page and only one of them can be there at
+   * a time. They are genuinely different activities — writing, and listening back —
+   * and stacking the second under the first would put a wall of transcript below
+   * every write-up you ever open.
+   */
+  const [tab, setTab] = useState<'write' | 'recording'>('write')
 
   // The draft lives here, not in the query cache: every save invalidates everything,
   // and a refetch must never overwrite what is being typed.
@@ -43,13 +53,28 @@ export function MeetingWriter(): React.JSX.Element {
   const saved = useRef({ title: '', body: '', occurredOn: '', attendees: [] as string[] })
   const deleted = useRef(false)
   const touched = useRef(false)
-  /** Still on screen. A save that lands after you have left must not pull you back. */
+  /**
+   * Still on screen. A save that lands after you have left must not pull you back.
+   *
+   * Set on the way in as well as cleared on the way out, and that is not belt and
+   * braces: StrictMode mounts every component twice in development, so a cleanup
+   * that only ever clears leaves this false for the rest of the session — and a new
+   * meeting then never has its URL corrected from `new` to its real id, so the page
+   * never learns what it is. Everything downstream that asks the page who it is,
+   * the recorder included, gets no answer.
+   */
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false }, [])
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
   draft.current = { title, body, occurredOn, attendees }
 
   const meeting = data?.meetings.find((m) => m.id === meetingId) ?? null
   const cast = data?.cast ?? []
+  const recording = meeting?.recording ?? null
   const missing = Boolean(data) && meetingId !== 'new' && !meeting && idRef.current !== meetingId
 
   // Loads a meeting once. `new` becomes a real id the moment it first saves, and that
@@ -71,6 +96,39 @@ export function MeetingWriter(): React.JSX.Element {
     setAttendees(next.attendees)
     setSavedAt(meeting.updatedAt)
   }, [meetingId, meeting])
+
+  /*
+   * The write-up can change under the cursor, and exactly once: when the recording's
+   * recap is finished, main folds it into the end of the body and names the meeting
+   * if it had no name. Both of those can land while this page is open and while
+   * somebody is typing into it.
+   *
+   * A page that simply reloaded the body would throw away the sentence in progress;
+   * a page that ignored the change would write its own stale copy back over the
+   * recap on the next autosave. So the change is *merged*: what arrived is always an
+   * append, so the tail is taken and added to the draft wherever the cursor happens
+   * to be, and `saved` is moved on so the next save carries both.
+   */
+  useEffect(() => {
+    if (!meeting || meeting.id !== idRef.current) return
+
+    if (meeting.body !== saved.current.body) {
+      const appended = meeting.body.startsWith(saved.current.body)
+        ? meeting.body.slice(saved.current.body.length)
+        : null
+      if (appended !== null) setBody((current) => current + appended)
+      else if (!touched.current) setBody(meeting.body)
+      saved.current = { ...saved.current, body: meeting.body }
+      setSavedAt(meeting.updatedAt)
+    }
+
+    // A name that arrived is only taken if this page has not been given one of its
+    // own — a title you are halfway through typing is never replaced.
+    if (meeting.title !== saved.current.title && draft.current.title === saved.current.title) {
+      setTitle(meeting.title)
+      saved.current = { ...saved.current, title: meeting.title }
+    }
+  }, [meeting])
 
   // A meeting you have just started is assumed to have had everyone on the project in
   // the room; unticking who was absent is quicker than remembering who was not.
@@ -155,6 +213,39 @@ export function MeetingWriter(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  /*
+   * Naming the meeting from what is in it.
+   *
+   * The meeting has to exist before it can be read, so a draft is saved first — the
+   * same thing adding a to-do does. What comes back is put into the field through
+   * `edit`, exactly as though it had been typed, so it autosaves with everything
+   * else and can be edited or replaced before it settles.
+   */
+  const [naming, setNaming] = useState(false)
+  const toast = useToast()
+
+  const nameIt = useCallback(async (): Promise<void> => {
+    if (naming) return
+    setNaming(true)
+    try {
+      const id = idRef.current ?? (await ensureSaved())
+      if (!id) return
+      const { title: suggested } = await call('meeting:suggestName', { id })
+      // Marked as touched by hand rather than through `edit`, so this closure does
+      // not have to capture a helper that is rebuilt on every render.
+      touched.current = true
+      setTitle(suggested)
+    } catch (error) {
+      toast({
+        title: 'Could not name this meeting',
+        detail: error instanceof Error ? error.message : String(error),
+        icon: 'alert'
+      })
+    } finally {
+      setNaming(false)
+    }
+  }, [ensureSaved, naming, toast])
+
   const back = `/projects/${projectId}/meetings`
 
   if (!data) return <div className="h-full" />
@@ -187,6 +278,31 @@ export function MeetingWriter(): React.JSX.Element {
         </Link>
         <span className="truncate text-[12px] text-base-content/35">{title.trim() || 'Untitled meeting'}</span>
 
+        {recording && (
+          <div className="hairline ml-2 flex shrink-0 items-center gap-0.5 rounded-field border p-0.5">
+            <button
+              className={`rounded-[5px] px-2 py-0.5 text-[11.5px] transition ${
+                tab === 'write' ? 'bg-base-content/8 font-medium' : 'text-base-content/50'
+              }`}
+              onClick={() => setTab('write')}
+            >
+              Write-up
+            </button>
+            <button
+              className={`flex items-center gap-1.5 rounded-[5px] px-2 py-0.5 text-[11.5px] transition ${
+                tab === 'recording' ? 'bg-base-content/8 font-medium' : 'text-base-content/50'
+              }`}
+              onClick={() => setTab('recording')}
+            >
+              <Icon name="waveform" size={11} />
+              Recording
+              <span className="tabular-nums text-base-content/40">
+                {recording.audioDeletedAt ? 'transcript' : formatBytes(recording.bytes)}
+              </span>
+            </button>
+          </div>
+        )}
+
         <div className="ml-auto flex items-center gap-2 text-[11px] text-base-content/35">
           <span className="w-[6.5rem] text-right">
             {dirty ? 'Unsaved…' : savedAt ? `Saved ${relativeFromIso(savedAt)}` : 'Not saved yet'}
@@ -209,31 +325,74 @@ export function MeetingWriter(): React.JSX.Element {
 
       <div className="flex min-h-0 flex-1">
         <div className="scroll-area min-w-0 flex-1">
-          <div className="mx-auto w-full max-w-[44rem] px-10 pb-32 pt-10">
-            <MarkdownEditor
-              value={body}
-              onChange={edit(setBody)}
-              autoFocus={meetingId !== 'new'}
-              placeholder="What was actually said, including the part that was awkward."
-              className="min-h-[60vh] px-0.5"
-            />
-          </div>
+          {tab === 'recording' && recording ? (
+            <div className="mx-auto w-full max-w-[48rem] px-10 pb-24 pt-8">
+              <RecordingPane
+                meetingId={recording.meetingId}
+                projectId={projectId}
+                cast={cast}
+                decisions={data.decisions}
+              />
+            </div>
+          ) : (
+            <div className="mx-auto w-full max-w-[44rem] px-10 pb-32 pt-10">
+              <MarkdownEditor
+                value={body}
+                onChange={edit(setBody)}
+                autoFocus={meetingId !== 'new'}
+                placeholder="What was actually said, including the part that was awkward."
+                className="min-h-[60vh] px-0.5"
+              />
+            </div>
+          )}
         </div>
 
         <aside className="scroll-area hairline w-[19.5rem] shrink-0 space-y-6 border-l bg-base-200/30 px-5 py-6">
           <Field label="Name">
-            <input
-              autoFocus={meetingId === 'new'}
-              className="input input-bordered input-sm w-full"
-              placeholder="Weekly sync, steering committee, client call…"
-              value={title}
-              onChange={(e) => edit(setTitle)(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                autoFocus={meetingId === 'new'}
+                className="input input-bordered input-sm w-full pr-8"
+                placeholder="Weekly sync, steering committee, client call…"
+                value={title}
+                onChange={(e) => edit(setTitle)(e.target.value)}
+              />
+              {/*
+                Inside the field, because what it fills in is the field. It suggests
+                and nothing more — the name lands where you can read it, change it or
+                type straight over it, and it is kept by the same autosave as the
+                rest of the page.
+              */}
+              <button
+                type="button"
+                className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-field text-base-content/35 transition hover:bg-base-content/8 hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-base-content/35"
+                title="Name it from what is in it"
+                aria-label="Suggest a name for this meeting"
+                disabled={naming}
+                onClick={() => void nameIt()}
+              >
+                <Icon
+                  name={naming ? 'refresh' : 'sparkles'}
+                  size={14}
+                  className={naming ? 'animate-spin' : ''}
+                />
+              </button>
+            </div>
           </Field>
 
           <Field label="Date">
             <DateField value={occurredOn} onChange={edit(setOccurredOn)} allowClear={false} />
           </Field>
+
+          {/* Recording a meeting that has not been saved yet saves it first — the
+              audio has to belong to something before the first second of it arrives. */}
+          <RecorderRail
+            meetingId={meeting?.id ?? idRef.current}
+            projectId={projectId}
+            recording={recording}
+            ensureSaved={ensureSaved}
+            onOpenRecording={() => setTab('recording')}
+          />
 
           <Attendees cast={cast} value={attendees} onChange={edit(setAttendees)} />
 

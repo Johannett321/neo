@@ -1,9 +1,12 @@
 import type { Meeting, MeetingTodo, MeetingView } from '@shared/types'
-import { exec, q1, today } from '../db/client'
+import { exec, q, q1, today } from '../db/client'
 import { meetingViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
 import { doneColumnId, firstColumnId } from '../lib/board'
 import { mirrorProject } from '../lib/markdown'
+import { describeEngineError, recapEngine, workspaceOfMeeting } from '../lib/recording/engine'
+import { pruneRecordings } from '../lib/recording/store'
+import { suggestTitle } from '../lib/recording/summarise'
 import { handle, pick, upsert } from './util'
 
 /**
@@ -64,9 +67,77 @@ export function registerMeetingHandlers(): void {
     return meeting
   })
 
+  /**
+   * Naming a meeting for you.
+   *
+   * A suggestion and nothing more: it writes no row. The name goes back to the page,
+   * lands in the field, and is saved by the same autosave that keeps everything else
+   * on that page — so it can be read, edited or simply typed over before it sticks,
+   * which is what you want from something a model came up with.
+   *
+   * It reads whatever the meeting actually has. A transcript if there is one, because
+   * that is the meeting itself; the write-up otherwise. Enough of either to name it
+   * by, and no more — the first several thousand words settle what a meeting was
+   * about, and sending an hour of talk to name six words of it is waste.
+   */
+  handle('meeting:suggestName', async ({ id }) => {
+    const meeting = await q1<any>(
+      `SELECT m.*, p.name AS project_name FROM meeting m
+       JOIN project p ON p.id = m.project_id WHERE m.id = $1`,
+      [id]
+    )
+    if (!meeting) throw new Error('That meeting is no longer here.')
+
+    const spoken = await q<{ speaker: string; text: string }>(
+      `SELECT c.speaker, c.text FROM transcript_cue c
+       JOIN recording r ON r.id = c.recording_id
+       WHERE r.meeting_id = $1 ORDER BY c.ord LIMIT 400`,
+      [id]
+    )
+    const written = (meeting.body ?? '').trim()
+    const content = [
+      written ? `The write-up:\n\n${written}` : '',
+      spoken.length ? `What was said:\n\n${spoken.map((c) => c.text).join(' ')}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 24_000)
+
+    if (!content) {
+      throw new Error('There is nothing in this meeting to name it from yet — write something first, or record it.')
+    }
+
+    const attendees = await q<{ name: string }>(
+      `SELECT pe.name FROM meeting_attendee ma JOIN person pe ON pe.id = ma.person_id
+       WHERE ma.meeting_id = $1 ORDER BY pe.name`,
+      [id]
+    )
+
+    const config = recapEngine(await workspaceOfMeeting(id))
+    try {
+      const title = await suggestTitle(
+        config,
+        {
+          occurredOn: meeting.occurred_on,
+          projectName: meeting.project_name,
+          attendees: attendees.map((a) => a.name)
+        },
+        content
+      )
+      if (!title) throw new Error('The model did not come back with a name.')
+      return { title }
+    } catch (error) {
+      throw new Error(describeEngineError(error, config))
+    }
+  })
+
   handle('meeting:delete', async ({ id }) => {
     const row = await q1<any>('SELECT project_id FROM meeting WHERE id = $1', [id])
     await exec('DELETE FROM meeting WHERE id = $1', [id])
+    // The recording row goes with the meeting through the foreign key, but its audio
+    // is a folder on disk that no cascade knows about — and it is the largest thing
+    // this app writes. Sweep it now rather than at the next launch.
+    await pruneRecordings()
     if (row) await mirrorProject(row.project_id)
   })
 

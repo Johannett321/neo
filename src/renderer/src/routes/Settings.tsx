@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { openExternal, useApi, useApiMutation } from '@/lib/api'
+import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
 import { useTheme, THEMES } from '@/lib/theme'
+import { formatBytes } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
@@ -41,6 +42,13 @@ export function SettingsPage(): React.JSX.Element {
           render: () => <AppearancePane />
         },
         {
+          id: 'audio',
+          label: 'Recording',
+          icon: 'mic',
+          description: 'What a meeting recording listens to on this machine.',
+          render: () => <AudioPane />
+        },
+        {
           id: 'data',
           label: 'Data',
           icon: 'folder',
@@ -68,6 +76,269 @@ export function SettingsPage(): React.JSX.Element {
         }
       ]}
     />
+  )
+}
+
+/**
+ * What a recording listens to.
+ *
+ * This is in app settings rather than workspace settings because it is about this
+ * machine — which microphone, which cable — while a workspace decides things about a
+ * working life. You do not want a different answer here per client.
+ *
+ * The awkward part is honest rather than hidden. macOS does not let one application
+ * hear another, at all, and no setting in this app can change that: the only route is
+ * a virtual audio device that both the call and Neo are pointed at. So the pane says
+ * so, names the free one people use, and then gets out of the way.
+ */
+function AudioPane(): React.JSX.Element {
+  const settings = useApi('settings:get')
+  const save = useApiMutation('settings:save')
+  const native = useApi('systemAudio:available')
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const [asked, setAsked] = useState(false)
+
+  const on = settings.data?.captureSystemAudio ?? true
+  const chosen = settings.data?.systemAudioDevice ?? ''
+  const windows = window.api.platform === 'win32'
+  // The native tap needs nothing installed and is tried first, so when it is there
+  // the device below is a fallback rather than the way this works.
+  const tap = native.data?.available ?? false
+
+  /*
+   * Device *names* are only handed over once the microphone has been allowed — before
+   * that every input is an empty label and the list is useless. So the list is only
+   * built when it is going to be looked at, and asking for it is what fills it in.
+   */
+  const load = async (): Promise<void> => {
+    await call('recording:requestMic')
+    try {
+      const granted = await navigator.mediaDevices.getUserMedia({ audio: true })
+      granted.getTracks().forEach((track) => track.stop())
+    } catch {
+      // Refused. The list below will be empty and say why.
+    }
+    setDevices((await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'))
+    setAsked(true)
+  }
+
+  useEffect(() => {
+    if (!windows) void load()
+    // Only ever on the way in: re-running this would re-open the microphone.
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [windows])
+
+  // The devices that exist to carry another application's sound. Named so they can be
+  // put at the top, because in a list of eight inputs they are the only right answer.
+  const virtual = devices.filter((d) =>
+    /blackhole|loopback|soundflower|aggregate|multi-output|vb-?cable|virtual/i.test(d.label)
+  )
+  const others = devices.filter((d) => !virtual.includes(d))
+
+  return (
+    <div className="space-y-4">
+      <Panel>
+        <div className="flex items-start gap-4">
+          <div className="flex-1">
+            <div className="text-[13px] font-medium">Record the computer’s sound too</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+              The other half of a video call. Without it a recording catches your side of the
+              conversation and nothing anyone else said.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            className="toggle toggle-sm mt-1"
+            checked={on}
+            onChange={(e) => save.mutate({ captureSystemAudio: e.target.checked })}
+          />
+        </div>
+      </Panel>
+
+      {on && tap && !windows && (
+        <Panel>
+          <div className="flex items-start gap-3">
+            <Icon name="check" size={15} className="mt-0.5 shrink-0 text-success" />
+            <div>
+              <div className="text-[13px] font-medium">Ready, with nothing to install</div>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+                Neo reads the computer’s sound through macOS itself, using a Core Audio process
+                tap. The first time you record, macOS will ask whether to allow it — say yes, and
+                both halves of the call go into the recording. You still hear it as normal;
+                nothing is muted or rerouted.
+              </p>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-base-content/45">
+                Needs macOS 14.4 or later. If it is refused or unavailable, the device below is
+                used instead, and the meeting panel says which one you got.
+              </p>
+
+              <SystemAudioTest />
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {on && (
+        <Panel>
+          {windows ? (
+            <p className="text-[12.5px] leading-relaxed text-base-content/70">
+              Windows hands an application its own output directly, so there is nothing to set up
+              here. The computer’s sound is mixed into the recording alongside the microphone.
+            </p>
+          ) : (
+            <>
+              <Field
+                label={tap ? 'If that does not work: a virtual audio device' : 'Where the computer’s sound comes in'}
+                hint={
+                  tap
+                    ? 'Only used when the tap above is refused or unavailable — on macOS before 14.4, say. A virtual audio device that both your call and Neo are pointed at arrives here like any other input.'
+                    : 'macOS does not let one application hear another. The only way round it is a virtual audio device that both your call and Neo are pointed at — then it arrives here like any other input.'
+                }
+              >
+                <div className="space-y-1">
+                  {[...virtual, ...others].map((device) => (
+                    <button
+                      key={device.deviceId}
+                      className={`hairline flex w-full items-center gap-3 rounded-field border px-3 py-2 text-left transition ${
+                        chosen === device.label ? 'border-primary/40 bg-primary/5' : 'hover:bg-base-200/60'
+                      }`}
+                      onClick={() =>
+                        save.mutate({ systemAudioDevice: chosen === device.label ? '' : device.label })
+                      }
+                    >
+                      <span
+                        className={`size-3.5 shrink-0 rounded-full border-[1.5px] ${
+                          chosen === device.label ? 'border-primary bg-primary' : 'border-base-content/25'
+                        }`}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[13px]">{device.label}</span>
+                      {virtual.includes(device) && (
+                        <span className="shrink-0 text-[10.5px] text-base-content/40">
+                          carries other apps
+                        </span>
+                      )}
+                    </button>
+                  ))}
+
+                  {devices.length === 0 && (
+                    <p className="text-[12px] text-base-content/50">
+                      {asked
+                        ? 'No audio inputs are visible. Neo may not have been allowed to use the microphone.'
+                        : 'Looking…'}
+                    </p>
+                  )}
+                </div>
+              </Field>
+
+              {chosen && !virtual.some((d) => d.label === chosen) && (
+                <p className="mt-2 text-[11.5px] leading-relaxed text-warning">
+                  “{chosen}” does not look like a virtual device. If it is an ordinary microphone,
+                  the recording will hear the room twice and nothing extra.
+                </p>
+              )}
+
+              <div className="hairline mt-4 border-t pt-4">
+                <div className="text-[12px] font-medium">Nothing listed that would work?</div>
+                <p className="mt-1 text-[12px] leading-relaxed text-base-content/55">
+                  <button
+                    className="underline decoration-base-content/25 hover:decoration-current"
+                    onClick={() => openExternal('https://existential.audio/blackhole/')}
+                  >
+                    BlackHole
+                  </button>{' '}
+                  is free and open source, and is what most people use. Install it, then in Audio
+                  MIDI Setup make a <em>Multi-Output Device</em> containing BlackHole and your
+                  speakers and select it as the system output — that way you still hear the call
+                  while Neo records it. Come back here and pick BlackHole above.
+                </p>
+                <button className="btn btn-xs mt-2 gap-1.5" onClick={() => void load()}>
+                  <Icon name="refresh" size={11} />
+                  Look again
+                </button>
+              </div>
+            </>
+          )}
+        </Panel>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Try it, here, before a meeting rather than during one.
+ *
+ * macOS settles every question about this at the moment it is first asked — whether
+ * to prompt, whether to allow — and offers no API to ask beforehand. So the only way
+ * to know is to open the tap and see what comes out, and the only moment worth
+ * finding out is not halfway through the call you needed recorded.
+ *
+ * It reports the byte count rather than a tick, because a tap that opened and
+ * produced silence is the failure that matters and it looks exactly like success from
+ * anywhere else.
+ */
+function SystemAudioTest(): React.JSX.Element {
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; reason: string; bytes: number } | null>(null)
+
+  const run = async (): Promise<void> => {
+    setRunning(true)
+    setResult(null)
+    try {
+      setResult(await call('systemAudio:test'))
+    } catch (error) {
+      setResult({ ok: false, reason: error instanceof Error ? error.message : String(error), bytes: 0 })
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2.5">
+        <button className="btn btn-sm gap-1.5" disabled={running} onClick={() => void run()}>
+          <Icon name={running ? 'refresh' : 'play'} size={12} className={running ? 'animate-spin' : ''} />
+          {running ? 'Listening…' : 'Test it'}
+        </button>
+        <span className="text-[11.5px] text-base-content/45">
+          Play something first — a video, some music — then press this.
+        </span>
+      </div>
+
+      {result && (
+        <div
+          className={`hairline mt-2.5 flex items-start gap-2 rounded-field border px-3 py-2 text-[12px] leading-relaxed ${
+            result.ok ? 'border-success/40 bg-success/5' : 'border-warning/40 bg-warning/5'
+          }`}
+        >
+          <Icon
+            name={result.ok ? 'check' : 'alert'}
+            size={13}
+            className={`mt-0.5 shrink-0 ${result.ok ? 'text-success' : 'text-warning'}`}
+          />
+          <span>
+            {result.ok ? (
+              <>
+                Heard the computer — {formatBytes(result.bytes)} in two seconds. Recordings will
+                catch both sides of a call.
+              </>
+            ) : (
+              <>
+                {result.reason}
+                {result.bytes === 0 && !/would not let|refused|Privacy/i.test(result.reason) && (
+                  <>
+                    {' '}
+                    If something <em>was</em> playing, macOS is most likely refusing quietly —
+                    check <strong>System Settings › Privacy &amp; Security › Audio Recording</strong>
+                    , and note that a build running from source is unsigned, which macOS treats
+                    differently from an installed one.
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 

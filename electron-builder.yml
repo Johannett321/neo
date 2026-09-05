@@ -16,9 +16,29 @@ asarUnpack:
 extraResources:
   - from: out/mcp/neo-mcp.mjs
     to: mcp/neo-mcp.mjs
+  # The native audio tap, for the same reason: it is spawned as a process, so it has
+  # to be a real file beside the app rather than a member of the asar archive. Absent
+  # on a machine that built without a Swift toolchain, which every path that uses it
+  # already copes with.
+  - from: out/native/neo-audiotap
+    to: native/neo-audiotap
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
+  # macOS kills an app that asks for the microphone without declaring why, and the
+  # sentence below is the one shown in its own permission sheet — so it says what
+  # the recording is for rather than "Neo would like to access the microphone".
+  extendInfo:
+    NSMicrophoneUsageDescription: >-
+      Neo records the meetings you ask it to, so it can write out what was said and
+      pull the decisions and commitments out of it. Recordings stay in your own
+      Documents folder.
+    # Core Audio process taps need this, and there is no public API to ask for the
+    # permission up front — macOS shows its own sheet the first time a tap is opened,
+    # and this is the sentence on it.
+    NSAudioCaptureUsageDescription: >-
+      Neo records what your computer is playing, so a recorded meeting captures the
+      people on the call and not only your own microphone.
   target:
     - dmg
     - zip

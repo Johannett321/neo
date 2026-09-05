@@ -285,6 +285,64 @@ async function main(): Promise<void> {
   )
   ok('a conversation can be written on an upgraded database', Boolean(madeChat?.id))
 
+  // Recording arrived long after these rows did, so every table and every column it
+  // needs has to appear on a database that predates the whole idea of it.
+  const recordingTables = await q<{ table_name: string }>(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('recording', 'recording_segment', 'transcript_cue', 'summary_part')
+     ORDER BY table_name`
+  )
+  ok('the recording tables are created on an old database',
+     recordingTables.length === 4, recordingTables.map((t) => t.table_name).join(', '))
+
+  const recordingSettings = await q<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'workspace' AND column_name LIKE ANY (ARRAY['transcribe%', 'recap%'])
+     ORDER BY column_name`
+  )
+  ok('and every workspace gains the settings that say how it transcribes and recaps',
+     recordingSettings.length === 8, recordingSettings.map((c) => c.column_name).join(', '))
+
+  // The whole feature turns on being able to write these rows, so writing one is the
+  // assertion rather than the shape of the table being right on paper.
+  const [oldMeeting] = await q<{ id: string }>('SELECT id FROM meeting LIMIT 1')
+  const [madeRecording] = await q<{ id: string }>(
+    'INSERT INTO recording (meeting_id) VALUES ($1) RETURNING id',
+    [oldMeeting.id]
+  )
+  const [madeSegment] = await q<{ id: string }>(
+    `INSERT INTO recording_segment (recording_id, ord, path) VALUES ($1, 0, '0000.webm') RETURNING id`,
+    [madeRecording.id]
+  )
+  await q(
+    `INSERT INTO transcript_cue (recording_id, segment_id, ord, start_ms, end_ms, text)
+     VALUES ($1, $2, 0, 0, 1000, 'hello')`,
+    [madeRecording.id, madeSegment.id]
+  )
+  ok('a recording, its segments and its transcript can be written on an upgraded database',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM transcript_cue'))[0]?.n === 1)
+
+  // The columns that decide whether a recap has already been folded into its meeting.
+  // Without them every launch would append the same recap to the same write-up again.
+  const foldColumns = await q<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'recording'
+       AND column_name IN ('suggested_title', 'recap_written_at', 'recap_todos_at')
+     ORDER BY column_name`
+  )
+  ok('a recording gains the columns that stop a recap being folded in twice',
+     foldColumns.length === 3, foldColumns.map((c) => c.column_name).join(', '))
+
+  // One recording per meeting, enforced by the index rather than by the handler.
+  let secondRefused = false
+  try {
+    await q('INSERT INTO recording (meeting_id) VALUES ($1)', [oldMeeting.id])
+  } catch {
+    secondRefused = true
+  }
+  ok('a meeting cannot end up with two recordings', secondRefused)
+
   // An existing database has workspaces but no onboarding marker, which is exactly
   // the pair the renderer reads: it is the *absence of any workspace, ever* that says
   // this is a new install, so an upgrade lands in the app rather than in the pitch.

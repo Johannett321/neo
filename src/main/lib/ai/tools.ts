@@ -403,6 +403,75 @@ export const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'meeting_recording',
+    description:
+      'What a recorded meeting produced: the recap — decisions, commitments and key insights — and, if you ask for it, the transcript itself. Use it when a question is about what was actually said in a room rather than what was written up afterwards.',
+    parameters: object(
+      {
+        meeting: str('The meeting id, from get_project or get_document.'),
+        transcript: {
+          type: ['boolean', 'null'],
+          description: 'Include the full transcript. It is long; leave it off unless the recap is not enough.'
+        }
+      },
+      ['meeting']
+    ),
+    writes: false,
+    run: async (input, ctx) => {
+      // Joined back to the workspace, like every other read here: a meeting id from
+      // somewhere else is simply not found rather than quietly answered.
+      const rows = await q<Record<string, any>>(
+        `SELECT r.*, m.title, m.occurred_on FROM recording r
+         JOIN meeting m ON m.id = r.meeting_id
+         JOIN project p ON p.id = m.project_id
+         WHERE r.meeting_id::text = $1 AND p.workspace_id = $2`,
+        [String(input.meeting), ctx.workspaceId]
+      )
+      const row = rows[0]
+      if (!row) throw new Error('That meeting has no recording in this workspace.')
+
+      const speakers = row.speakers ?? {}
+      const payload: Record<string, unknown> = {
+        meeting: row.title,
+        occurredOn: row.occurred_on,
+        state:
+          row.summary_state === 'done'
+            ? 'ready'
+            : row.transcript_state === 'failed' || row.summary_state === 'failed'
+              ? 'failed'
+              : 'still being written',
+        summary: row.summary,
+        ...(row.recap ?? {}),
+        durationMinutes: Math.round(Number(row.duration_ms ?? 0) / 60_000),
+        audioDeleted: Boolean(row.audio_deleted_at)
+      }
+
+      if (input.transcript) {
+        const cues = await q<{ speaker: string; text: string }>(
+          'SELECT speaker, text FROM transcript_cue WHERE recording_id = $1 ORDER BY ord',
+          [row.id]
+        )
+        const lines: string[] = []
+        let current = ''
+        for (const cue of cues) {
+          const named = speakers[cue.speaker]?.name || cue.speaker
+          if (named && named !== current) {
+            current = named
+            lines.push(`${named}: ${cue.text}`)
+          } else if (lines.length) {
+            lines[lines.length - 1] += ` ${cue.text}`
+          } else {
+            lines.push(cue.text)
+          }
+        }
+        payload.transcript = lines.join('\n')
+        payload.speakersAreInferred =
+          'Speaker labels are worked out from the words rather than from the voices, so treat them as a good guess.'
+      }
+      return payload
+    }
+  },
+  {
     name: 'recent_activity',
     description: 'What has changed lately across the workspace, newest first.',
     parameters: object({ limit: { type: ['integer', 'null'], description: 'Defaults to 40.' } }),

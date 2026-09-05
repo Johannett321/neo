@@ -114,3 +114,25 @@ export const projectColor = (p: {
   projectColor?: string
   workspaceColor: string
 }): string => p.color || p.projectColor || p.workspaceColor
+
+/**
+ * A file size in the unit a person would say out loud. Base 1000 rather than 1024,
+ * because that is what the Finder shows and a recording that disagrees with the
+ * Finder about its own size is a recording you do not trust.
+ */
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return '0 MB'
+  if (bytes < 1_000_000) return `${Math.max(1, Math.round(bytes / 1000))} KB`
+  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`
+  return `${(bytes / 1_000_000_000).toFixed(2)} GB`
+}
+
+/** A running time, as a clock: 4:07, or 1:12:30 once it passes an hour. */
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const seconds = total % 60
+  const minutes = Math.floor(total / 60) % 60
+  const hours = Math.floor(total / 3600)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
+}

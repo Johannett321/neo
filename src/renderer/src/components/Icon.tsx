@@ -50,7 +50,14 @@ const PATHS = {
   chat: 'M8 18.5l-4 2.5v-4.2A2.3 2.3 0 013 14.5v-7A2.5 2.5 0 015.5 5h13A2.5 2.5 0 0121 7.5v7a2.5 2.5 0 01-2.5 2.5H8z',
   paperclip: 'M19 11.5l-7.4 7.4a4.5 4.5 0 01-6.4-6.4l8-8a3 3 0 014.2 4.2l-8 8a1.5 1.5 0 01-2.1-2.1L15 7',
   arrowUp: 'M12 19V5M6 11l6-6 6 6',
-  stop: 'M8 8h8v8H8z'
+  stop: 'M8 8h8v8H8z',
+  mic: 'M12 3.5a2.5 2.5 0 012.5 2.5v6a2.5 2.5 0 01-5 0V6A2.5 2.5 0 0112 3.5zM5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6',
+  play: 'M7.5 5.2l11 6.8-11 6.8V5.2z',
+  pause: 'M9 5v14M15 5v14',
+  waveform: 'M3 12h2M7 8v8M11 4.5v15M15 8v8M19 10.5v3M21.5 12h.01',
+  // Two stars rather than one: the single sparkle already means the assistant, and
+  // this is the smaller thing — a field filling itself in, not a conversation.
+  sparkles: 'M9.5 3l1.5 4.1L15 8.5l-4 1.4L9.5 14 8 9.9 4 8.5l4-1.4L9.5 3zM17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z'
 } as const
 
 interface IconProps {

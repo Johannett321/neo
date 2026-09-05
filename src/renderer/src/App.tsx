@@ -6,12 +6,14 @@ import { Icon } from '@/components/Icon'
 import { PageTransition } from '@/components/PageTransition'
 import { Sidebar } from '@/components/Sidebar'
 import { CreateDialog } from '@/components/CreateDialog'
+import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
 import { useApi } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
 import { useTheme } from '@/lib/theme'
+import { RecorderProvider } from '@/lib/recorder'
 import { WorkspaceProvider, useWorkspaces } from '@/lib/workspace'
 import { Onboarding } from '@/routes/Onboarding'
 import { Welcome } from '@/routes/Welcome'
@@ -107,7 +109,7 @@ function Shell(): React.JSX.Element {
     <div className="flex h-full bg-base-100 text-base-content">
       <Sidebar />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col">
         {!writing && (
           <header className="drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
             <button
@@ -175,6 +177,14 @@ function Shell(): React.JSX.Element {
             </PageTransition>
           </div>
         </main>
+
+        {/*
+          Outside the header on purpose. The header is not drawn on the writing screens
+          — a note and a meeting write-up own the window — and the meeting write-up is
+          exactly the screen you press record on, so a recording indicator that lived
+          in the header would be invisible precisely where it is needed most.
+        */}
+        <RecordingBar />
       </div>
 
       <AssistantPanel />
@@ -229,7 +239,9 @@ function Gate(): React.JSX.Element {
   if (!active) return <Onboarding />
   return (
     <AssistantProvider workspaceId={active.id}>
-      <Shell />
+      <RecorderProvider>
+        <Shell />
+      </RecorderProvider>
     </AssistantProvider>
   )
 }

@@ -1,4 +1,4 @@
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, shell } from 'electron'
 import { ASSISTANT_WIDTH } from '@shared/ai'
@@ -8,6 +8,7 @@ import { DDL, MIGRATIONS } from '../db/ddl'
 import { THRESHOLDS } from '../lib/attention'
 import { mirrorAll } from '../lib/markdown'
 import { loadSampleData } from '../lib/sample'
+import { recordingDir } from '../lib/recording/store'
 import { handle } from './util'
 
 const DEFAULTS = {
@@ -42,13 +43,20 @@ async function readSettings(): Promise<Settings> {
     theme: (stored.theme as Settings['theme']) ?? DEFAULTS.theme,
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
-    assistantWidth: num('assistantWidth', DEFAULTS.assistantWidth)
+    assistantWidth: num('assistantWidth', DEFAULTS.assistantWidth),
+    // On by default: a meeting recording that catches only your half of the call is
+    // the failure this feature exists to avoid, so it tries, and says when it cannot.
+    captureSystemAudio: (stored.captureSystemAudio ?? 'true') !== 'false',
+    systemAudioDevice: stored.systemAudioDevice ?? ''
   }
 }
 
 const TABLES = [
   'workspace', 'project', 'person', 'membership',
-  'task', 'note', 'decision', 'link', 'journal_entry', 'activity'
+  'task', 'note', 'decision', 'link', 'journal_entry', 'activity',
+  // A transcript is writing, and the export is what survives this app. The audio is
+  // not in here — it is a file in the data folder, which is already the backup.
+  'recording', 'recording_segment', 'transcript_cue'
 ] as const
 
 export function registerSettingsHandlers(): void {
@@ -85,7 +93,12 @@ export function registerSettingsHandlers(): void {
   handle('settings:loadSample', () => loadSampleData())
 
   handle('settings:wipe', async () => {
-    for (const table of TABLES) await exec(`DROP TABLE IF EXISTS ${table} CASCADE`)
+    // The audio goes with the rows. It is the one thing this app owns that lives
+    // outside the database, so it is the one thing a wipe has to be told about.
+    await rm(recordingDir(), { recursive: true, force: true })
+    for (const table of [...TABLES, 'summary_part']) {
+      await exec(`DROP TABLE IF EXISTS ${table} CASCADE`)
+    }
     await exec('DROP TABLE IF EXISTS setting CASCADE')
     await db().exec(DDL)
     for (const statement of MIGRATIONS) await db().query(statement)

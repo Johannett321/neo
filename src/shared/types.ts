@@ -3,6 +3,8 @@
  * Everything that crosses the IPC bridge is described here.
  */
 
+import type { CaptureState, Engine, Stage } from './recording'
+
 export type ProjectStatus = 'active' | 'paused' | 'dormant' | 'done'
 
 /**
@@ -50,6 +52,22 @@ export interface Workspace {
   aiKeySet: boolean
   /** Which model the assistant runs on. Empty means the default. */
   aiModel: string
+  /**
+   * How this workspace turns a recording into words and then into a recap. It is a
+   * workspace setting for the same reason the key is: a client's conversations may
+   * not be allowed to leave the machine while the day job's happily can, and that is
+   * a decision you make once per working life rather than once per meeting.
+   */
+  transcribeEngine: Engine
+  transcribeModel: string
+  transcribeBaseUrl: string
+  /** ISO 639-1, e.g. "no". Empty lets the model work it out. */
+  transcribeLanguage: string
+  recapEngine: Engine
+  recapModel: string
+  recapBaseUrl: string
+  /** What the recap is asked for. Empty means the default in `shared/recording.ts`. */
+  recapPrompt: string
   createdAt: string
 }
 
@@ -224,11 +242,126 @@ export interface MeetingTodo {
 }
 
 export interface MeetingView extends Meeting {
+  /** The recording, if this meeting was recorded. Null is the normal case. */
+  recording: RecordingView | null
   attendees: { id: string; name: string; color: string; avatar: string | null; role: string }[]
   todos: MeetingTodo[]
   /** Still owed. The meeting list shows this without you having to open anything. */
   openTodos: number
 }
+
+/* ------------------------------------------------------------------ recording */
+
+/**
+ * One file of audio. A recording is a *sequence* of these rather than one file,
+ * which is the whole reason it survives a machine losing power: a segment is closed
+ * and accounted for every five minutes, and again whenever capture is interrupted
+ * and picked back up, so what is on disk is always a set of complete, playable,
+ * transcribable files plus at most one that is still being written.
+ */
+export interface RecordingSegment {
+  id: string
+  ord: number
+  /** Where this segment starts on the recording's own timeline, in milliseconds. */
+  offsetMs: number
+  durationMs: number
+  bytes: number
+  /** False once the audio has been deleted and only the words are left. */
+  hasAudio: boolean
+  /** Transcription is per segment, so an interrupted run resumes at the right one. */
+  state: Stage
+  error: string
+}
+
+/** One phrase, timed against the whole recording rather than against its segment. */
+export interface TranscriptCue {
+  id: string
+  ord: number
+  startMs: number
+  endMs: number
+  /** "Speaker 1", or a real name once one has been put to it. Empty until attributed. */
+  speaker: string
+  text: string
+}
+
+export interface RecapCommitment {
+  who: string
+  what: string
+  /** YYYY-MM-DD, and only when a date was actually said. */
+  due: string
+}
+
+/**
+ * What the meeting produced, as data rather than prose, because the screen acts on
+ * it: a commitment becomes a to-do in one click, and a decision can be filed in the
+ * decision log without being retyped.
+ */
+export interface Recap {
+  decisions: { what: string; who: string }[]
+  commitments: RecapCommitment[]
+  insights: string[]
+}
+
+export const EMPTY_RECAP: Recap = { decisions: [], commitments: [], insights: [] }
+
+/** A speaker label with whatever has been put to it. */
+export interface SpeakerName {
+  name: string
+  personId: string | null
+}
+
+export interface RecordingView {
+  id: string
+  meetingId: string
+  captureState: CaptureState
+  startedAt: string
+  stoppedAt: string | null
+  /** Sound actually captured, which is not the wall clock if capture was interrupted. */
+  durationMs: number
+  /** On disk right now. Zero once the audio has been deleted. */
+  bytes: number
+  audioDeletedAt: string | null
+  segments: RecordingSegment[]
+
+  transcriptState: Stage
+  transcriptError: string
+  transcriptEngine: string
+  transcriptModel: string
+  /** Segments transcribed out of segments there are, for a progress line in words. */
+  transcribed: number
+  segmentCount: number
+  /** False when the transcription model returned no times, so playback cannot follow. */
+  hasTimestamps: boolean
+
+  speakerState: Stage
+  speakers: Record<string, SpeakerName>
+
+  summaryState: Stage
+  summaryError: string
+  summaryEngine: string
+  summaryModel: string
+  /** The prose part of the recap, in Markdown. */
+  summary: string
+  recap: Recap
+  /**
+   * When the recap was folded into the meeting — appended to the write-up, used to
+   * name it if it had no name, and turned into its to-do items. Null means that has
+   * not happened yet, which is a thing the screen must not claim before it is true.
+   */
+  recapWrittenAt: string | null
+
+  updatedAt: string
+}
+
+/**
+ * What main pushes at the window while a recording is being worked on. The pipeline
+ * runs whether or not anything is on screen — that is the point of it — so the
+ * renderer is told when something moved rather than polling for it.
+ */
+export type RecordingEvent =
+  | { type: 'changed'; recordingId: string; meetingId: string }
+  /** Capture stopped without being told to: the renderer has to let go of the mic. */
+  | { type: 'interrupted'; recordingId: string; meetingId: string }
 
 export interface Decision {
   id: string
@@ -351,6 +484,22 @@ export interface Settings {
   horizonDays: number
   /** How wide you have dragged the assistant panel. */
   assistantWidth: number
+  /**
+   * Try to record what the computer is playing as well as what the microphone
+   * hears — the other half of a video call.
+   */
+  captureSystemAudio: boolean
+  /**
+   * The input device the computer's own sound arrives on, by name.
+   *
+   * Empty on Windows, where the operating system will hand an application its own
+   * output directly and no device is involved. On macOS there is no such thing:
+   * nothing but a virtual audio device can hear what another app is playing, so this
+   * names the one to listen to — "BlackHole 2ch", an aggregate device, whatever you
+   * have. Stored by name rather than by id because ids are opaque and change; a name
+   * is the thing you would recognise in a list.
+   */
+  systemAudioDevice: string
 }
 
 /* ------------------------------------------------------------------ assistant */

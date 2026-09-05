@@ -55,7 +55,7 @@ than a second set of writes beside them, so a task it creates logs activity, bum
 project clock and lands in the Markdown mirror because it *is* that code path. Do not
 give a tool its own SQL — add the channel it needs and call it.
 
-**`src/mcp/`** is a fourth process, and the only one that is not Electron's: the MCP
+**`src/mcp/`** is a fourth process, and one of two that are not Electron's: the MCP
 connector Claude Desktop runs. It is a proxy and nothing else. It never opens the
 database — PGlite has no lock, and Claude Desktop keeps its servers alive for hours, so a
 second reader there would take the `.lock` and stop Neo from starting. Instead
@@ -143,6 +143,116 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - Workspace colours are identifiers, not surfaces — a dot or a 2px rule, never a filled
   block. Theme tokens for `pm` / `pmdark` live in `styles.css`.
 
+### Recording a meeting
+
+`src/main/lib/recording/` and `src/renderer/src/lib/recorder.tsx`. The design rule is
+that **nothing important is ever only in memory**.
+
+Only a renderer can open a microphone, so the renderer holds one — and nothing else.
+Audio is handed over a second at a time and `appendFile`d before the IPC call
+resolves, so the window of loss is one second and a process that dies mid-write
+leaves a shorter file, never a corrupt one. `RecorderProvider` is mounted above the
+router precisely so navigating does not stop a recording.
+
+A recording is a **sequence of segments**, five minutes each (`SEGMENT_MS`), not one
+file. That one decision buys three things: it bounds what a half-written file can
+cost, it gives transcription something to resume at, and it keeps every upload under
+the 25 MB the APIs take. A new `MediaRecorder` is started on the same stream *before*
+the old one is stopped, so a rollover overlaps by milliseconds rather than dropping a
+word. Sleep, an unplugged microphone and a device change all end up in the same place:
+close the segment, open a new one.
+
+The pipeline (`pipeline.ts`) is a runner over rows, not a queue. Every step —
+transcribe one segment, attribute one batch of lines, summarise one slice — writes its
+result down before the next begins, and every recording carries its own state, error,
+attempt count and `next_attempt_at`. So `recoverRecordings()` at startup is the whole
+of crash recovery: it turns every `running` back into `pending` and every live capture
+into `interrupted`. There is nothing to reconstruct because nothing was only in
+memory. `reapDeadCaptures()` does the same for a renderer that died without the app.
+
+`interrupted` is deliberately not `stopped`. Audio captured before a power cut may be
+half of a meeting that is still going on, and only the person in the room knows; the
+screen asks rather than guessing. Sleep, where the app is still alive, resumes by
+itself — no question needed.
+
+Errors are split by `isPermanent()`. A wrong key or a missing model fails once and
+says what to fix; a refused connection to a local server backs off and comes round
+again. A segment that cannot be transcribed does not condemn the rest — the transcript
+finishes without it and says how many parts are missing.
+
+**System audio comes from native code.** Electron 44's `loopback` display-media audio
+is Windows-only — its own typings say so — and no Chromium API on macOS lets one app
+hear another. `native/audiotap/main.swift` is a Swift command-line tool that opens a
+**Core Audio process tap** (public, macOS 14.4+, driver-free), mixes to mono and
+writes raw s16le PCM on stdout with JSON status lines on stderr.
+`lib/recording/systemAudio.ts` spawns it and forwards the bytes to the renderer, where
+`lib/systemAudioNode.ts` feeds them into an `AudioWorkletNode` and mixes them with the
+microphone. Built by `scripts/build-audiotap.mjs` (universal, best-effort, skipped
+without a Swift toolchain) and shipped as `extraResources`, found by looking for the
+file — never by `app.isPackaged`, which lies in development.
+
+A **child process, not a native module**, deliberately: a module is compiled against
+one Electron's headers and a crash in it takes the app down. Stopping is done by
+closing its stdin, never by killing it, because it has to hand the private aggregate
+device back to Core Audio — verify asserts nothing is left behind.
+
+Two clocks meet in the worklet's ring buffer (the tap runs on the output device, the
+mic on its own), so it outputs silence when empty — which is most of a meeting, since
+a tap produces nothing while nothing is playing — and drops the oldest past
+`SYSTEM_AUDIO_BUFFER_MS`. The context runs at the *tap's* rate so its samples are not
+resampled; the mic is, and of the two it is the one that can afford it.
+
+The virtual-device path (BlackHole, an aggregate) is still there as the fallback for
+macOS before 14.4 or a refused permission. Echo cancellation stays on for the
+microphone (it kills the speaker bleed) and off for a loopback device (it mangles
+already-clean audio). The mixed stream's track is generated and therefore always
+"live", so the watchdog checks `mic`/`system` and never `stream`. Failing is allowed
+and always visible: `capturing` says what was actually got, never what was asked for.
+
+Two more things are honest limits rather than bugs. **Ollama cannot transcribe**, so local
+transcription means an OpenAI-compatible speech server (`transcribe_base_url`); both
+engines go through the same `openai` client, which is why there is one code path.
+And **speakers are attributed, not diarised** — a language model reads the transcript
+and works out the turns, because there is no voice-print model on a stock Mac. The UI
+says so. Do not present it as a measurement.
+
+**Delete means the audio.** `recording:deleteAudio` frees the megabytes and keeps the
+transcript, the speakers and the recap; it is the only delete on the meeting page, and
+it is refused while there are no cues yet, because then the audio is the only copy.
+`recording:delete` — the whole thing — is demoted to the bottom of the Recording pane.
+A cascade frees no disk, so `pruneRecordings()` sweeps folders against the rows after
+anything that can orphan one, and again at launch.
+
+**The recap folds itself into the meeting.** `recording:applyRecap` appends it to the
+write-up, names an untitled meeting from `suggested_title`, and turns every commitment
+into a `meeting_todo` — all through `meeting:save` and `meetingTodo:save`, so what
+arrives is indistinguishable from what you would have typed. It runs once, guarded by
+`recap_written_at` for the write-up and `recap_todos_at` for the to-do items —
+**two markers, because the halves can fail apart**: a retry after a failed to-do
+write must not append the recap to the write-up a second time. There is
+deliberately no button: a recap behind a button on a second screen is a recap nobody
+reads, and the meetings list already shows the top of the write-up.
+
+It is a **step in the pipeline**, not something `storeRecap()` does on its way past —
+`nextRecording()` matches `summary_state = 'done' AND recap_written_at IS NULL`. That is
+what makes it recoverable: a recap written by an older build, or one whose meeting was
+unreachable, is just a row the runner finds waiting. `recapWrittenAt` is on
+`RecordingView` so the screen can say "in the write-up" only once it is true.
+
+`meeting:suggestName` is the one thing here behind a button — the stars in the Name
+field. It only returns a name; nothing is written, and the page's own autosave keeps it.
+
+Because the body can therefore change under an open editor, `MeetingWriter` *merges*
+rather than reloading: what arrives is always an append, so it takes the tail and adds
+it to the draft. Reloading would throw away the sentence being typed; ignoring it
+would write a stale copy back over the recap on the next autosave.
+
+The recap prompt in workspace settings is the *instructions* only; `summarise.ts`
+appends the output schema, which is not editable, because the screen reads decisions
+and commitments as data. Playback is served over the `neo-media://` scheme
+(`media.ts`) with real range support — the renderer asks for a segment by id and main
+looks the path up in the database, so the renderer never learns a path.
+
 ### The database
 
 PGlite (real PostgreSQL compiled to WebAssembly, in-process) writing to `~/Documents/Neo`.
@@ -188,6 +298,12 @@ Writing to the catalog directly does not invalidate the relation cache, so `init
 reconnects after a repair — otherwise the connection keeps the trigger list it already
 read and every insert goes on failing until the next launch. That reconnect is the
 difference between the fix landing now and landing the second time the app is opened.
+
+**`native/audiotap/`** is the fifth, and the only one that is not JavaScript: a Swift
+command-line tool that reads a Core Audio process tap so a recorded meeting captures
+the other side of the call. See *Recording a meeting* below for why it is a process
+rather than a module. It is optional at every level — no Swift toolchain, no helper,
+and every path that wants it already copes with it being absent.
 
 ## macOS naming
 

@@ -134,6 +134,16 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
   if (meetings.length) {
     await mkdir(join(dir, 'meetings'), { recursive: true })
     for (const m of meetings) {
+      // A recorded meeting writes two files: the write-up and the transcript beside
+      // it. The recap is not written separately — it was folded into the write-up
+      // when it was produced, so it is already in `m.body`, and a second copy here
+      // would be the mirror disagreeing with the app about what the notes say.
+      //
+      // The transcript is the long one and nobody reads it top to bottom, so it does
+      // not belong in the middle of the notes — but it is the part that would be gone
+      // forever if this app were, which is exactly what the mirror is for.
+      const [recording] = await q<any>('SELECT * FROM recording WHERE meeting_id = $1', [m.id])
+
       const body = [
         `# ${m.title || 'Meeting'}`,
         '',
@@ -147,8 +157,32 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
         m.todo_lines || '_None._',
         ''
       ].join('\n')
-      await writeFile(join(dir, 'meetings', `${m.occurred_on}-${slug(m.title || 'meeting')}.md`), body, 'utf8')
+      const stem = `${m.occurred_on}-${slug(m.title || 'meeting')}`
+      await writeFile(join(dir, 'meetings', `${stem}.md`), body, 'utf8')
       files++
+
+      if (recording) {
+        const cues = await q<any>(
+          'SELECT speaker, text FROM transcript_cue WHERE recording_id = $1 ORDER BY ord',
+          [recording.id]
+        )
+        if (cues.length) {
+          const speakers = recording.speakers ?? {}
+          const lines: string[] = [`# ${m.title || 'Meeting'} — transcript`, '', `**When:** ${m.occurred_on}`, '']
+          let current = ''
+          for (const cue of cues) {
+            const named = speakers[cue.speaker]?.name || cue.speaker
+            if (named && named !== current) {
+              current = named
+              lines.push('', `**${named}:** ${cue.text}`)
+            } else {
+              lines[lines.length - 1] = `${lines[lines.length - 1]} ${cue.text}`.trim()
+            }
+          }
+          await writeFile(join(dir, 'meetings', `${stem}-transcript.md`), lines.join('\n').trim() + '\n', 'utf8')
+          files++
+        }
+      }
     }
   }
 

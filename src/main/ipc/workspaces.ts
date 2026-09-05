@@ -3,6 +3,7 @@ import type { Workspace } from '@shared/types'
 import { exec, q, q1 } from '../db/client'
 import { mapWorkspace } from '../db/map'
 import { ALLOWED_ICON_EXTENSIONS, deleteIcon, readIcon, storeIcon } from '../lib/icons'
+import { pruneRecordings } from '../lib/recording/store'
 import { ensureMe } from '../lib/profile'
 import { handle, pick, reorder, upsert } from './util'
 
@@ -17,7 +18,13 @@ export function registerWorkspaceHandlers(): void {
   })
 
   handle('workspace:save', async (draft) => {
-    const fields = pick(draft as Partial<Workspace>, ['name', 'color', 'iconPath', 'sortOrder', 'aiModel'])
+    const fields = pick(draft as Partial<Workspace>, [
+      'name', 'color', 'iconPath', 'sortOrder', 'aiModel',
+      // Recording settings. Still an explicit allowlist: `ai_api_key` is not on it,
+      // and cannot reach a column through this channel however it is spelled.
+      'transcribeEngine', 'transcribeModel', 'transcribeBaseUrl', 'transcribeLanguage',
+      'recapEngine', 'recapModel', 'recapBaseUrl', 'recapPrompt'
+    ])
 
     if (!draft.id && fields.sortOrder === undefined) {
       const max = await q1<{ n: number }>('SELECT COALESCE(max(sort_order), -1) + 1 AS n FROM workspace')
@@ -41,6 +48,8 @@ export function registerWorkspaceHandlers(): void {
     const row = await q1<any>('SELECT icon_path FROM workspace WHERE id = $1', [id])
     await exec('DELETE FROM workspace WHERE id = $1', [id])
     if (row?.icon_path) await deleteIcon(row.icon_path)
+    // Every project, meeting and recording inside it has gone; the audio has not.
+    await pruneRecordings()
   })
 
   handle('workspace:setArchived', async ({ id, archived }) => {

@@ -1,12 +1,16 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, powerMonitor, protocol, session, shell } from 'electron'
 import { closeDb, dataRoot, initDb, q } from './db/client'
 import { buildAppMenu } from './menu'
 import { ensureColumnsEverywhere } from './lib/board'
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
+import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
+import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
+import { pruneRecordings } from './lib/recording/store'
+import { stopSystemAudio } from './lib/recording/systemAudio'
 import { registerChatHandlers } from './ipc/chat'
 import { registerContentHandlers } from './ipc/content'
 import { registerDashboardHandlers } from './ipc/dashboard'
@@ -14,6 +18,7 @@ import { registerMcpHandlers } from './ipc/mcp'
 import { registerMeetingHandlers } from './ipc/meetings'
 import { registerPeopleHandlers } from './ipc/people'
 import { registerProjectHandlers } from './ipc/projects'
+import { registerRecordingHandlers } from './ipc/recordings'
 import { registerSearchHandlers } from './ipc/search'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTaskHandlers } from './ipc/tasks'
@@ -35,6 +40,12 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL
 // Set before the app is ready: after that, macOS has already built the menu bar and
 // it keeps saying "Electron" for the rest of the session.
 app.setName('Neo')
+
+// Also before the app is ready, and for a similar reason: a scheme's privileges are
+// read once, when the first renderer process is created. This is what lets an
+// <audio> element range-request a segment of a recording without the renderer being
+// given a file path it could read anything else with.
+protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES])
 
 /**
  * Two copies of the app writing the same database directory will corrupt it — PGlite
@@ -104,6 +115,7 @@ function registerHandlers(): void {
   registerPeopleHandlers()
   registerContentHandlers()
   registerMeetingHandlers()
+  registerRecordingHandlers()
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
@@ -120,6 +132,38 @@ async function start(): Promise<void> {
     if (existsSync(icon)) app.dock.setIcon(icon)
   }
 
+  /*
+   * The microphone. Chromium asks the application before it asks the operating
+   * system, and its default answer inside Electron is no — so a recording would fail
+   * with a permission error that never reached a dialog. Only the microphone is
+   * granted here; everything else is still refused.
+   */
+  const allowed = new Set(['media', 'audioCapture'])
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(allowed.has(permission))
+  })
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => allowed.has(permission))
+
+  /*
+   * The other half of a call: what the computer is playing.
+   *
+   * On Windows the operating system will hand an application its own output, and
+   * `loopback` is that. On macOS it will not — Electron 44 says so in as many words,
+   * and no amount of asking changes it — so nothing is offered here and the renderer
+   * mixes in a virtual input device instead. A video is never captured either way;
+   * this is a meeting recorder, and a screen recording of somebody's call is not a
+   * thing to take by accident.
+   */
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      if (process.platform !== 'win32') return callback({})
+      callback({ audio: 'loopback' })
+    },
+    // Without this Electron insists on a video source, and there is nothing here that
+    // wants one.
+    { useSystemPicker: false }
+  )
+
   await initDb()
   await ensureMeEverywhere()
   await ensureMeOnAllProjects()
@@ -131,7 +175,44 @@ async function start(): Promise<void> {
      UNION ALL SELECT value FROM setting WHERE key = 'profileAvatarPath'`
   )
   await pruneIcons(referenced.map((r) => r.icon_path))
+  // The same sweep for audio, and the backstop for every route that could have
+  // orphaned some: an hour of a meeting is the largest thing this app writes, and a
+  // cascade in the database frees none of it.
+  const sweptAudio = await pruneRecordings()
+  if (sweptAudio > 0) console.log(`Removed ${sweptAudio} recording folder(s) with no recording left.`)
   registerHandlers()
+  registerMediaProtocol()
+
+  /*
+   * Everything a recording was in the middle of is turned back into something it is
+   * waiting for, and then the runner is started. This is the whole of crash
+   * recovery: a machine that lost power in the middle of a two-hour meeting comes
+   * back with its audio on disk, its capture marked interrupted so the person in the
+   * room can decide whether it is over, and any transcription or recap it had
+   * started resumed at the segment it had reached.
+   */
+  const interrupted = await recoverRecordings()
+  if (interrupted > 0) {
+    console.log(`${interrupted} recording(s) were interrupted and are waiting for you.`)
+  }
+  startPipeline()
+
+  // A laptop that has been shut for a week wakes with a backlog and, more to the
+  // point, with a network again — which is usually why the last attempt failed.
+  powerMonitor.on('resume', () => kick())
+  powerMonitor.on('unlock-screen', () => kick())
+
+  // Told to the window as well, because the microphone lives there and does not
+  // survive a suspend. Hearing about it here is what makes a recording pick back up
+  // the moment the lid opens rather than when its own watchdog next looks.
+  const tellWindows = (event: 'suspend' | 'resume') => (): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('power', event)
+    }
+  }
+  powerMonitor.on('suspend', tellWindows('suspend'))
+  powerMonitor.on('resume', tellWindows('resume'))
+
   // After the handlers, because the bridge answers by calling them, and never before
   // the database is open: the tools it exposes are the app's own channels.
   await startBridge()
@@ -172,6 +253,10 @@ app.on('before-quit', (event) => {
   if (closing) return
   event.preventDefault()
   closing = true
+  stopPipeline()
+  // The helper hands its audio device back to Core Audio when its stdin closes. Left
+  // running it would keep a private aggregate device alive after the app has gone.
+  stopSystemAudio()
   void stopBridge()
     .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
     .then(() => closeDb())

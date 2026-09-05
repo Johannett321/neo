@@ -1,8 +1,12 @@
 import type {
   Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
-  Project, ProjectStatus, Task, TaskView, Workspace
+  Project, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
+  TaskView, TranscriptCue, Workspace
 } from '@shared/types'
+import { EMPTY_RECAP } from '@shared/types'
+import type { CaptureState, Engine, Stage } from '@shared/recording'
+import { hasTimestamps } from '@shared/recording'
 import { daysBetween, iso, isoOrNull, today } from './client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -20,6 +24,14 @@ export const mapWorkspace = (r: Row, icon: string | null = null): Workspace => (
   // else main owns, and the renderer is told only that the assistant can run.
   aiKeySet: Boolean(r.ai_api_key),
   aiModel: r.ai_model ?? '',
+  transcribeEngine: (r.transcribe_engine ?? 'openai') as Engine,
+  transcribeModel: r.transcribe_model ?? '',
+  transcribeBaseUrl: r.transcribe_base_url ?? '',
+  transcribeLanguage: r.transcribe_language ?? '',
+  recapEngine: (r.recap_engine ?? 'openai') as Engine,
+  recapModel: r.recap_model ?? '',
+  recapBaseUrl: r.recap_base_url ?? '',
+  recapPrompt: r.recap_prompt ?? '',
   createdAt: iso(r.created_at)
 })
 
@@ -148,6 +160,77 @@ export const mapMeetingTodo = (r: Row): MeetingTodo => ({
   sortOrder: r.sort_order
 })
 
+/** jsonb comes back parsed; a row written by an older build could still be a string. */
+const json = <T>(value: unknown, fallback: T): T => {
+  if (value === null || value === undefined) return fallback
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T
+    } catch {
+      return fallback
+    }
+  }
+  return value as T
+}
+
+export const mapSegment = (r: Row): RecordingSegment => ({
+  id: r.id,
+  ord: Number(r.ord),
+  offsetMs: Number(r.offset_ms ?? 0),
+  durationMs: Number(r.duration_ms ?? 0),
+  bytes: Number(r.bytes ?? 0),
+  hasAudio: Boolean(r.path),
+  state: (r.state ?? 'pending') as Stage,
+  error: r.error ?? ''
+})
+
+export const mapCue = (r: Row): TranscriptCue => ({
+  id: r.id,
+  ord: Number(r.ord),
+  startMs: Number(r.start_ms ?? 0),
+  endMs: Number(r.end_ms ?? 0),
+  speaker: r.speaker ?? '',
+  text: r.text ?? ''
+})
+
+/**
+ * The recording as the screen reads it. Every count it shows — how far transcription
+ * has got, how many megabytes are on disk — is worked out from the segment rows here
+ * rather than stored on the recording, so the two can never disagree.
+ */
+export const mapRecording = (r: Row, segments: RecordingSegment[]): RecordingView => ({
+  id: r.id,
+  meetingId: r.meeting_id,
+  captureState: (r.capture_state ?? 'stopped') as CaptureState,
+  startedAt: iso(r.started_at),
+  stoppedAt: isoOrNull(r.stopped_at),
+  durationMs: Number(r.duration_ms ?? 0),
+  bytes: segments.reduce((total, s) => total + (s.hasAudio ? s.bytes : 0), 0),
+  audioDeletedAt: isoOrNull(r.audio_deleted_at),
+  segments,
+
+  transcriptState: (r.transcript_state ?? 'pending') as Stage,
+  transcriptError: r.transcript_error ?? '',
+  transcriptEngine: r.transcript_engine ?? '',
+  transcriptModel: r.transcript_model ?? '',
+  transcribed: segments.filter((s) => s.state === 'done').length,
+  segmentCount: segments.length,
+  hasTimestamps: hasTimestamps(r.transcript_model ?? ''),
+
+  speakerState: (r.speaker_state ?? 'pending') as Stage,
+  speakers: json<Record<string, SpeakerName>>(r.speakers, {}),
+
+  summaryState: (r.summary_state ?? 'pending') as Stage,
+  summaryError: r.summary_error ?? '',
+  summaryEngine: r.summary_engine ?? '',
+  summaryModel: r.summary_model ?? '',
+  summary: r.summary ?? '',
+  recap: { ...EMPTY_RECAP, ...json<Partial<Recap>>(r.recap, {}) },
+  recapWrittenAt: isoOrNull(r.recap_written_at),
+
+  updatedAt: iso(r.updated_at)
+})
+
 export const mapMeeting = (r: Row): MeetingView => {
   const todos = (r.todos ?? []).map(mapMeetingTodo)
   return {
@@ -158,6 +241,9 @@ export const mapMeeting = (r: Row): MeetingView => {
     body: r.body,
     attendees: r.attendees ?? [],
     todos,
+    // Attached by `meetingViews`, which fetches recordings as rows rather than as
+    // JSON so their timestamps go through the same mapping as everything else.
+    recording: null,
     openTodos: todos.filter((t: MeetingTodo) => !t.done).length,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at)

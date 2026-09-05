@@ -1,8 +1,8 @@
 import type {
   Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
-  PersonProject, Project, ProjectDetail, ProjectStatus, ProjectSummary, Profile, SearchHit,
-  Settings, Task, TaskKind, TaskStatus, TodayView, Workspace
+  PersonProject, Project, ProjectDetail, ProjectStatus, ProjectSummary, Profile, RecordingView,
+  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, Workspace
 } from './types'
 
 /** Every scoped request names its workspace explicitly — there is no implicit "all". */
@@ -87,6 +87,13 @@ export interface ApiMap {
   'note:delete': { in: { id: string }; out: void }
 
   'meeting:save': { in: Draft<Meeting> & { attendeeIds?: string[] }; out: MeetingView }
+  /**
+   * A name for this meeting, worked out from what is in it — the write-up, and the
+   * transcript too if it was recorded. It only *suggests*: nothing is written, so the
+   * name lands in the field where it can be read and edited before it is kept. Runs
+   * on whichever engine the workspace uses for recaps, local one included.
+   */
+  'meeting:suggestName': { in: { id: string }; out: { title: string } }
   'meeting:delete': { in: { id: string }; out: void }
 
   /** Add or edit one of a meeting's to-do items. Returns the meeting it belongs to. */
@@ -98,6 +105,97 @@ export interface ApiMap {
    * null `taskId` — the card stays where it is, the item simply stops pointing at it.
    */
   'meetingTodo:promote': { in: { id: string; columnId?: string }; out: MeetingView }
+
+  /* ---------------------------------------------------------------- recording */
+
+  /**
+   * Begin recording this meeting, or hand back the one already in progress. The
+   * microphone itself stays in the renderer — only a renderer can open one — so what
+   * this does is create the row and the folder the bytes will land in.
+   */
+  'recording:start': { in: { meetingId: string }; out: RecordingView }
+  /**
+   * Pick a capture back up after it was interrupted. The audio already on disk is
+   * kept and the new sound is appended as further segments, so a meeting that
+   * outlived a flat battery is still one recording.
+   */
+  'recording:resume': { in: { id: string }; out: RecordingView }
+  /** Claim the next file to write into. Called at the start and every five minutes. */
+  'recording:openSegment': { in: { id: string }; out: { segmentId: string; ord: number } }
+  /**
+   * A second of audio, base64 encoded, appended to the segment's file and flushed
+   * before this resolves. Everything that has resolved is on disk: that is the whole
+   * durability guarantee, and it is why the renderer awaits each one.
+   */
+  'recording:appendChunk': { in: { segmentId: string; data: string }; out: { bytes: number } }
+  /** No more audio is coming for this segment. Fixes its duration on the timeline. */
+  'recording:closeSegment': { in: { segmentId: string; durationMs: number }; out: void }
+  /**
+   * Still recording. A row whose heartbeat has gone quiet was being written by a
+   * renderer that is no longer there, and main marks it interrupted on its own.
+   */
+  'recording:heartbeat': { in: { id: string; durationMs: number }; out: void }
+  /**
+   * The meeting is over. Capture closes and the pipeline takes it from there by
+   * itself — transcribing, attributing speakers, and then writing the recap.
+   */
+  'recording:stop': { in: { id: string; durationMs: number }; out: RecordingView }
+
+  /** The recording and its words. The cues are not on `MeetingView`: they are long. */
+  'recording:get': {
+    in: { meetingId: string }
+    out: { recording: RecordingView | null; cues: TranscriptCue[] }
+  }
+  /** Have another go at a step that gave up. */
+  'recording:retry': { in: { id: string; step: 'transcript' | 'speakers' | 'summary' }; out: RecordingView }
+  /**
+   * Throw the audio away and keep every word of it. The transcript and the recap are
+   * what you read afterwards; the audio is what takes the disk space.
+   */
+  'recording:deleteAudio': { in: { id: string }; out: RecordingView }
+  /** The recording, its audio, its transcript and its recap. The meeting stays. */
+  'recording:delete': { in: { id: string }; out: void }
+  /** Put a name to "Speaker 2" once, and every line it said says it. */
+  'recording:nameSpeaker': {
+    in: { id: string; label: string; name: string; personId?: string | null }
+    out: RecordingView
+  }
+  /**
+   * Fold a finished recap into the meeting itself: the write-up gains it as ordinary
+   * Markdown, an untitled meeting gains a name, and every commitment becomes one of
+   * the meeting's to-do items. Called by the pipeline the moment the recap is
+   * written, and idempotent — it happens once, and after that the write-up is yours.
+   */
+  'recording:applyRecap': { in: { id: string }; out: MeetingView }
+  /**
+   * Ask macOS for the microphone, which it will only grant in answer to a real
+   * request from the application rather than from a web page inside it.
+   */
+  'recording:requestMic': { in: void; out: { granted: boolean } }
+  /**
+   * Start listening to what the computer itself is playing — the other half of a
+   * video call — and stream it to this window to be mixed with the microphone.
+   *
+   * Never throws. Not capturing the computer's sound is something a recording is
+   * expected to survive, so a refusal comes back as `ok: false` and a sentence
+   * saying why, and the recording goes ahead with the microphone alone.
+   */
+  'systemAudio:start': { in: void; out: import('./recording').SystemAudioStart }
+  'systemAudio:stop': { in: void; out: void }
+  /** Whether this machine and this build could do it at all, before anything is asked. */
+  'systemAudio:available': { in: void; out: { available: boolean } }
+  /**
+   * Try it for a couple of seconds and say what happened, byte count included.
+   *
+   * macOS decides all of this at the moment it is first asked, and offers no way to
+   * ask beforehand — so the only honest answer is to try. The bytes are the part that
+   * matters: a tap that opened and produced silence is the failure you would
+   * otherwise find at the end of a meeting.
+   */
+  'systemAudio:test': {
+    in: void
+    out: { ok: boolean; reason: string; bytes: number; sampleRate: number }
+  }
 
   'decision:save': { in: Draft<Decision>; out: Decision }
   'decision:delete': { in: { id: string }; out: void }

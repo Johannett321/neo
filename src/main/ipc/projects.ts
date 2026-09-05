@@ -6,6 +6,7 @@ import {
 import { meetingViews, projectSummaries, projectSummary, taskViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
 import { deleteIcon, readIcon } from '../lib/icons'
+import { pruneRecordings } from '../lib/recording/store'
 import { ensureColumns } from '../lib/board'
 import { ensureMe } from '../lib/profile'
 import { mirrorProject } from '../lib/markdown'
@@ -184,6 +185,9 @@ export function registerProjectHandlers(): void {
     const row = await q1<any>('SELECT icon_path FROM project WHERE id = $1', [id])
     await exec('DELETE FROM project WHERE id = $1', [id])
     if (row?.icon_path) await deleteIcon(row.icon_path)
+    // Its meetings went with it, and so did their recordings — but not the audio,
+    // which is on disk and knows nothing about foreign keys.
+    await pruneRecordings()
   })
 
   handle('column:save', async (draft) => {

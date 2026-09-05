@@ -1,8 +1,8 @@
-import type { MeetingView, ProjectSummary, TaskView } from '@shared/types'
+import type { MeetingView, ProjectSummary, RecordingView, TaskView } from '@shared/types'
 import { attentionReason } from '../lib/attention'
 import { readIcon } from '../lib/icons'
 import { daysBetween, daysSince, q, today } from './client'
-import { mapMeeting, mapProject, mapTaskView } from './map'
+import { mapMeeting, mapProject, mapRecording, mapSegment, mapTaskView } from './map'
 
 /** Project rows carry the aggregates every list view needs, computed in one pass. */
 const PROJECT_SELECT = /* sql */ `
@@ -153,6 +153,35 @@ LEFT JOIN LATERAL (
 ) td ON true
 `
 
+/**
+ * Recordings for a set of meetings, in one round trip.
+ *
+ * Deliberately not folded into the lateral joins above. A timestamptz that goes
+ * through `json_agg` comes back as a string in whatever shape Postgres felt like
+ * rendering it, and every date in this app is an ISO string the renderer can trust;
+ * fetching the rows as rows keeps them going through the same `iso()` the rest of
+ * the mapping uses.
+ */
+async function recordingsFor(meetingIds: string[]): Promise<Map<string, RecordingView>> {
+  const byMeeting = new Map<string, RecordingView>()
+  if (meetingIds.length === 0) return byMeeting
+
+  const rows = await q<any>('SELECT * FROM recording WHERE meeting_id = ANY($1::uuid[])', [meetingIds])
+  if (rows.length === 0) return byMeeting
+
+  const segments = await q<any>(
+    'SELECT * FROM recording_segment WHERE recording_id = ANY($1::uuid[]) ORDER BY ord',
+    [rows.map((r) => r.id)]
+  )
+  for (const row of rows) {
+    byMeeting.set(
+      row.meeting_id,
+      mapRecording(row, segments.filter((s) => s.recording_id === row.id).map(mapSegment))
+    )
+  }
+  return byMeeting
+}
+
 export async function meetingViews(
   where = '',
   params: unknown[] = [],
@@ -160,9 +189,11 @@ export async function meetingViews(
 ): Promise<MeetingView[]> {
   const sql = `${MEETING_SELECT} ${where ? `WHERE ${where}` : ''} ORDER BY ${orderBy}`
   const rows = await q<any>(sql, params)
+  const recordings = await recordingsFor(rows.map((r) => r.id))
   return Promise.all(
     rows.map(async (r) => ({
       ...mapMeeting(r),
+      recording: recordings.get(r.id) ?? null,
       attendees: await Promise.all(
         (r.attendees ?? []).map(async (att: any) => ({
           id: att.id,
