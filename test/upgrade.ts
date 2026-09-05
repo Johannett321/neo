@@ -8,7 +8,8 @@ import { ensureMeEverywhere } from '../src/main/lib/profile'
 /**
  * Upgrades an existing database in place. This reproduces the shape a database had
  * before workspaces became separate areas — no workspace on people, no icons, no
- * board stage, no meetings — and asserts the app can still open it.
+ * board stage, and a meeting that was still a form with an agenda, a where, a time
+ * and a slab of text called "actions" — and asserts the app can still open it.
  *
  * The failure this guards against is subtle: PostgreSQL parses every statement in a
  * multi-statement batch up front, so an UPDATE referencing a column that an ALTER in
@@ -103,6 +104,15 @@ CREATE TABLE activity (
   kind text NOT NULL, summary text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE meeting (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  title text NOT NULL DEFAULT '', occurred_on text NOT NULL,
+  starts_at text NOT NULL DEFAULT '', location text NOT NULL DEFAULT '',
+  agenda text NOT NULL DEFAULT '', body text NOT NULL DEFAULT '',
+  actions text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE setting (key text PRIMARY KEY, value text NOT NULL);
 `
 
@@ -134,6 +144,18 @@ async function main(): Promise<void> {
     `INSERT INTO task (project_id, lane_id, title, status)
      VALUES ($1, $2, 'An old finished task', 'done'), ($1, $2, 'An old open task', 'open')`,
     [projectRow.rows[0]!.id, laneRow.rows[0]!.id]
+  )
+  await legacy.query(
+    `INSERT INTO activity (project_id, kind, summary) VALUES ($1, 'note', 'Note: an old line')`,
+    [projectRow.rows[0]!.id]
+  )
+  await legacy.query(
+    `INSERT INTO meeting (project_id, title, occurred_on, starts_at, location, agenda, body, actions)
+     VALUES ($1, 'An old meeting', '2024-01-15', '09:30', 'Room 4',
+             'First thing' || chr(10) || 'Second thing',
+             'What was said.',
+             'Me: chase the ruling' || chr(10) || '- Priya: error states' || chr(10) || '')`,
+    [projectRow.rows[0]!.id]
   )
   await legacy.close()
   console.log('Built a database in the pre-workspace shape.\n')
@@ -177,8 +199,28 @@ async function main(): Promise<void> {
   ok('projects gain a colour column, empty so they inherit the workspace',
      colors.length === 1 && colors[0]?.color === '', JSON.stringify(colors))
 
-  const meetings = await q<{ n: number }>('SELECT count(*)::int AS n FROM meeting')
-  ok('the meeting tables are created', meetings[0]?.n === 0)
+  // A meeting stops being a form and becomes a page with real to-do items beside it.
+  // Four columns go, and everything written in them has to survive the crossing.
+  const meetingCols = await q<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'meeting' AND column_name IN ('agenda', 'location', 'starts_at', 'actions')`)
+  ok('the retired meeting columns are dropped on upgrade', meetingCols.length === 0,
+     meetingCols.map((c) => c.column_name).join(', '))
+
+  const upgraded = await q<{ title: string; body: string }>('SELECT title, body FROM meeting')
+  ok('the meeting itself survives', upgraded.length === 1 && upgraded[0]?.title === 'An old meeting')
+  ok('and its agenda and its where are folded into the write-up rather than dropped',
+     /_Where: Room 4_/.test(upgraded[0]?.body ?? '') &&
+     /## Agenda\nFirst thing\nSecond thing/.test(upgraded[0]?.body ?? '') &&
+     /What was said\./.test(upgraded[0]?.body ?? ''),
+     JSON.stringify(upgraded[0]?.body))
+
+  const todos = await q<{ text: string; task_id: string | null }>(
+    'SELECT text, task_id FROM meeting_todo ORDER BY sort_order')
+  ok('every line of the old actions box becomes a to-do item, blank lines aside',
+     todos.length === 2 && todos[0]?.text === 'Me: chase the ruling' &&
+     todos[1]?.text === 'Priya: error states' && todos.every((t) => t.task_id === null),
+     todos.map((t) => t.text).join(' | '))
 
   const boards = await q<{ name: string; is_done: boolean }>(
     'SELECT name, is_done FROM board_column ORDER BY sort_order'
@@ -202,6 +244,15 @@ async function main(): Promise<void> {
   ok('tasks gain an assignee column',
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM task WHERE assignee_person_id IS NULL'))[0]?.n === 2)
 
+  // The activity log gained the column that lets a note being written collapse into
+  // one line; the lines written before it keep their place and simply have none.
+  const oldLines = await q<{ summary: string; entity_id: string | null }>(
+    'SELECT summary, entity_id FROM activity'
+  )
+  ok('the activity log gains an entity column', oldLines.length === 1 && oldLines[0]?.entity_id === null,
+     JSON.stringify(oldLines))
+  ok('and the lines already in it are untouched', oldLines[0]?.summary === 'Note: an old line')
+
   const projects = await q<{ name: string }>('SELECT name FROM project')
   ok('the project itself is untouched', projects[0]?.name === 'Legacy project')
 
@@ -210,6 +261,12 @@ async function main(): Promise<void> {
   await ensureMeEverywhere()
   ok('dropping columns leaves every foreign key with its constraint',
      (await orphanedForeignKeys()).length === 0, (await orphanedForeignKeys()).join(', '))
+
+  const reRun = await q<{ body: string }>('SELECT body FROM meeting')
+  ok('a second launch neither duplicates the to-do items nor folds the agenda in twice',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM meeting_todo'))[0]?.n === 2 &&
+     (reRun[0]?.body.match(/## Agenda/g) ?? []).length === 1,
+     JSON.stringify(reRun[0]?.body))
 
   ok('opening it again is safe',
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM person WHERE NOT is_me'))[0]?.n === 2 &&

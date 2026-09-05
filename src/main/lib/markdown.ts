@@ -41,12 +41,27 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
       project.id
     ]),
     q<any>(
-      `SELECT m.*, COALESCE(string_agg(pe.name, ', ' ORDER BY pe.name), '') AS attendee_names
+      `SELECT m.*,
+              COALESCE(a.names, '') AS attendee_names,
+              COALESCE(t.todos, '') AS todo_lines
        FROM meeting m
-       LEFT JOIN meeting_attendee ma ON ma.meeting_id = m.id
-       LEFT JOIN person pe ON pe.id = ma.person_id
+       LEFT JOIN LATERAL (
+         SELECT string_agg(pe.name, ', ' ORDER BY pe.name) AS names
+         FROM meeting_attendee ma JOIN person pe ON pe.id = ma.person_id
+         WHERE ma.meeting_id = m.id
+       ) a ON true
+       LEFT JOIN LATERAL (
+         SELECT string_agg(
+                  '- [' || CASE WHEN COALESCE(tk.status = 'done', mt.done) THEN 'x' ELSE ' ' END || '] '
+                  || mt.text
+                  || CASE WHEN mt.task_id IS NULL THEN '' ELSE ' — on the board' END,
+                  E'\\n' ORDER BY mt.sort_order, mt.created_at
+                ) AS todos
+         FROM meeting_todo mt
+         LEFT JOIN task tk ON tk.id = mt.task_id
+         WHERE mt.meeting_id = m.id
+       ) t ON true
        WHERE m.project_id = $1
-       GROUP BY m.id
        ORDER BY m.occurred_on DESC`,
       [project.id]
     )
@@ -122,17 +137,14 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
       const body = [
         `# ${m.title || 'Meeting'}`,
         '',
-        `**When:** ${m.occurred_on}${m.starts_at ? ` ${m.starts_at}` : ''}${m.location ? ` · ${m.location}` : ''}`,
+        `**When:** ${m.occurred_on}`,
         `**Present:** ${m.attendee_names || '_Not recorded._'}`,
-        '',
-        '## Agenda',
-        m.agenda || '_None._',
         '',
         '## Notes',
         m.body || '_None._',
         '',
-        '## Actions',
-        m.actions || '_None._',
+        '## To do',
+        m.todo_lines || '_None._',
         ''
       ].join('\n')
       await writeFile(join(dir, 'meetings', `${m.occurred_on}-${slug(m.title || 'meeting')}.md`), body, 'utf8')

@@ -1,6 +1,6 @@
 import type {
   Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, LinkKind, Membership, Note,
-  Meeting, MeetingView, Person, PersonProject, Project, ProjectDetail, ProjectStatus,
+  Meeting, MeetingTodo, MeetingView, Person, PersonProject, Project, ProjectDetail, ProjectStatus,
   ProjectSummary, Profile, SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, Workspace
 } from './types'
 
@@ -79,6 +79,16 @@ export interface ApiMap {
 
   'meeting:save': { in: Draft<Meeting> & { attendeeIds?: string[] }; out: MeetingView }
   'meeting:delete': { in: { id: string }; out: void }
+
+  /** Add or edit one of a meeting's to-do items. Returns the meeting it belongs to. */
+  'meetingTodo:save': { in: Draft<MeetingTodo>; out: MeetingView }
+  'meetingTodo:delete': { in: { id: string }; out: void }
+  /**
+   * Put an item on the board: it gains a card in the first column (or the one named)
+   * and stops answering for itself. Taking it off again is `meetingTodo:save` with a
+   * null `taskId` — the card stays where it is, the item simply stops pointing at it.
+   */
+  'meetingTodo:promote': { in: { id: string; columnId?: string }; out: MeetingView }
 
   'decision:save': { in: Draft<Decision>; out: Decision }
   'decision:delete': { in: { id: string }; out: void }

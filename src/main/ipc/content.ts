@@ -8,7 +8,6 @@ import { handle, pick, upsert } from './util'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerContentHandlers(): void {
   handle('note:save', async (draft) => {
-    const isNew = !draft.id
     const row = await upsert<any>(
       'note',
       pick(draft as Partial<Note>, ['projectId', 'title', 'body', 'isPinned']),
@@ -16,7 +15,9 @@ export function registerContentHandlers(): void {
       'updated_at = now()'
     )
     const note = mapNote(row)
-    await logActivity(note.projectId, 'note', `${isNew ? 'Note' : 'Note updated'}: ${note.title || 'Untitled'}`)
+    // One line per note per sitting: the writer saves itself continuously, and the
+    // re-entry brief wants "you wrote this note", not a stopwatch of every keystroke.
+    await logActivity(note.projectId, 'note', `Note: ${note.title || 'Untitled'}`, note.id)
     await mirrorProject(note.projectId)
     return note
   })

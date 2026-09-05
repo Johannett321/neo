@@ -1,31 +1,15 @@
 import type { Project, ProjectDetail, ReentryBrief } from '@shared/types'
 import { daysSince, exec, q, q1 } from '../db/client'
 import {
-  mapActivity, mapCast, mapColumn, mapDecision, mapJournal, mapLink, mapMeeting, mapNote,
-  mapProject
+  mapActivity, mapCast, mapColumn, mapDecision, mapJournal, mapLink, mapNote, mapProject
 } from '../db/map'
-import { projectSummaries, projectSummary, taskViews } from '../db/queries'
+import { meetingViews, projectSummaries, projectSummary, taskViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
 import { deleteIcon, readIcon } from '../lib/icons'
 import { ensureColumns } from '../lib/board'
 import { ensureMe } from '../lib/profile'
 import { mirrorProject } from '../lib/markdown'
 import { handle, pick, reorder, upsert } from './util'
-
-/** Resolve each attendee's photo alongside the meeting row. */
-export async function withAttendeeAvatars(row: any): Promise<import('@shared/types').MeetingView> {
-  const meeting = mapMeeting(row)
-  const attendees = await Promise.all(
-    (row.attendees ?? []).map(async (a: any) => ({
-      id: a.id,
-      name: a.name,
-      color: a.color,
-      role: a.role,
-      avatar: await readIcon(a.avatar_path ?? '')
-    }))
-  )
-  return { ...meeting, attendees }
-}
 
 /**
  * Re-opening a project within half an hour is the same visit, so the brief does not
@@ -109,23 +93,7 @@ export function registerProjectHandlers(): void {
       ),
       q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order, label', [id]),
       q<any>('SELECT * FROM note WHERE project_id = $1 ORDER BY is_pinned DESC, updated_at DESC', [id]),
-      q<any>(
-        `SELECT m.*, COALESCE(a.attendees, '[]'::json) AS attendees
-         FROM meeting m
-         LEFT JOIN LATERAL (
-           SELECT json_agg(att) AS attendees FROM (
-             SELECT pe.id, pe.name, pe.avatar_color AS color, pe.avatar_path, COALESCE(mem.role, '') AS role
-             FROM meeting_attendee ma
-             JOIN person pe ON pe.id = ma.person_id
-             LEFT JOIN membership mem ON mem.person_id = pe.id AND mem.project_id = m.project_id
-             WHERE ma.meeting_id = m.id
-             ORDER BY pe.name
-           ) att
-         ) a ON true
-         WHERE m.project_id = $1
-         ORDER BY m.occurred_on DESC, m.created_at DESC`,
-        [id]
-      ),
+      meetingViews('m.project_id = $1', [id]),
       q<any>('SELECT * FROM decision WHERE project_id = $1 ORDER BY decided_on DESC, created_at DESC', [id]),
       q<any>('SELECT * FROM journal_entry WHERE project_id = $1 ORDER BY occurred_on DESC, created_at DESC', [id]),
       q<any>('SELECT * FROM activity WHERE project_id = $1 ORDER BY created_at DESC LIMIT 40', [id])
@@ -139,7 +107,7 @@ export function registerProjectHandlers(): void {
       cast: await Promise.all(cast.map(async (c) => mapCast(c, await readIcon(c.avatar_path ?? '')))),
       links: links.map(mapLink),
       notes: notes.map(mapNote),
-      meetings: await Promise.all(meetings.map(withAttendeeAvatars)),
+      meetings,
       decisions: decisions.map(mapDecision),
       journal: journal.map(mapJournal),
       activity: activity.map(mapActivity)

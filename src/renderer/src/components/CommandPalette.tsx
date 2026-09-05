@@ -95,6 +95,8 @@ export function CommandPalette({
       if (!hit) return
       if (hit.kind === 'person') navigate(`/people/${hit.id}`)
       else if (hit.kind === 'project') navigate(`/projects/${hit.id}`)
+      // A note has a page of its own, so the search lands on the note, not near it.
+      else if (hit.kind === 'note' && hit.projectId) navigate(`/projects/${hit.projectId}/notes/${hit.id}`)
       else if (hit.projectId) navigate(`/projects/${hit.projectId}`)
     }
     onClose()

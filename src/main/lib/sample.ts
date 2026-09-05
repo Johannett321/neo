@@ -123,16 +123,20 @@ const link = (projectId: string, label: string, url: string, kind: string, sort:
   ])
 
 async function meeting(
-  projectId: string, daysAgo: number, title: string, startsAt: string, location: string,
-  attendees: string[], agenda: string, body: string, actions: string
+  projectId: string, daysAgo: number, title: string,
+  attendees: string[], body: string, todos: string[]
 ): Promise<void> {
   const meetingId = await id(
-    `INSERT INTO meeting (project_id, title, occurred_on, starts_at, location, agenda, body, actions)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [projectId, title, addDays(today(), -daysAgo), startsAt, location, agenda, body, actions]
+    `INSERT INTO meeting (project_id, title, occurred_on, body) VALUES ($1,$2,$3,$4)`,
+    [projectId, title, addDays(today(), -daysAgo), body]
   )
   for (const personId of attendees) {
     await exec('INSERT INTO meeting_attendee (meeting_id, person_id) VALUES ($1,$2)', [meetingId, personId])
+  }
+  for (const [index, text] of todos.entries()) {
+    await exec('INSERT INTO meeting_todo (meeting_id, text, sort_order) VALUES ($1,$2,$3)', [
+      meetingId, text, index
+    ])
   }
 }
 
@@ -228,20 +232,19 @@ export async function loadSampleData(): Promise<void> {
   await link(checkout, '#checkout-rewrite', 'https://slack.com/app_redirect?channel=checkout-rewrite', 'chat', 3)
   await link(checkout, 'Staging', 'https://staging.example.com/checkout', 'staging', 4)
 
-  await meeting(checkout, 3, 'Weekly checkout sync', '09:30', 'Room 4 / Meet',
+  await meeting(checkout, 3, 'Weekly checkout sync',
     [jonas, priya, tom],
-    'Norway ramp status\nSweden blockers\nError states',
-    'Ramp to 25% held overnight with no incidents. Jonas walked through the tax problem — the legacy ' +
-    'behaviour is wrong, so matching it is not an option. Priya has the error states half done and is ' +
-    'waiting on copy.',
-    'Me: get the Swedish rules confirmed with Ingrid this week.\nPriya: error states by Friday.\n' +
-    'Tom: test plan draft for the 50% ramp.')
-  await meeting(checkout, 17, 'Rollout planning', '13:00', 'Room 2',
+    '## Norway ramp\n\nRamp to 25% held overnight with no incidents.\n\n## Sweden\n\n' +
+    'Jonas walked through the tax problem — the legacy behaviour is wrong, so matching it is not an ' +
+    'option.\n\n## Error states\n\nPriya has them half done and is waiting on copy.',
+    ['Get the Swedish rules confirmed with Ingrid this week',
+     'Priya: error states by Friday',
+     'Tom: test plan draft for the 50% ramp'])
+  await meeting(checkout, 17, 'Rollout planning',
     [mari, jonas],
-    'Market order\nRollback plan',
     'Agreed market-by-market rather than a single cutover. Mari wants Norway first because support is ' +
-    'strongest there. Rollback has to stay one config change away.',
-    'Me: write up the Denmark options.\nJonas: keep the legacy path behind a flag.')
+    'strongest there.\n\n> Rollback has to stay one config change away.',
+    ['Write up the Denmark options', 'Jonas: keep the legacy path behind a flag'])
 
   await journal(checkout, 2, 'Norway ramp to 25% went through with no incidents. Conversion is flat, which is the ' +
     'result we wanted — nobody notices a good checkout.')
@@ -302,12 +305,11 @@ export async function loadSampleData(): Promise<void> {
     'Raising now prices the round off a revenue number we are not proud of yet. Another two quarters of growth ' +
     'changes the conversation entirely, and we can fund ourselves until then.',
     'Raise a small angel round now; take on debt against revenue.', 'Me, Erik and Sofia', 40)
-  await meeting(platform, 6, 'Founders catch-up', '19:00', 'A walk',
+  await meeting(platform, 6, 'Founders catch-up',
     [erik, sofia],
-    'Support load\nHiring or automating',
     'Support tickets are up and it is the same three questions every time. Erik thinks two of them are ' +
     'automatable in a week. Sofia would rather we hire part-time help so we keep hearing from customers.',
-    'Erik: cost out the automation.\nMe: decide by the board call.')
+    ['Erik: cost out the automation', 'Decide by the board call'])
   await link(platform, 'Analytics', 'https://example.com/analytics', 'docs', 0)
   await link(platform, 'Repo', 'https://github.com/example/platform', 'repo', 1)
   await journal(platform, 1, 'Support tickets are up again and it is the same three questions. Automating those ' +

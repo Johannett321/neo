@@ -16,8 +16,10 @@ import { ProjectToday } from '@/routes/project/ProjectToday'
 import { ProjectKanban } from '@/routes/project/ProjectKanban'
 import { ProjectLayout } from '@/routes/project/ProjectLayout'
 import { ProjectMeetings } from '@/routes/project/ProjectMeetings'
+import { MeetingWriter } from '@/routes/project/MeetingWriter'
 import { ProjectSettings } from '@/routes/project/ProjectSettings'
 import { ProjectDecisions, ProjectNotes, ProjectPeople } from '@/routes/project/ProjectNotes'
+import { NoteWriter } from '@/routes/project/NoteWriter'
 import { NewProjectModal, ProjectsPage } from '@/routes/Projects'
 import { SettingsPage } from '@/routes/Settings'
 import { WorkspaceSettings } from '@/routes/WorkspaceSettings'
@@ -39,6 +41,15 @@ function Shell(): React.JSX.Element {
   // Inside a project the target is already known, so it is never asked for.
   const inProject = useMatch('/projects/:id/*')
   const isBoard = Boolean(useMatch('/projects/:id/kanban'))
+  // Writing is the one thing that owns the window: no heading above it, no search
+  // bar, no reading width. Notes and meeting write-ups both do. See NoteWriter.
+  //
+  // Both matches are taken before they are combined, and deliberately so: `||` does
+  // not evaluate its right-hand side once the left is true, and a `useMatch` skipped
+  // on some renders and not others is a hook that changes position in the list.
+  const inNote = useMatch('/projects/:id/notes/:noteId')
+  const inMeeting = useMatch('/projects/:id/meetings/:meetingId')
+  const writing = Boolean(inNote || inMeeting)
   const navigate = useNavigate()
   const location = useLocation()
   const scroller = useRef<HTMLElement>(null)
@@ -92,30 +103,40 @@ function Shell(): React.JSX.Element {
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
-          <button
-            className="hairline flex h-8 w-full max-w-md items-center gap-2 rounded-field border bg-base-200/60 px-3 text-left text-[13px] text-base-content/40 transition hover:bg-base-200"
-            onClick={() => setPaletteOpen(true)}
-            title="Search everything (⌘K)"
-          >
-            <Icon name="search" size={14} />
-            <span className="flex-1">Search everything…</span>
-          </button>
+        {!writing && (
+          <header className="drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
+            <button
+              className="hairline flex h-8 w-full max-w-md items-center gap-2 rounded-field border bg-base-200/60 px-3 text-left text-[13px] text-base-content/40 transition hover:bg-base-200"
+              onClick={() => setPaletteOpen(true)}
+              title="Search everything (⌘K)"
+            >
+              <Icon name="search" size={14} />
+              <span className="flex-1">Search everything…</span>
+            </button>
 
-          <button
-            className="btn btn-primary btn-sm ml-auto gap-1.5"
-            onClick={() => setQuickAddOpen(true)}
-            title="New (⌘N)"
-          >
-            <Icon name="plus" size={14} />
-            New
-          </button>
-        </header>
+            <button
+              className="btn btn-primary btn-sm ml-auto gap-1.5"
+              onClick={() => setQuickAddOpen(true)}
+              title="New (⌘N)"
+            >
+              <Icon name="plus" size={14} />
+              New
+            </button>
+          </header>
+        )}
 
-        <main className="scroll-area flex-1" ref={scroller}>
+        <main className={`min-h-0 flex-1 ${writing ? '' : 'scroll-area'}`} ref={scroller}>
           {/* A board should use the whole window; reading screens stay a comfortable width. */}
-          <div className={`mx-auto w-full px-8 py-8 ${isBoard ? 'max-w-none' : 'max-w-[1120px]'}`}>
-            <PageTransition id={screenKey(location.pathname)} scrollRef={scroller}>
+          <div
+            className={
+              writing ? 'h-full' : `mx-auto w-full px-8 py-8 ${isBoard ? 'max-w-none' : 'max-w-[1120px]'}`
+            }
+          >
+            <PageTransition
+              id={screenKey(location.pathname)}
+              scrollRef={scroller}
+              className={writing ? 'h-full' : ''}
+            >
               <Routes location={location}>
                 <Route path="/" element={<TodayPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
@@ -128,6 +149,9 @@ function Shell(): React.JSX.Element {
                   <Route path="people" element={<ProjectPeople />} />
                   <Route path="settings" element={<ProjectSettings />} />
                 </Route>
+                {/* Outside the project layout on purpose: the writers have no heading. */}
+                <Route path="/projects/:id/notes/:noteId" element={<NoteWriter />} />
+                <Route path="/projects/:id/meetings/:meetingId" element={<MeetingWriter />} />
                 <Route path="/people" element={<PeoplePage />} />
                 <Route path="/people/:id" element={<PersonPage />} />
                 <Route path="/settings" element={<SettingsPage />} />

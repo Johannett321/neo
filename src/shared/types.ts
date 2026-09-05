@@ -184,17 +184,35 @@ export interface Meeting {
   projectId: string
   title: string
   occurredOn: string
-  startsAt: string
-  location: string
-  agenda: string
+  /** Markdown, written on a page rather than typed into a box. Same as a note. */
   body: string
-  actions: string
   createdAt: string
   updatedAt: string
 }
 
+/**
+ * Something the meeting left owing. It starts on the meeting, because that is where
+ * it was said, and stays there until you decide it is real work — at which point it
+ * becomes a card and the card is the one that knows whether it is finished.
+ */
+export interface MeetingTodo {
+  id: string
+  meetingId: string
+  text: string
+  /** Ticked. Once the item is on the board the card answers this, not the item. */
+  done: boolean
+  /** The card this became, if it was put on the board. */
+  taskId: string | null
+  /** The column that card is sitting in — what a promoted item shows instead of a box. */
+  taskColumn: string | null
+  sortOrder: number
+}
+
 export interface MeetingView extends Meeting {
   attendees: { id: string; name: string; color: string; avatar: string | null; role: string }[]
+  todos: MeetingTodo[]
+  /** Still owed. The meeting list shows this without you having to open anything. */
+  openTodos: number
 }
 
 export interface Decision {

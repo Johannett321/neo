@@ -135,6 +135,10 @@ async function main(): Promise<void> {
   ok('project detail: meetings with attendees', detail.meetings.length === 2 &&
      detail.meetings[0].attendees.length === 3,
      detail.meetings.map((m: any) => `${m.title}(${m.attendees.length})`).join(', '))
+  ok('a meeting carries its to-do items, and says how many are still owed',
+     detail.meetings[0].todos.length === 3 && detail.meetings[0].openTodos === 3 &&
+     detail.meetings[0].todos.every((t: any) => t.taskId === null),
+     detail.meetings[0].todos.map((t: any) => t.text).join(' | '))
   ok('meeting attendees carry their project role',
      detail.meetings[0].attendees.every((a: any) => typeof a.role === 'string') &&
      detail.meetings[0].attendees.some((a: any) => a.role.includes('Tech lead')),
@@ -160,6 +164,32 @@ async function main(): Promise<void> {
   const after = await call('project:get', { id: checkout.id })
   ok('completing a task logs activity',
      after.activity.some((a: any) => a.kind === 'task_completed' && a.summary.includes(openTask.title)))
+
+  // The note writer saves itself while you type, so the log must not fill with a line
+  // per keystroke — repeated saves of one note inside half an hour are a single line,
+  // carrying whatever the note is called by the time you stop.
+  const draft = await call('note:save', { projectId: checkout.id, title: 'Draft', body: 'first' })
+  const afterFirst = await call('project:get', { id: checkout.id })
+  ok('writing a note logs it',
+     afterFirst.activity.filter((a: any) => a.kind === 'note' && a.summary.startsWith('Note: Draft')).length === 1,
+     afterFirst.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
+
+  await call('note:save', { id: draft.id, projectId: checkout.id, title: 'Draft', body: 'second' })
+  await call('note:save', { id: draft.id, projectId: checkout.id, title: 'Draft note', body: 'third' })
+  const afterMore = await call('project:get', { id: checkout.id })
+  ok('saving it again does not log it again',
+     afterMore.activity.filter((a: any) => a.kind === 'note' && a.summary.startsWith('Note: Draft')).length === 1,
+     afterMore.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
+  ok('and the one line follows the title',
+     afterMore.activity.some((a: any) => a.summary === 'Note: Draft note'))
+
+  const other = await call('note:save', { projectId: checkout.id, title: 'A different note', body: '' })
+  const afterOther = await call('project:get', { id: checkout.id })
+  ok('a different note is its own line',
+     afterOther.activity.filter((a: any) => a.kind === 'note' && a.summary.startsWith('Note: ')).length === 2,
+     afterOther.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
+  await call('note:delete', { id: draft.id })
+  await call('note:delete', { id: other.id })
 
   const todoColumn = detail.columns[0]
   const doingColumn = detail.columns[1]
@@ -218,6 +248,54 @@ async function main(): Promise<void> {
   await call('meeting:delete', { id: newMeeting.id })
   ok('meetings can be removed',
      (await call('project:get', { id: checkout.id })).meetings.length === 2)
+
+  // --- a meeting's to-do items, and the one that turns out to be real work
+  const sync = detail.meetings[0]
+  const withItem = await call('meetingTodo:save', { meetingId: sync.id, text: 'Chase the tax ruling' })
+  ok('a to-do can be added to a meeting', withItem.todos.length === 4 &&
+     withItem.todos[3].text === 'Chase the tax ruling',
+     withItem.todos.map((t: any) => t.text).join(' | '))
+  const item = withItem.todos[3]
+
+  const tickedItem = await call('meetingTodo:save', { id: item.id, done: true })
+  ok('a loose to-do answers for itself',
+     tickedItem.todos[3].done === true && tickedItem.openTodos === 3)
+  await call('meetingTodo:save', { id: item.id, done: false })
+
+  const promoted = await call('meetingTodo:promote', { id: item.id })
+  const card = promoted.todos[3]
+  ok('a to-do can be put on the board', card.taskId !== null && card.taskColumn === 'To do',
+     `${card.taskId} in ${card.taskColumn}`)
+  const boardTasks = await call('task:list', { projectId: checkout.id })
+  const promotedTask = boardTasks.find((t: any) => t.id === card.taskId)
+  ok('and arrives as a real card that says where it came from',
+     promotedTask?.title === 'Chase the tax ruling' &&
+     /Weekly checkout sync/.test(promotedTask?.details ?? ''),
+     promotedTask?.details)
+  ok('promoting twice is not two cards',
+     (await call('meetingTodo:promote', { id: item.id })).todos[3].taskId === card.taskId)
+
+  // The card is the one that knows, so the two screens can never disagree.
+  await call('task:setStatus', { id: card.taskId, status: 'done' })
+  const afterBoard = (await call('project:get', { id: checkout.id })).meetings[0]
+  ok('ticking the card ticks the item on the meeting',
+     afterBoard.todos[3].done === true && afterBoard.todos[3].taskColumn === 'Done',
+     JSON.stringify(afterBoard.todos[3]))
+  const untickedHere = await call('meetingTodo:save', { id: item.id, done: false })
+  ok('and unticking the item on the meeting reopens the card',
+     untickedHere.todos[3].done === false &&
+     (await call('task:list', { projectId: checkout.id }))
+       .find((t: any) => t.id === card.taskId)?.status === 'open')
+
+  const detached = await call('meetingTodo:save', { id: item.id, taskId: null })
+  ok('an item can be taken off the board, and the card stays there',
+     detached.todos[3].taskId === null &&
+     (await call('task:list', { projectId: checkout.id })).some((t: any) => t.id === card.taskId))
+
+  await call('meetingTodo:delete', { id: item.id })
+  ok('a to-do can be removed',
+     (await call('project:get', { id: checkout.id })).meetings[0].todos.length === 3)
+  await call('task:delete', { id: card.taskId })
 
   const created = await call('task:save', { projectId: checkout.id, title: 'Lands in the first column' })
   ok('a new task lands in the first column', created.columnId === detail.columns[0].id)

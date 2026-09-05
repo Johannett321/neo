@@ -133,16 +133,17 @@ export function CreateDialog({
         to: `/projects/${targetProject}`
       })
     } else {
-      await saveMeeting.mutateAsync({
+      const created = await saveMeeting.mutateAsync({
         projectId: targetProject,
         title: draft.title.trim(),
         occurredOn: draft.date
       })
+      // Straight to the page it will be written up on, which is the next thing to do.
       toast({
         title: `Meeting added to ${where}`,
         detail: draft.title.trim() || 'Untitled — add the notes when you have them',
         icon: 'people',
-        to: `/projects/${targetProject}/meetings`
+        to: `/projects/${targetProject}/meetings/${created.id}`
       })
     }
     onClose()

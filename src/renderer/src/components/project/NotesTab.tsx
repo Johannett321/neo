@@ -1,24 +1,30 @@
-import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import type { Note } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
-import { differs, relativeFromIso } from '@/lib/format'
+import { relativeFromIso } from '@/lib/format'
+import { excerpt } from '@/lib/markdown'
 import { Icon } from '@/components/Icon'
-import { ConfirmButton, EmptyState, Field, Modal } from '@/components/primitives'
+import { EmptyState } from '@/components/primitives'
 
+/**
+ * The list is an index, not an editor: a note opens on its own page, because a note
+ * is something you write rather than something you fill in. Two lines of the note,
+ * with its Markdown stripped back to the words, is enough to recognise which one it is.
+ */
 export function NotesTab({ projectId, notes }: { projectId: string; notes: Note[] }): React.JSX.Element {
-  const [editing, setEditing] = useState<Note | null>(null)
-  const [creating, setCreating] = useState(false)
+  const navigate = useNavigate()
   const save = useApiMutation('note:save')
   const remove = useApiMutation('note:delete')
   const openMenu = useContextMenu()
+  const href = (noteId: string): string => `/projects/${projectId}/notes/${noteId}`
 
   return (
     <div>
-      <button className="btn btn-primary btn-sm mb-4 gap-1.5" onClick={() => setCreating(true)}>
+      <Link className="btn btn-primary btn-sm mb-4 gap-1.5" to={href('new')}>
         <Icon name="plus" size={13} />
         New note
-      </button>
+      </Link>
 
       {notes.length === 0 ? (
         <EmptyState
@@ -29,13 +35,13 @@ export function NotesTab({ projectId, notes }: { projectId: string; notes: Note[
       ) : (
         <div className="space-y-2.5">
           {notes.map((note) => (
-            <button
+            <Link
               key={note.id}
+              to={href(note.id)}
               className="hairline row-hover block w-full rounded-box border bg-base-100 px-4 py-3 text-left"
-              onClick={() => setEditing(note)}
               onContextMenu={(e) =>
                 openMenu(e, [
-                  { label: 'Edit…', icon: 'edit', onSelect: () => setEditing(note) },
+                  { label: 'Open', icon: 'edit', onSelect: () => navigate(href(note.id)) },
                   {
                     label: note.isPinned ? 'Unpin' : 'Pin',
                     icon: 'pin',
@@ -61,112 +67,13 @@ export function NotesTab({ projectId, notes }: { projectId: string; notes: Note[
               </div>
               {note.body && (
                 <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[12px] leading-relaxed text-base-content/55">
-                  {note.body}
+                  {excerpt(note.body)}
                 </p>
               )}
-            </button>
+            </Link>
           ))}
         </div>
       )}
-
-      <NoteModal
-        open={creating || editing !== null}
-        onClose={() => {
-          setCreating(false)
-          setEditing(null)
-        }}
-        note={editing}
-        projectId={projectId}
-        onPinToggle={(note) => save.mutate({ id: note.id, isPinned: !note.isPinned })}
-      />
     </div>
-  )
-}
-
-function NoteModal({
-  open,
-  onClose,
-  note,
-  projectId,
-  onPinToggle
-}: {
-  open: boolean
-  onClose: () => void
-  note: Note | null
-  projectId: string
-  onPinToggle: (note: Note) => void
-}): React.JSX.Element {
-  const save = useApiMutation('note:save')
-  const remove = useApiMutation('note:delete')
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-
-  useEffect(() => {
-    if (!open) return
-    setTitle(note?.title ?? '')
-    setBody(note?.body ?? '')
-  }, [open, note])
-
-  const submit = async (): Promise<void> => {
-    if (!title.trim() && !body.trim()) return
-    await save.mutateAsync({ id: note?.id, projectId, title: title.trim(), body })
-    onClose()
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={note ? 'Note' : 'New note'}
-      width="max-w-2xl"
-      isDirty={differs({ title, body }, { title: note?.title ?? '', body: note?.body ?? '' })}
-      footer={
-        <>
-          {note && (
-            <>
-              <ConfirmButton
-                label="Delete"
-                className="btn btn-ghost btn-sm mr-auto text-base-content/50 hover:text-error"
-                onConfirm={async () => {
-                  await remove.mutateAsync({ id: note.id })
-                  onClose()
-                }}
-              />
-              <button className="btn btn-ghost btn-sm gap-1.5" onClick={() => onPinToggle(note)}>
-                <Icon name="pin" size={13} />
-                {note.isPinned ? 'Unpin' : 'Pin'}
-              </button>
-            </>
-          )}
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={() => void submit()}>
-            Save
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <Field label="Title">
-          <input
-            autoFocus
-            className="input input-bordered w-full"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </Field>
-        <Field label="Note">
-          <textarea
-            className="textarea textarea-bordered min-h-64 w-full text-sm leading-relaxed"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
-            }}
-          />
-        </Field>
-      </div>
-    </Modal>
   )
 }

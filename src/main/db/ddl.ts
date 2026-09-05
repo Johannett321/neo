@@ -104,11 +104,7 @@ CREATE TABLE IF NOT EXISTS meeting (
   project_id  uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   title       text NOT NULL DEFAULT '',
   occurred_on text NOT NULL,
-  starts_at   text NOT NULL DEFAULT '',
-  location    text NOT NULL DEFAULT '',
-  agenda      text NOT NULL DEFAULT '',
   body        text NOT NULL DEFAULT '',
-  actions     text NOT NULL DEFAULT '',
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -117,6 +113,20 @@ CREATE TABLE IF NOT EXISTS meeting_attendee (
   meeting_id uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
   person_id  uuid NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   PRIMARY KEY (meeting_id, person_id)
+);
+
+CREATE TABLE IF NOT EXISTS meeting_todo (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  meeting_id uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+  text       text NOT NULL DEFAULT '',
+  done       boolean NOT NULL DEFAULT false,
+  -- Set once the item has been put on the board. From then on the card decides
+  -- whether it is finished, so the done column above stops being read. And
+  -- ON DELETE SET NULL rather than CASCADE:
+  -- deleting the card returns the item to the meeting rather than taking it too.
+  task_id    uuid REFERENCES task(id) ON DELETE SET NULL,
+  sort_order integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS decision (
@@ -152,6 +162,9 @@ CREATE TABLE IF NOT EXISTS activity (
   project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   kind       text NOT NULL,
   summary    text NOT NULL DEFAULT '',
+  -- What the line is about, when the thing it is about is edited repeatedly. Not a
+  -- foreign key on purpose: the log outlives the row it describes. See logActivity().
+  entity_id  uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -169,6 +182,7 @@ CREATE INDEX IF NOT EXISTS idx_membership_person  ON membership (person_id);
 CREATE INDEX IF NOT EXISTS idx_note_project       ON note (project_id);
 CREATE INDEX IF NOT EXISTS idx_decision_project   ON decision (project_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_project    ON meeting (project_id, occurred_on DESC);
+CREATE INDEX IF NOT EXISTS idx_meeting_todo       ON meeting_todo (meeting_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_link_project       ON link (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_journal_project    ON journal_entry (project_id);
 CREATE INDEX IF NOT EXISTS idx_activity_project   ON activity (project_id, created_at DESC);
@@ -210,6 +224,7 @@ export const MIGRATIONS: string[] = [
   // tidy by hand, and the board's columns already say where a card is. The tasks stay;
   // only the lane they sat in goes. The column must be dropped before the table it
   // references, and both are irreversible.
+  `ALTER TABLE activity ADD COLUMN IF NOT EXISTS entity_id uuid`,
   `ALTER TABLE task DROP COLUMN IF EXISTS lane_id`,
   `DROP TABLE IF EXISTS lane`,
 
@@ -244,6 +259,58 @@ export const MIGRATIONS: string[] = [
   // People predate workspaces, so put them in the first one rather than dropping them.
   `UPDATE person SET workspace_id = (SELECT id FROM workspace ORDER BY sort_order, name LIMIT 1)
    WHERE workspace_id IS NULL`,
+
+  /*
+   * A meeting used to be a form: an agenda box, a where, a time, and a slab of text
+   * called "actions". It is now a page of Markdown with real to-do items beside it.
+   *
+   * The four columns go, and everything written in them is carried across first —
+   * each line of `actions` becomes a to-do item, and the agenda and the where are
+   * folded into the top of the note, which is the only place left that holds prose.
+   * The order matters: the DROPs at the end of this group must come after the
+   * statements that read them. Each is wrapped in a guard that checks the column is
+   * still there, and the SQL inside is EXECUTEd so that PostgreSQL does not try to
+   * parse a reference to a column this migration has already dropped on a past run.
+   */
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'meeting' AND column_name = 'actions') THEN
+       EXECUTE $q$
+         INSERT INTO meeting_todo (meeting_id, text, sort_order)
+         SELECT m.id, btrim(regexp_replace(line, '^\\s*[-*]\\s+', '')), ord - 1
+         FROM meeting m,
+              LATERAL unnest(string_to_array(m.actions, E'\\n')) WITH ORDINALITY AS l(line, ord)
+         WHERE btrim(line) <> ''
+           AND NOT EXISTS (SELECT 1 FROM meeting_todo t WHERE t.meeting_id = m.id)
+       $q$;
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'meeting' AND column_name = 'agenda') THEN
+       EXECUTE $q$
+         UPDATE meeting
+            SET body = '## Agenda' || E'\\n' || agenda ||
+                       CASE WHEN btrim(body) = '' THEN '' ELSE E'\\n\\n' || body END
+          WHERE btrim(agenda) <> ''
+       $q$;
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'meeting' AND column_name = 'location') THEN
+       EXECUTE $q$
+         UPDATE meeting
+            SET body = '_Where: ' || location || '_' ||
+                       CASE WHEN btrim(body) = '' THEN '' ELSE E'\\n\\n' || body END
+          WHERE btrim(location) <> ''
+       $q$;
+     END IF;
+   END $$`,
+  `ALTER TABLE meeting DROP COLUMN IF EXISTS actions`,
+  `ALTER TABLE meeting DROP COLUMN IF EXISTS agenda`,
+  `ALTER TABLE meeting DROP COLUMN IF EXISTS location`,
+  `ALTER TABLE meeting DROP COLUMN IF EXISTS starts_at`,
 
   // 4. Indexes last, since they are the most likely to reference a migrated column.
   `CREATE INDEX IF NOT EXISTS idx_person_workspace ON person (workspace_id)`,

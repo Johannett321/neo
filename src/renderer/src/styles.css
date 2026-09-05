@@ -225,3 +225,163 @@ summary,
     animation: none;
   }
 }
+
+/*
+ * The note as you write it.
+ *
+ * Every one of these rules styles a line of Markdown *in place* — the characters are
+ * still there and still what gets saved. `[data-h]` is the syntax the editor has
+ * decided not to show on this line: it is `display: none` rather than a shorter string,
+ * so the text the document serialises back to is untouched and the caret arithmetic
+ * stays honest. `min-height` on every line is what keeps a line whose entire content
+ * is currently hidden — an empty one, a rule — clickable.
+ */
+.mde {
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: color-mix(in oklch, var(--color-base-content) 90%, transparent);
+}
+.mde .ln {
+  min-height: 1.75em;
+  position: relative;
+  /*
+   * Not decoration. HTML collapses a trailing space, and a collapsed space is one the
+   * caret cannot sit after — the browser quietly normalises the cursor back in front
+   * of it, so every space you typed pushed the one before it to the end of the line.
+   */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.mde [data-h] {
+  display: none;
+}
+/* Syntax you can see is syntax you can edit, so it stays quiet rather than absent. */
+.mde .mk {
+  color: color-mix(in oklch, var(--color-base-content) 28%, transparent);
+  font-weight: 400;
+}
+
+.mde .ln[data-b^='h'] {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  color: var(--color-base-content);
+  margin-top: 0.9em;
+}
+.mde .ln[data-b='h1'] {
+  font-size: 1.55em;
+}
+.mde .ln[data-b='h2'] {
+  font-size: 1.3em;
+}
+.mde .ln[data-b='h3'] {
+  font-size: 1.12em;
+}
+.mde .ln[data-b='h4'],
+.mde .ln[data-b='h5'],
+.mde .ln[data-b='h6'] {
+  font-size: 1em;
+  color: color-mix(in oklch, var(--color-base-content) 68%, transparent);
+}
+
+/*
+ * A bullet, a number and a checkbox are the marker drawn properly rather than a label
+ * beside it, so they are empty elements with their content in CSS — nothing they show
+ * is part of the note's text.
+ */
+.mde .ln[data-b='bullet'],
+.mde .ln[data-b='number'],
+.mde .ln[data-b='task'] {
+  padding-left: 1.5em;
+}
+.mde .bul,
+.mde .num,
+.mde .box {
+  position: absolute;
+  left: 0;
+  user-select: none;
+}
+.mde .bul::before {
+  content: '•';
+  color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+}
+.mde .num::before {
+  content: attr(data-n);
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+}
+.mde .box {
+  top: 0.42em;
+  width: 13px;
+  height: 13px;
+  border-radius: 3.5px;
+  border: 1.5px solid color-mix(in oklch, var(--color-base-content) 28%, transparent);
+  cursor: pointer;
+}
+.mde .box.on {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.mde .box.on::after {
+  content: '';
+  position: absolute;
+  left: 3.4px;
+  top: 0.6px;
+  width: 3.4px;
+  height: 7px;
+  border: solid var(--color-primary-content);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(43deg);
+}
+
+.mde .ln[data-b='quote'] {
+  padding-left: 0.9em;
+  border-left: 2px solid color-mix(in oklch, var(--color-base-content) 15%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 62%, transparent);
+}
+/* A rule keeps its line height so there is still somewhere to put the cursor. */
+.mde .ln[data-b='rule']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+.mde .ln[data-b='code'],
+.mde .ln[data-b='fence'] {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  line-height: 1.65;
+  background: var(--color-base-200);
+  padding-left: 0.9em;
+  padding-right: 0.9em;
+}
+.mde .ln[data-b='fence'] {
+  color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+}
+
+.mde b {
+  font-weight: 600;
+  color: var(--color-base-content);
+}
+.mde i {
+  font-style: italic;
+}
+.mde s {
+  color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+}
+.mde code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  padding: 0.12em 0.36em;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+}
+.mde .lk {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+}

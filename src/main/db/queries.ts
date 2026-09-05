@@ -1,8 +1,8 @@
-import type { ProjectSummary, TaskView } from '@shared/types'
+import type { MeetingView, ProjectSummary, TaskView } from '@shared/types'
 import { attentionReason } from '../lib/attention'
 import { readIcon } from '../lib/icons'
 import { daysBetween, daysSince, q, today } from './client'
-import { mapProject, mapTaskView } from './map'
+import { mapMeeting, mapProject, mapTaskView } from './map'
 
 /** Project rows carry the aggregates every list view needs, computed in one pass. */
 const PROJECT_SELECT = /* sql */ `
@@ -112,5 +112,66 @@ export async function taskViews(
   const rows = await q<any>(sql, params)
   return Promise.all(
     rows.map(async (r) => mapTaskView({ ...r, assignee_avatar: await readIcon(r.assignee_avatar_path ?? '') }))
+  )
+}
+
+/**
+ * A meeting carries the two things a list of meetings has to show without being
+ * opened: who was in the room, and what is still owed. Both come back as JSON from
+ * a lateral join rather than a second round of queries per meeting.
+ *
+ * A to-do that has been put on the board stops answering for itself — `done` is read
+ * off the card, so ticking the card on the board ticks the item on the meeting and
+ * the two can never drift.
+ */
+const MEETING_SELECT = /* sql */ `
+SELECT m.*,
+       COALESCE(a.attendees, '[]'::json) AS attendees,
+       COALESCE(td.todos, '[]'::json)    AS todos
+FROM meeting m
+LEFT JOIN LATERAL (
+  SELECT json_agg(att) AS attendees FROM (
+    SELECT pe.id, pe.name, pe.avatar_color AS color, pe.avatar_path, COALESCE(mem.role, '') AS role
+    FROM meeting_attendee ma
+    JOIN person pe ON pe.id = ma.person_id
+    LEFT JOIN membership mem ON mem.person_id = pe.id AND mem.project_id = m.project_id
+    WHERE ma.meeting_id = m.id
+    ORDER BY pe.name
+  ) att
+) a ON true
+LEFT JOIN LATERAL (
+  SELECT json_agg(item) AS todos FROM (
+    SELECT mt.id, mt.meeting_id, mt.text, mt.task_id, mt.sort_order,
+           COALESCE(tk.status = 'done', mt.done) AS done,
+           c.name AS task_column
+    FROM meeting_todo mt
+    LEFT JOIN task tk ON tk.id = mt.task_id
+    LEFT JOIN board_column c ON c.id = tk.column_id
+    WHERE mt.meeting_id = m.id
+    ORDER BY mt.sort_order, mt.created_at
+  ) item
+) td ON true
+`
+
+export async function meetingViews(
+  where = '',
+  params: unknown[] = [],
+  orderBy = 'm.occurred_on DESC, m.created_at DESC'
+): Promise<MeetingView[]> {
+  const sql = `${MEETING_SELECT} ${where ? `WHERE ${where}` : ''} ORDER BY ${orderBy}`
+  const rows = await q<any>(sql, params)
+  return Promise.all(
+    rows.map(async (r) => ({
+      ...mapMeeting(r),
+      attendees: await Promise.all(
+        (r.attendees ?? []).map(async (att: any) => ({
+          id: att.id,
+          name: att.name,
+          color: att.color,
+          role: att.role,
+          avatar: await readIcon(att.avatar_path ?? '')
+        }))
+      )
+    }))
   )
 }

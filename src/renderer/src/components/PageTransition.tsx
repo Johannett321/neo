@@ -17,12 +17,15 @@ import { pageVariants, stillVariants } from '@/lib/motion'
 export function PageTransition({
   id,
   scrollRef,
+  className = '',
   children
 }: {
   /** Changing this is what counts as a new screen. */
   id: string
   /** Reset to the top when the screen changes, rather than landing mid-page. */
   scrollRef?: RefObject<HTMLElement | null>
+  /** A screen that manages its own height needs the wrapper to have one too. */
+  className?: string
   children: React.ReactNode
 }): React.JSX.Element {
   const variants = useReducedMotion() ? stillVariants : pageVariants
@@ -36,7 +39,14 @@ export function PageTransition({
       initial={false}
       onExitComplete={() => scrollRef?.current?.scrollTo({ top: 0 })}
     >
-      <motion.div key={id} variants={variants} initial="hidden" animate="shown" exit="gone">
+      <motion.div
+        key={id}
+        className={className}
+        variants={variants}
+        initial="hidden"
+        animate="shown"
+        exit="gone"
+      >
         {children}
       </motion.div>
     </AnimatePresence>

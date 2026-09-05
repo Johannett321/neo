@@ -148,10 +148,25 @@ minutes counts as the same visit, so the brief does not evaporate the moment you
 
 ### Meetings
 A meeting is a note that knows the things a meeting has: when it happened, who was in
-the room, the agenda, what was said and what came out of it. Attendees are real people
-from the project, so months later the record answers "who agreed to this" — which a
-plain note never can. A new meeting starts with everyone on the project ticked; you
-untick whoever was absent.
+the room, what was said and what came out of it. Attendees are real people from the
+project, so months later the record answers "who agreed to this" — which a plain note
+never can. A new meeting starts with everyone on the project ticked; you untick whoever
+was absent, or untick all of them in one click and tick the two who turned up.
+
+Writing one up is writing, so it gets a page rather than a dialog — the same Markdown
+editor a note uses down the middle, and everything a meeting has that a note does not
+in a rail down the right: the name, the date, who was there, and the to-do list. There
+is no agenda field and no "where": an agenda is a heading in the write-up like any
+other, and the room number stopped being interesting the moment the meeting ended.
+
+**What the room left owing** is a list of real items rather than a slab of text, and
+this is the part that pays for itself. The meeting list says "3 still to do" on the row
+without you opening anything. Most of those items are done and forgotten inside a week
+and never belong on the board — but right-click the one that turns out to be real work
+and **Add to the board** makes it a card in the first column, carrying a note of which
+meeting it came from. The item then says where it went and which column it is sitting
+in, and from that moment the card is the one that knows whether it is finished: tick it
+on the board and it ticks on the meeting, and the two can never drift apart.
 
 ### Decision log
 A first-class record: what was decided, when, by whom, why, and **what was rejected**.
@@ -163,6 +178,44 @@ The project Home page carries an append-only dated log of how you got here, alon
 the links hub — the board, the repo, the Figma file, the client's Drive folder — which
 is the cheapest feature here and kills a surprising amount of the daily hunt. Notes get
 their own page for everything that is not a meeting.
+
+### Writing a note
+A note opens as a page, not a dialog, and it takes the whole window: no project
+heading, no tabs, no search bar. The project heading is for moving around and this is
+the one screen where you are not, so the note starts at the top of the window and the
+only chrome left — the way back, the word count, whether it is saved — floats over it.
+
+It is **Markdown**, which is also how it is stored and how it is mirrored to disk, so
+what you type is what survives. It renders itself as you write it, in the line you are
+writing: type `## ` and that line becomes a heading with the cursor still in it, type
+`- ` and it becomes a bullet. There is no preview and no preview pane, because a
+preview is a second copy of the note that you have to look away from the first one to
+see.
+
+The syntax that has a visual form of its own — a bullet, a number, a checkbox, a quote
+bar — is drawn instead of shown. The rest (`##`, `**`, a link's brackets) hides on every
+line except the one the cursor is on, where you need to be able to edit it. Nothing is
+rewritten: every character is still in the note, and the file on disk is the file you
+typed.
+
+Lists carry themselves on when you press Return and end when you press it on an empty
+one, Backspace where the words start unmakes the item rather than chewing through `- `,
+`⇥` and `⇧⇥` nest and lift, `⌘B` / `⌘I` / `⌘⇧K` wrap the selection, checkboxes tick when
+clicked, and pasting a URL over selected text turns it into a link. Copying takes the
+Markdown rather than what happens to be on screen.
+
+Under it, this is a `contenteditable`, because a textarea has one font for the whole
+box. Every edit is intercepted before the browser can apply it, applied to the Markdown
+string instead, and the document redrawn from that string — so what you can see is
+always a rendering of the text and never a source of it. Undo is the app's own for the
+same reason: redrawing the document would have thrown the browser's history away.
+
+It saves itself, continuously. A dialog can afford a Save button, because the only ways
+out of one are deliberate; a page has a sidebar, a back gesture and `⌘K` next to it, and
+losing an afternoon's writing to a stray click is not a trade worth making. Repeated
+saves of the same note within half an hour collapse into a single line in the activity
+log, so the thing that makes the re-entry brief readable is not drowned by the thing
+that makes the writing safe.
 
 ### Confirmations
 Anything destructive opens a dialog that says what is about to happen and what it will

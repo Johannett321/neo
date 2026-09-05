@@ -1,6 +1,6 @@
 import type {
-  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, Membership, MeetingView, Note,
-  Person, PersonProject, Project, ProjectStatus, Task, TaskView, Workspace
+  Activity, BoardColumn, CastMember, Decision, JournalEntry, Link, Membership, MeetingTodo,
+  MeetingView, Note, Person, PersonProject, Project, ProjectStatus, Task, TaskView, Workspace
 } from '@shared/types'
 import { daysBetween, iso, isoOrNull, today } from './client'
 
@@ -132,20 +132,31 @@ export const mapNote = (r: Row): Note => ({
   updatedAt: iso(r.updated_at)
 })
 
-export const mapMeeting = (r: Row): MeetingView => ({
+export const mapMeetingTodo = (r: Row): MeetingTodo => ({
   id: r.id,
-  projectId: r.project_id,
-  title: r.title,
-  occurredOn: r.occurred_on,
-  startsAt: r.starts_at,
-  location: r.location,
-  agenda: r.agenda,
-  body: r.body,
-  actions: r.actions,
-  attendees: r.attendees ?? [],
-  createdAt: iso(r.created_at),
-  updatedAt: iso(r.updated_at)
+  meetingId: r.meeting_id,
+  text: r.text,
+  done: r.done ?? false,
+  taskId: r.task_id ?? null,
+  taskColumn: r.task_column ?? null,
+  sortOrder: r.sort_order
 })
+
+export const mapMeeting = (r: Row): MeetingView => {
+  const todos = (r.todos ?? []).map(mapMeetingTodo)
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    title: r.title,
+    occurredOn: r.occurred_on,
+    body: r.body,
+    attendees: r.attendees ?? [],
+    todos,
+    openTodos: todos.filter((t: MeetingTodo) => !t.done).length,
+    createdAt: iso(r.created_at),
+    updatedAt: iso(r.updated_at)
+  }
+}
 
 export const mapDecision = (r: Row): Decision => ({
   id: r.id,
