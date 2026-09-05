@@ -17,6 +17,8 @@ npm run verify          # whole backend, headless, in plain Node
 npm run verify:upgrade  # open a database written by an older version of the app
 npm run package         # unpacked app into dist/
 npm run dist            # packaged, signed-if-possible application
+npm run build:mcp       # the Claude Desktop connector into out/mcp/
+npm run mcp:pack        # that, packed as dist/neo.mcpb
 ```
 
 There is no linter and no test framework. `test/verify.ts` and `test/upgrade.ts` are
@@ -52,6 +54,32 @@ inside main. That exists for the assistant: its tools are the app's own channels
 than a second set of writes beside them, so a task it creates logs activity, bumps the
 project clock and lands in the Markdown mirror because it *is* that code path. Do not
 give a tool its own SQL — add the channel it needs and call it.
+
+**`src/mcp/`** is a fourth process, and the only one that is not Electron's: the MCP
+connector Claude Desktop runs. It is a proxy and nothing else. It never opens the
+database — PGlite has no lock, and Claude Desktop keeps its servers alive for hours, so a
+second reader there would take the `.lock` and stop Neo from starting. Instead
+`src/main/lib/mcp/bridge.ts` listens on a Unix socket in the app's support folder (a
+named pipe on Windows; never a TCP port) and answers with the same `TOOLS`, so a task
+created from Claude Desktop is the same task, logged and mirrored, for the same reason an
+assistant-made one is. `src/shared/mcp.ts` is that wire's contract, the way `api.ts` is
+IPC's. The tool list is baked into the connector at build time by `scripts/build-mcp.mjs`,
+generated from `TOOLS` itself, so the tools are advertised before Neo is open without
+becoming a second description of them that can drift. Add a tool to `TOOLS` and it appears
+on both sides; do not add one to the connector.
+
+`src/main/ipc/mcp.ts` is the setup side of it: it writes one entry into Claude Desktop's
+own `claude_desktop_config.json` and never touches anything else in that file, refusing
+outright rather than overwriting one it cannot parse. The entry runs the connector on
+Neo's own Electron with `ELECTRON_RUN_AS_NODE`, because `"command": "node"` depends on a
+PATH that Claude Desktop's launch environment frequently does not have. It finds the
+connector by looking for the file, not by asking `app.isPackaged` — which lies in
+development, as the section below explains.
+
+Claude Desktop cannot show Neo's confirmation — it has no elicitation, so a connector has
+no way to put a question on screen — so what gates a write there is its own approval
+prompt, informed by `readOnlyHint` and `destructiveHint`. `summary()` is still built
+before the write, because building it is what validates, and it goes back with the result.
 
 **Renderer** (`src/renderer/src/`) is React 19 + TanStack Query + React Router in hash
 mode. `routes/` are screens, `components/` the shared pieces, `lib/` the app-wide systems

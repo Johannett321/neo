@@ -11,6 +11,7 @@ const dir = process.env.PM_TEST_DIR || mkdtempSync(join(tmpdir(), 'projectmanage
 export const app = {
   isPackaged: false,
   getPath: () => dir,
+  getAppPath: () => process.cwd(),
   getVersion: () => '0.0.0-test',
   setName: () => {},
   setPath: () => {},
@@ -19,7 +20,7 @@ export const app = {
 
 const handlers = new Map()
 export const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) }
-export const shell = { openPath: async () => '', openExternal: async () => {} }
+export const shell = { openPath: async () => '', openExternal: async () => {}, showItemInFolder: () => {} }
 // Tests never open a picker; icon uploads are exercised by passing a stored filename.
 export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
 // The assistant pushes its stream at every open window; in a test there are none,

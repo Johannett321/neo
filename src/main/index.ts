@@ -6,9 +6,11 @@ import { buildAppMenu } from './menu'
 import { ensureColumnsEverywhere } from './lib/board'
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
+import { startBridge, stopBridge } from './lib/mcp/bridge'
 import { registerChatHandlers } from './ipc/chat'
 import { registerContentHandlers } from './ipc/content'
 import { registerDashboardHandlers } from './ipc/dashboard'
+import { registerMcpHandlers } from './ipc/mcp'
 import { registerMeetingHandlers } from './ipc/meetings'
 import { registerPeopleHandlers } from './ipc/people'
 import { registerProjectHandlers } from './ipc/projects'
@@ -105,6 +107,7 @@ function registerHandlers(): void {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerMcpHandlers()
   // Registered last: the assistant's tools call the channels above by name.
   registerChatHandlers()
 }
@@ -129,6 +132,9 @@ async function start(): Promise<void> {
   )
   await pruneIcons(referenced.map((r) => r.icon_path))
   registerHandlers()
+  // After the handlers, because the bridge answers by calling them, and never before
+  // the database is open: the tools it exposes are the app's own channels.
+  await startBridge()
   buildAppMenu()
   createWindow()
 
@@ -166,7 +172,9 @@ app.on('before-quit', (event) => {
   if (closing) return
   event.preventDefault()
   closing = true
-  void closeDb()
+  void stopBridge()
+    .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
+    .then(() => closeDb())
     .catch((error: unknown) => console.error('Could not close the database cleanly:', error))
     .finally(() => app.exit(0))
 })
@@ -174,6 +182,9 @@ app.on('before-quit', (event) => {
 // Ctrl-C in a terminal during development deserves the same courtesy.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    void closeDb().finally(() => process.exit(0))
+    void stopBridge()
+      .catch(() => {})
+      .then(() => closeDb())
+      .finally(() => process.exit(0))
   })
 }

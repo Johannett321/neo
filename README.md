@@ -473,6 +473,58 @@ panel or picked with the paperclip. Conversations are saved, listed in the panel
 and switchable; each one names itself from the first exchange rather than being called
 "New chat" forever or making you name it before you know what it is about.
 
+### Claude Desktop
+
+The same tools, from the other side. Neo ships an **MCP connector**, so the Claude desktop
+app can read what is in Neo and change it without the panel being open — useful when the
+conversation started somewhere else, or when you want a model other than the one your own
+key buys.
+
+**Setting it up takes one click.** Open **Settings → Claude** (`⌘,`) and press *Connect
+Claude Desktop*. Neo adds one entry to Claude Desktop's own configuration, leaving
+everything already in it alone, then tells you to restart Claude Desktop — which only
+reads that file at startup. The pane tells you where you stand the rest of the time:
+connected, not connected, or pointing at a copy of Neo that has since moved.
+
+Nothing has to be installed for that to work, not even Node. The entry runs the connector
+on Neo's own Electron as plain Node, because `"command": "node"` is the reason half of
+these setups never start — Claude Desktop launches its servers with a login shell's PATH,
+which on a machine where Node came from nvm or Homebrew does not have Node on it.
+
+If you would rather do it by hand, the pane has the exact JSON to copy and a link to the
+file it goes in. And to hand the connector to someone else, build it as an installable
+extension:
+
+```bash
+npm run mcp:pack     # writes dist/neo.mcpb
+```
+
+which they drop on **Claude Desktop → Settings → Extensions**. That route runs on Claude
+Desktop's own bundled Node, so it needs nothing installed either.
+
+**Neo has to be open.** The connector holds no database of its own — it forwards every
+call over a local socket to the running app, which answers it with the same tools the
+panel uses, on the same channels. That is not caution for its own sake: PGlite is an
+in-process engine with no lock, and a second process reading that folder is the one thing
+that can damage it. With Neo shut, the tools say so and do nothing.
+
+Everything else follows from being the same code path. A task Claude Desktop creates logs
+activity, bumps the project's clock and lands in the Markdown mirror, because it *is* the
+click you would have made. Reads are fenced to one workspace exactly as the panel's are.
+Every tool takes an optional `workspace` — a name is enough — and uses whichever one Neo
+is showing if you leave it out; the answer always says which one it used, so the choice is
+never silent. `list_workspaces` is there to find the others.
+
+Approval works differently here, and it is worth knowing which. The in-app assistant stops
+before every write and shows you a sentence in plain words. Claude Desktop cannot be asked
+to show that — it has no way for a connector to put a question on screen — so the thing
+that gates a write is Claude Desktop's own "allow this tool" prompt. Reads are marked
+read-only so it can stop asking about them, and `delete_task` is marked destructive so it
+warns. Neo still builds the plain-words sentence before it writes anything, which is what
+catches a bad date or an id from another workspace *before* the change rather than after,
+and hands it back with the result so the transcript says what changed in words rather than
+in arguments.
+
 ## Your data
 
 Everything lives in **`~/Documents/Neo`**:
@@ -487,10 +539,12 @@ Everything lives in **`~/Documents/Neo`**:
 - `attachments/` — files you have dropped into a conversation with the assistant.
 - `exports/` — JSON dumps of the structured data, on demand.
 
-Nothing leaves the machine on its own. The one thing that ever does is a question you
-type into the assistant, which goes to OpenAI on your own key along with whatever it
-looked up to answer it — and only from the workspace you asked in. With no key saved,
-nothing leaves at all.
+Nothing leaves the machine on its own. Two things ever do, and both are things you asked
+for. A question typed into the assistant goes to OpenAI on your own key, along with
+whatever it looked up to answer it, and only from the workspace you asked in — with no key
+saved, that channel is shut. And anything the Claude Desktop connector reads goes to
+Anthropic as part of the conversation you are having there; uninstalling the extension, or
+simply keeping Neo shut, closes that one.
 
 ## Calendar
 
@@ -545,6 +599,7 @@ npm run dist            # packaged, signed-if-possible application
 npm run typecheck       # both TypeScript projects
 npm run verify          # exercise the whole backend headlessly
 npm run verify:upgrade  # open a database written by an older version
+npm run mcp:pack        # build the Claude Desktop connector into dist/neo.mcpb
 ```
 
 `npm run dist` produces a `.dmg` and a `.zip` on macOS, an NSIS installer on Windows and

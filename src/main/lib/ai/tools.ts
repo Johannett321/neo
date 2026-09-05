@@ -38,6 +38,13 @@ export interface Tool {
   /** Writes stop the run and ask. Reads never do. */
   writes: boolean
   /**
+   * Takes something away rather than changing it. The in-app assistant does not need
+   * to know — it asks about every write in the same words either way — but a client
+   * on the other side of the MCP bridge has only its own approval prompt to warn
+   * with, so it is told which calls are the ones there is no undo for.
+   */
+  destroys?: boolean
+  /**
    * The confirmation line, in plain words. Resolves ids to names, so it may query.
    * Only ever called for a tool that writes.
    */
@@ -553,6 +560,7 @@ export const TOOLS: Tool[] = [
     description: 'Remove a card outright. Prefer set_task_status — a cancelled card keeps its history.',
     parameters: object({ id: str('The task id.') }, ['id']),
     writes: true,
+    destroys: true,
     summary: async (input, ctx) => {
       const task = await resolveTask(String(input.id), ctx)
       return `Delete “${task.title}” from ${task.projectName}. This cannot be undone.`

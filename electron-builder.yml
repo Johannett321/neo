@@ -10,6 +10,12 @@ files:
 # on disk rather than being packed into the asar archive.
 asarUnpack:
   - node_modules/@electric-sql/pglite/**
+# The MCP connector is run by Claude Desktop, not by us, so it has to be a real file
+# beside the app rather than a member of the asar archive. Installing the .mcpb is the
+# ordinary way in; this is the copy a hand-written claude_desktop_config.json points at.
+extraResources:
+  - from: out/mcp/neo-mcp.mjs
+    to: mcp/neo-mcp.mjs
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity

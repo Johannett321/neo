@@ -24,7 +24,9 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && electron-vite build && npm run build:mcp",
+    "build:mcp": "node scripts/build-mcp.mjs",
+    "mcp:pack": "node scripts/build-mcp.mjs && node scripts/mcp-bundle.mjs",
     "dev": "node scripts/dev-branding.mjs && electron-vite dev",
     "dist": "npm run build && electron-builder",
     "package": "npm run build && electron-builder --dir",
@@ -41,6 +43,7 @@
     "openai": "^7.10.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/react-query": "^5.64.1",
     "@types/node": "^22.10.6",

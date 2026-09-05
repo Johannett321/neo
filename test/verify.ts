@@ -10,11 +10,18 @@ import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
 import { registerChatHandlers } from '../src/main/ipc/chat'
+import { registerMcpHandlers } from '../src/main/ipc/mcp'
 import { TOOLS } from '../src/main/lib/ai/tools'
+import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
 import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
 import { attentionReason } from '../src/main/lib/attention'
 import { exec, q } from '../src/main/db/client'
+import { request } from 'node:http'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { BridgeEndpoint } from '@shared/mcp'
 
 const call = async (channel: string, input?: unknown): Promise<any> => {
   const fn = (__handlers as Map<string, any>).get(channel)
@@ -49,6 +56,7 @@ async function main(): Promise<void> {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerMcpHandlers()
   registerChatHandlers()
 
   ok('a fresh database has no workspaces', (await call('workspace:list')).length === 0)
@@ -762,6 +770,159 @@ async function main(): Promise<void> {
   ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
   const json = await call('settings:exportJson')
   ok('json export writes', typeof json.path === 'string', json.path)
+
+  /* ------------------------------------------------- the bridge Claude Desktop uses */
+
+  const described = describeTools()
+  ok('every tool the bridge offers names its workspace explicitly',
+     described.length === TOOLS.length &&
+     described.every((t) => Boolean((t.parameters as any).properties?.workspace)))
+  ok('reads are offered as read-only and deleting is offered as destructive',
+     described.find((t) => t.name === 'list_projects')!.writes === false &&
+     described.find((t) => t.name === 'create_task')!.writes === true &&
+     described.find((t) => t.name === 'delete_task')!.destroys === true &&
+     described.filter((t) => t.destroys).length === 1)
+
+  const activeId = (await call('settings:get')).activeWorkspaceId
+  const activeName = (await call('workspace:list')).find((w: any) => w.id === activeId)?.name
+  const noWorkspace = await callTool({ tool: 'list_projects', arguments: {} })
+  ok('a call that names no workspace uses the one the app is showing, and says which',
+     noWorkspace.ok && noWorkspace.workspace === activeName, activeName)
+
+  const named = await callTool({ tool: 'list_projects', arguments: { workspace: 'My company' } })
+  ok('a call can name its workspace, and gets that one',
+     named.ok && named.workspace === 'My company' &&
+     (named.result as any[]).some((p) => p.id === otherProject.id))
+
+  const wrongWorkspace = await callTool({
+    tool: 'set_task_status',
+    arguments: { workspace: 'Day job', id: (await invokeChannel('task:list', { projectId: otherProject.id }))[0].id, status: 'done' }
+  })
+  ok('the workspace fence holds through the bridge as it does in the panel',
+     !wrongWorkspace.ok && wrongWorkspace.error.includes('in this workspace'))
+
+  const madeOverBridge = await callTool({
+    tool: 'create_task',
+    arguments: { workspace: 'Day job', project: 'Checkout rewrite', title: 'Written through the bridge', dueDate: '2026-10-02' }
+  })
+  ok('a write over the bridge reports what it did in plain words',
+     madeOverBridge.ok && (madeOverBridge.summary ?? '').includes('Checkout rewrite') &&
+     (madeOverBridge.summary ?? '').includes('Written through the bridge'))
+
+  // The confirmation line is built before the write, so bad input fails before it lands.
+  const tasksBefore = (await call('task:list', { projectId: seenProject.id })).length
+  const badDate = await callTool({
+    tool: 'create_task',
+    arguments: { workspace: 'Day job', project: 'Checkout rewrite', title: 'x', dueDate: 'next Friday' }
+  })
+  ok('a bad date over the bridge is refused before anything is written',
+     !badDate.ok && badDate.error.includes('YYYY-MM-DD') &&
+     (await call('task:list', { projectId: seenProject.id })).length === tasksBefore)
+
+  const unknownWorkspace = await callTool({ tool: 'list_projects', arguments: { workspace: 'Nowhere' } })
+  ok('a workspace that does not exist is named as such, with the ones that do',
+     !unknownWorkspace.ok && unknownWorkspace.error.includes('Day job'))
+
+  ok('an unknown tool is refused by name',
+     !(await callTool({ tool: 'drop_everything', arguments: {} })).ok)
+
+  /* The socket itself: what the connector actually talks to. */
+
+  const socket = await startBridge()
+  const info = JSON.parse(readFileSync(endpointFile(), 'utf8')) as BridgeEndpoint
+  ok('starting the bridge leaves an endpoint for the connector to find',
+     Boolean(socket) && info.endpoint === socket && info.token.length > 0 && info.pid === process.pid)
+
+  const knock = async (token: string, path = '/tools'): Promise<{ status: number; body: any }> =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        { socketPath: info.endpoint, path, method: 'GET', headers: { 'x-neo-token': token } },
+        (res) => {
+          const chunks: Buffer[] = []
+          res.on('data', (c: Buffer) => chunks.push(c))
+          res.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf8')
+            resolve({ status: res.statusCode ?? 0, body: text ? JSON.parse(text) : null })
+          })
+        }
+      )
+      req.on('error', reject)
+      req.end()
+    })
+
+  const served = await knock(info.token)
+  ok('the bridge serves the tool list over its socket',
+     served.status === 200 && served.body.tools.length === TOOLS.length)
+
+  const greeted = await knock(info.token, '/')
+  ok('the bridge names the workspaces so a client can choose one',
+     greeted.status === 200 && greeted.body.app === 'neo' &&
+     greeted.body.workspaces.some((w: any) => w.name === 'Day job'))
+
+  ok('a caller without the token gets nothing',
+     (await knock('not-the-token')).status === 401)
+
+  const mcp = await call('mcp:status')
+  ok('the connector reports where Claude Desktop keeps its configuration',
+     mcp.configPath.endsWith('claude_desktop_config.json'))
+  ok('and offers an entry that runs on a runtime we know exists',
+     mcp.entry.command === process.execPath && mcp.entry.env.ELECTRON_RUN_AS_NODE === '1')
+
+  /*
+   * Connecting writes into a file Claude Desktop owns, so the real one is never the
+   * thing under test: HOME is moved somewhere disposable for the length of it.
+   */
+  const realHome = process.env.HOME
+  const fakeHome = mkdtempSync(join(tmpdir(), 'neo-claude-'))
+  process.env.HOME = fakeHome
+  const claudeDir = join(fakeHome, 'Library', 'Application Support', 'Claude')
+  mkdirSync(claudeDir, { recursive: true })
+  const claudeConfig = join(claudeDir, 'claude_desktop_config.json')
+
+  ok('with nothing in that file yet, Neo reports itself as not connected',
+     (await call('mcp:status')).connected === false)
+
+  // Somebody else's file, with their own server and their own settings in it.
+  writeFileSync(claudeConfig, JSON.stringify({
+    globalShortcut: 'Alt+Space',
+    mcpServers: { filesystem: { command: 'npx', args: ['-y', 'server-filesystem'] } }
+  }, null, 2))
+
+  const connected = await call('mcp:connect')
+  const written = JSON.parse(readFileSync(claudeConfig, 'utf8'))
+  ok('connecting adds Neo to Claude Desktop and says so',
+     connected.connected === true && Boolean(written.mcpServers.neo))
+  ok('and leaves everything else in that file exactly as it was',
+     written.globalShortcut === 'Alt+Space' && written.mcpServers.filesystem.command === 'npx')
+  ok('the entry runs the connector on this copy of the app',
+     written.mcpServers.neo.env.ELECTRON_RUN_AS_NODE === '1' &&
+     written.mcpServers.neo.args[0].endsWith('neo-mcp.mjs'))
+
+  // A copy of Neo that moved leaves an entry pointing at where it used to be.
+  writeFileSync(claudeConfig, JSON.stringify({
+    mcpServers: { ...written.mcpServers, neo: { ...written.mcpServers.neo, args: ['/gone/neo-mcp.mjs'] } }
+  }, null, 2))
+  const relocated = await call('mcp:status')
+  ok('an entry pointing at another copy of Neo is reported as stale, not as connected',
+     relocated.stale === true && relocated.connected === false)
+
+  await call('mcp:connect')
+  const disconnected = await call('mcp:disconnect')
+  const remaining = JSON.parse(readFileSync(claudeConfig, 'utf8'))
+  ok('disconnecting takes Neo out again and leaves the other server behind',
+     disconnected.connected === false && remaining.mcpServers.neo === undefined &&
+     Boolean(remaining.mcpServers.filesystem))
+
+  writeFileSync(claudeConfig, '{ this is not json')
+  ok('a configuration file we cannot parse is reported, never overwritten',
+     await threw(() => call('mcp:connect'), 'not valid JSON') &&
+     readFileSync(claudeConfig, 'utf8') === '{ this is not json')
+
+  process.env.HOME = realHome
+
+  await stopBridge()
+  ok('closing the bridge takes the endpoint away, so the connector knows the app is shut',
+     !existsSync(endpointFile()) && !existsSync(info.endpoint))
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

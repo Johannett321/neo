@@ -128,6 +128,20 @@ export interface ApiMap {
 
   'shell:openExternal': { in: { url: string }; out: void }
 
+  /* -------------------------------------------------------- the Claude connector */
+
+  /** Where the Claude Desktop connector stands: installed, connected, or neither. */
+  'mcp:status': { in: void; out: import('./mcp').McpStatus }
+  /**
+   * Add Neo to Claude Desktop's own list of servers, leaving everything else in that
+   * file alone. Claude Desktop has to be restarted before it reads it.
+   */
+  'mcp:connect': { in: void; out: import('./mcp').McpStatus }
+  /** Take Neo back out of it again. */
+  'mcp:disconnect': { in: void; out: import('./mcp').McpStatus }
+  /** Show Claude Desktop's configuration file in the Finder, for setting it up by hand. */
+  'mcp:revealConfig': { in: void; out: void }
+
   /* ---------------------------------------------------------------- assistant */
 
   'chat:list': { in: Scope; out: Conversation[] }
