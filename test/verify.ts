@@ -771,6 +771,19 @@ async function main(): Promise<void> {
   const json = await call('settings:exportJson')
   ok('json export writes', typeof json.path === 'string', json.path)
 
+  /* ------------------------------------------------------- a project's start date */
+
+  const born = await call('project:save', { id: seenProject.id, createdAt: '2026-03-09' })
+  ok('a project can be told when it actually began',
+     born.createdAt.slice(0, 10) === '2026-03-09', born.createdAt)
+  ok('and it is stored at noon, so the date reads the same everywhere on earth',
+     born.createdAt.includes('T12:00:00'), born.createdAt)
+  ok('a start date that is not a date is refused',
+     await threw(() => call('project:save', { id: seenProject.id, createdAt: 'last spring' }),
+                 'YYYY-MM-DD'))
+  ok('changing the start date leaves the rest of the project alone',
+     born.name === seenProject.name && born.deadline === seenProject.deadline)
+
   /* ------------------------------------------------- the bridge Claude Desktop uses */
 
   const described = describeTools()

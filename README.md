@@ -223,6 +223,12 @@ Project settings is everything *about* the project rather than in it: its
 icon, name and one-line summary, the hat you wear, its status, and archiving or deleting
 it. That split keeps configuration out of a header you look at all day.
 
+Its **deadline and its start date** live there together, because they are the two ends of
+the same bar. Most projects are older than the app's knowledge of them — you type in
+something you have been running since spring — and a run-up measured from the day you
+happened to add it is measuring nothing. Move the start date back and the bar tells the
+truth about how much of the time you were ever going to have is gone.
+
 The swap is animated as a drill-down — the workspace list leaves to the left, the
 project's navigation arrives from the right and its items settle in sequence — so
 entering and leaving a project reads as movement rather than a jump cut. It respects

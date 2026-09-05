@@ -134,6 +134,16 @@ function IdentityPane({ project }: { project: Project }): React.JSX.Element {
             className="w-56"
           />
         </Field>
+        <Field
+          label="Started"
+          hint="The day the project actually began, which is rarely the day you added it here. The deadline bar measures its run-up from this date, so move it back and the bar tells the truth."
+        >
+          <DateField
+            value={project.createdAt.slice(0, 10)}
+            onChange={(v) => v && save.mutate({ id: project.id, createdAt: v })}
+            className="w-56"
+          />
+        </Field>
       </div>
     </Panel>
   )

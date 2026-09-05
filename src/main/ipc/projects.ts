@@ -18,6 +18,28 @@ import { handle, pick, reorder, upsert } from './util'
 const SAME_VISIT_MINUTES = 30
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * The day a project began, as a timestamp the run-up can measure from.
+ *
+ * Most projects are older than the app's knowledge of them — you type in something you
+ * have been running since spring, and a start date of "today" gives it a run-up with no
+ * run in it and a deadline bar that is wrong from the moment you set it. So the date is
+ * yours to move.
+ *
+ * Noon rather than midnight, and deliberately. `created_at` is a real timestamp, and
+ * everything that reads it as a day takes the date off the front of the ISO string —
+ * which is UTC. Midnight would land on the day before for everyone west of Greenwich
+ * and read back as a project that started a day early. Noon is the same calendar day
+ * from Auckland to Honolulu.
+ */
+function startedOn(value: string): string {
+  const day = value.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error(`A start date must be a calendar date as YYYY-MM-DD, not "${value}".`)
+  }
+  return `${day}T12:00:00.000Z`
+}
+
 export function registerProjectHandlers(): void {
   handle('project:list', async (filter) => {
     const clauses: string[] = []
@@ -117,8 +139,10 @@ export function registerProjectHandlers(): void {
 
   handle('project:save', async (draft) => {
     const fields = pick(draft as Partial<Project>, [
-      'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'isPinned'
+      'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'isPinned',
+      'createdAt'
     ])
+    if (fields.createdAt !== undefined) fields.createdAt = startedOn(String(fields.createdAt))
 
     let orphan = ''
     if (draft.id && fields.iconPath !== undefined) {
