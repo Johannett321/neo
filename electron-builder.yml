@@ -18,6 +18,12 @@ mac:
     - zip
 win:
   target: nsis
+
+# Without this the installer is called "Neo Setup 1.0.0.exe". The spaces break
+# every shell one-liner that handles release artifacts, and the docs promise a
+# hyphenated name.
+nsis:
+  artifactName: ${productName}-Setup-${version}.${ext}
 linux:
   target: AppImage
   category: Office

@@ -80,6 +80,7 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          gh release upload "$TAG" \
-            $(find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \)) \
-            --repo "$REPO" --clobber
+          # -print0/-0 rather than $(find ...): artifact names can contain spaces,
+          # and unquoted word splitting turns one file into two missing ones.
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \) -print0 \
+            | xargs -0 gh release upload "$TAG" --repo "$REPO" --clobber
