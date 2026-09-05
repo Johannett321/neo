@@ -10,7 +10,9 @@ A day job managing multiple teams, hands-on development, a company of your own, 
 consulting client — without holding all of it in your head.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#running-it)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#install)
+[![CI](https://github.com/Johannett321/neo/actions/workflows/ci.yml/badge.svg)](https://github.com/Johannett321/neo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Johannett321/neo?display_name=tag&sort=semver)](https://github.com/Johannett321/neo/releases/latest)
 [![Electron](https://img.shields.io/badge/Electron-44-47848F.svg)](https://www.electronjs.org/)
 [![Local first](https://img.shields.io/badge/data-100%25%20local-success.svg)](#your-data)
 
@@ -35,13 +37,37 @@ nothing needs manual upkeep, and every screen stays useful when the data is a mo
 Everything is **free and open source**, and everything stays **on your own machine** —
 no account, no server, no telemetry, no paid tier. There is nothing to sign up for.
 
-## Quick start
+## Install
+
+Download the latest build for your platform from
+**[Releases](https://github.com/Johannett321/neo/releases/latest)**:
+
+| Platform | File |
+|---|---|
+| macOS, Apple silicon | `Neo-<version>-arm64.dmg` |
+| macOS, Intel | `Neo-<version>.dmg` |
+| Windows | `Neo-Setup-<version>.exe` |
+| Linux | `Neo-<version>.AppImage` |
+
+The builds are **not code-signed** — there is no Apple Developer certificate and no
+Windows EV certificate behind a free project — so the operating system will object the
+first time:
+
+- **macOS** says the app "is damaged" or cannot be opened. It is not damaged; it is
+  unsigned. Right-click the app in Applications → **Open** → **Open**, or run
+  `xattr -dr com.apple.quarantine /Applications/Neo.app` once.
+- **Windows** shows a SmartScreen warning. **More info** → **Run anyway**.
+
+If you would rather not run an unsigned binary — entirely reasonable — build it yourself
+from source with `npm run dist`, which is three commands below and produces the same thing.
+
+## Run it from source
 
 You need [Node.js](https://nodejs.org/) 22 or newer. That is the whole list — there is no
 database server to install, no Docker, no backend to run in a second terminal.
 
 ```bash
-git clone https://github.com/johannett321/neo.git
+git clone https://github.com/Johannett321/neo.git
 cd neo
 npm install && npm run dev
 ```
@@ -485,9 +511,14 @@ npm run verify:upgrade  # open a database written by an older version
 ```
 
 `npm run dist` produces a `.dmg` and a `.zip` on macOS, an NSIS installer on Windows and
-an AppImage on Linux. It is developed on macOS, which is where the window chrome, the
-menu bar and the icon pipeline have actually been exercised; the other two build from the
-same source but have had far less use, and reports are welcome.
+an AppImage on Linux, for whichever platform you run it on. It is developed on macOS,
+which is where the window chrome, the menu bar and the icon pipeline have actually been
+exercised; the other two build from the same source but have had far less use, and
+reports are welcome.
+
+Releases are built by GitHub Actions on native runners for all three platforms —
+`.github/workflows/release.yml`, triggered by pushing a `v*` tag. `ci.yml` runs the
+typecheck and both verify scripts on every push and pull request.
 
 Settings has no reset button: emptying the database is a thing you do to the data folder,
 not something to leave a click away from your own work.

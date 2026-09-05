@@ -14,7 +14,7 @@ Node.js 22 or newer. Nothing else — the database is embedded, so there is no s
 start.
 
 ```bash
-git clone https://github.com/johannett321/neo.git
+git clone https://github.com/Johannett321/neo.git
 cd neo
 npm install && npm run dev
 ```

@@ -5,13 +5,13 @@
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",
   "license": "MIT",
-  "homepage": "https://github.com/johannett321/neo#readme",
+  "homepage": "https://github.com/Johannett321/neo#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/johannett321/neo.git"
+    "url": "git+https://github.com/Johannett321/neo.git"
   },
   "bugs": {
-    "url": "https://github.com/johannett321/neo/issues"
+    "url": "https://github.com/Johannett321/neo/issues"
   },
   "keywords": [
     "electron",
