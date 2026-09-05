@@ -110,7 +110,7 @@ and history, which is what every screenshot below is showing.
 <table>
 <tr>
 <td width="50%"><img src="docs/screenshots/03-projects.png" alt="Projects"><br><b>Projects</b><br>One card each, with what is overdue and how long since you last touched it. No status field to keep up to date — the card works it out.</td>
-<td width="50%"><img src="docs/screenshots/04-project-today.png" alt="Re-entry brief"><br><b>Re-entry</b><br>Opening a project you have been away from starts with what changed while you were gone, then the log, the links and the cast.</td>
+<td width="50%"><img src="docs/screenshots/04-project-today.png" alt="Re-entry brief"><br><b>Re-entry</b><br>Opening a project you have been away from starts with what changed while you were gone, then where it stands in one sentence, then the work that is actually late or due.</td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/05-kanban.png" alt="Board"><br><b>The board</b><br>Tasks, delegated items and commitments in the same lane. Ticking one off moves it to Done; moving it to Done ticks it off.</td>
@@ -207,8 +207,19 @@ you are in there the navigation is **Today, Kanban, Meetings, Notes, Decisions, 
 with **Project settings** at the bottom, and nothing else. One thing at a time is the
 point.
 
-A project's Today is its front page — the re-entry brief, the links hub, what it is
-asking for, and the log. Project settings is everything *about* the project rather than in it: its
+A project's Today is its front page, and it is one argument read top to bottom: what
+changed while you were away, where the project stands **in a single sentence**, and then
+the work that is actually late or due. The sentence is the derived attention reason
+promoted out of a list and finished into prose — "2 overdue items, oldest 2 days past
+due", "Nothing is late, but 4 to-dos agreed in a meeting are still open" — under it the
+run-up bar, and under that the two or three numbers you would otherwise open the board to
+find. Overdue, due today and the next seven days then use the same headings and the same
+rows as the workspace's Today, so the two screens are one habit rather than two
+dashboards. Everything that is reference rather than news — the links hub, the cast, the
+activity trail — sits in the rail at rail weight, and the log's composer stays folded
+until you ask for it: reading a project is the common case, writing to it is the rare one.
+
+Project settings is everything *about* the project rather than in it: its
 icon, name and one-line summary, the hat you wear, its status, and archiving or deleting
 it. That split keeps configuration out of a header you look at all day.
 

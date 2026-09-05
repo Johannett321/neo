@@ -3,7 +3,7 @@ import type { Link, LinkKind } from '@shared/types'
 import { openExternal, useApiMutation } from '@/lib/api'
 import { differs, LINK_KIND_LABEL } from '@/lib/format'
 import { Icon, type IconName } from '@/components/Icon'
-import { ConfirmDialog, EmptyState, Field, Modal, Section } from '@/components/primitives'
+import { ConfirmDialog, Field, Modal, Section } from '@/components/primitives'
 import { useContextMenu } from '@/lib/contextMenu'
 
 const KIND_ICON: Record<LinkKind, IconName> = {
@@ -41,11 +41,18 @@ export function LinksPanel({ projectId, links }: { projectId: string; links: Lin
       }
     >
       {links.length === 0 ? (
-        <EmptyState
-          icon="link"
-          title="No links yet."
-          hint="The board, the repo, the Figma file, the client's folder — whatever you keep hunting for."
-        />
+        /*
+          A rail is not the place for a full empty state. This one used to be a dashed
+          box with a heading and a paragraph in it — two hundred pixels of the quietest
+          column on the page spent saying that nothing is there. One line that is also
+          the button says the same thing and asks for nothing.
+        */
+        <button
+          className="hairline row-hover block w-full rounded-box border border-dashed px-3 py-2.5 text-left text-[11.5px] leading-snug text-base-content/45"
+          onClick={() => setAdding(true)}
+        >
+          The board, the repo, the Figma file — whatever you keep hunting for.
+        </button>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {links.map((link) => (
