@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { formatDate, plural, relativeFromIso } from '@/lib/format'
+import { DeadlineBar } from '@/components/DeadlineBar'
 import { Icon } from '@/components/Icon'
 import { Avatar, Panel, Section } from '@/components/primitives'
 import { RoleBadges } from '@/components/RoleInput'
@@ -20,6 +21,7 @@ export function ProjectToday(): React.JSX.Element {
   // it is not a card, so no board holds it, and it carries no date, so nothing calls
   // it late.
   const owing = meetings.reduce((total, m) => total + m.openTodos, 0)
+  const owingMeetings = meetings.filter((m) => m.openTodos > 0)
 
   return (
     <>
@@ -33,6 +35,55 @@ export function ProjectToday(): React.JSX.Element {
         </div>
 
         <div className="min-w-0">
+          {owingMeetings.length > 0 && (
+            <Section title="Open to-dos from meetings" count={owing} tone="danger">
+              <Panel padded={false}>
+                {owingMeetings.map((meeting) => (
+                  <Link
+                    key={meeting.id}
+                    to={`/projects/${project.id}/meetings/${meeting.id}`}
+                    className="row-hover hairline block border-b px-3 py-2.5 last:border-b-0"
+                  >
+                    <span className="flex items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[13px]">
+                        {meeting.title || 'Meeting'}
+                      </span>
+                      <span className="owing-text shrink-0 text-[11px] font-medium tabular-nums">
+                        {meeting.openTodos}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-base-content/45">
+                      {formatDate(meeting.occurredOn)} ·{' '}
+                      {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
+                    </span>
+                  </Link>
+                ))}
+              </Panel>
+            </Section>
+          )}
+
+          {/*
+            How much of the run-up has gone, measured from the day the project was
+            created rather than from nothing — the same bar the project cards carry,
+            so the answer does not change depending on which screen you read it from.
+            A project with no deadline has no run-up, and gets no bar rather than an
+            empty one.
+          */}
+          {project.deadline && (
+            <Section title="Progress">
+              <Panel>
+                <DeadlineBar
+                  deadline={project.deadline}
+                  createdAt={project.createdAt}
+                  color={project.color || project.workspaceColor}
+                />
+                <p className="mt-2 text-[11px] text-base-content/45">
+                  Since {formatDate(project.createdAt.slice(0, 10))}
+                </p>
+              </Panel>
+            </Section>
+          )}
+
           <LinksPanel projectId={project.id} links={links} />
 
           <Section title="At a glance">
@@ -41,7 +92,6 @@ export function ProjectToday(): React.JSX.Element {
                 {[
                   ['Deadline', project.deadline ? formatDate(project.deadline) : 'None set'],
                   ['Overdue', project.overdueTasks > 0 ? `${project.overdueTasks}` : 'None'],
-                  ['Open to-dos', owing > 0 ? `${owing}` : 'None'],
                   ['Next due', project.nextDue ? formatDate(project.nextDue) : 'Nothing dated'],
                   ['Last meeting', lastMeeting ? formatDate(lastMeeting.occurredOn) : 'None recorded'],
                   ['Last opened', relativeFromIso(project.previousOpenedAt ?? project.lastOpenedAt)]
@@ -50,8 +100,7 @@ export function ProjectToday(): React.JSX.Element {
                     <dt className="text-base-content/45">{label}</dt>
                     <dd
                       className={`truncate text-right ${
-                        (label === 'Overdue' && project.overdueTasks > 0) ||
-                        (label === 'Open to-dos' && owing > 0)
+                        label === 'Overdue' && project.overdueTasks > 0
                           ? 'font-medium text-error'
                           : ''
                       }`}

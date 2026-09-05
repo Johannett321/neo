@@ -23,7 +23,6 @@ export function ProjectMeetings(): React.JSX.Element {
   const navigate = useNavigate()
   const href = (meetingId: string): string => `/projects/${project.id}/meetings/${meetingId}`
 
-  const last = meetings[0]
   const owing = meetings.reduce((total, m) => total + m.openTodos, 0)
 
   return (
@@ -33,13 +32,13 @@ export function ProjectMeetings(): React.JSX.Element {
           <Icon name="plus" size={13} />
           Log a meeting
         </Link>
-        {last && (
-          <span className="text-[11px] text-base-content/40">
-            Last one {formatDate(last.occurredOn)} · {plural(last.attendees.length, 'person', 'people')}
-          </span>
-        )}
+        {/*
+          When the last meeting was and who was in it are both on the rows below, and
+          neither is something you act on. What is still owed is, so it is the only
+          thing standing next to the button.
+        */}
         {owing > 0 && (
-          <span className="badge badge-error badge-sm gap-1 font-medium">
+          <span className="owing badge badge-sm gap-1 font-medium">
             <Icon name="checkbox" size={11} />
             {plural(owing, 'open to-do', 'open to-dos')}
           </span>
@@ -79,7 +78,7 @@ export function ProjectMeetings(): React.JSX.Element {
               <div className="flex items-baseline gap-3">
                 <span className="flex-1 truncate text-[13px] font-medium">{meeting.title || 'Meeting'}</span>
                 {meeting.openTodos > 0 && (
-                  <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-error/12 px-2 py-px text-[10.5px] font-medium text-error">
+                  <span className="owing-soft flex shrink-0 items-center gap-1.5 rounded-full px-2 py-px text-[10.5px] font-medium">
                     <Icon name="checkbox" size={10} />
                     {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
                   </span>

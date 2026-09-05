@@ -174,6 +174,36 @@ summary,
   background-image: linear-gradient(135deg, var(--color-brand-from), var(--color-brand-to));
 }
 
+/*
+ * A true red, for the one thing on a project that nothing else will ever raise.
+ *
+ * `error` is the icon's own rose (hue 18). As thin text — an overdue date, a count —
+ * it reads correctly, but a *filled* block of it comes out pink, which is the wrong
+ * register entirely for "you have not closed these". This is the same warning moved
+ * to a redder hue and a darker fill, used only where the colour is the whole point.
+ */
+:root {
+  --color-owing: oklch(51% 0.215 27);
+  --color-owing-content: oklch(99% 0 0);
+}
+:root[data-theme='pmdark'] {
+  --color-owing: oklch(58% 0.195 27);
+  --color-owing-content: oklch(99% 0 0);
+}
+
+.owing {
+  background-color: var(--color-owing);
+  color: var(--color-owing-content);
+  border-color: transparent;
+}
+.owing-text {
+  color: var(--color-owing);
+}
+.owing-soft {
+  background-color: color-mix(in oklch, var(--color-owing) 14%, transparent);
+  color: var(--color-owing);
+}
+
 /* Hairlines carry the structure, so borders never need to shout. */
 .hairline {
   border-color: color-mix(in oklch, var(--color-base-content) 9%, transparent);
