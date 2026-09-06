@@ -463,7 +463,7 @@ export function AssistantPanel(): React.JSX.Element {
       {open && (
         <motion.aside
           ref={ref}
-          className="hairline relative flex shrink-0 flex-col overflow-hidden border-l bg-base-100"
+          className="glass-chrome hairline relative flex shrink-0 flex-col overflow-hidden border-l bg-base-100"
           initial={{ width: reduceMotion ? width : 0 }}
           // While dragging the width *is* the pointer, so animating towards it would
           // only ever lag behind the hand moving it.

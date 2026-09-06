@@ -181,7 +181,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }): Reac
       data-context-menu
       role="menu"
       style={{ left: x, top: y, width: WIDTH, transformOrigin: 'top left' }}
-      className="hairline fixed z-[81] overflow-hidden rounded-box border bg-base-100 py-1 shadow-xl shadow-black/15"
+      className="glass-raised hairline fixed z-[81] overflow-hidden rounded-box border bg-base-100 py-1 shadow-xl shadow-black/15"
       {...extra}
     >
       {children}
@@ -210,7 +210,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }): Reac
       item.items.map((action, i) => row(action, i, expanded)),
       {
         className:
-          'hairline fixed z-[82] overflow-hidden rounded-box border bg-base-100 py-1 shadow-xl shadow-black/15',
+          'glass-raised hairline fixed z-[82] overflow-hidden rounded-box border bg-base-100 py-1 shadow-xl shadow-black/15',
         onMouseEnter: () => expand(expanded),
         onMouseLeave: collapseSoon
       }

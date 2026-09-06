@@ -9,10 +9,18 @@ import { THRESHOLDS } from '../lib/attention'
 import { mirrorAll } from '../lib/markdown'
 import { loadSampleData } from '../lib/sample'
 import { recordingDir } from '../lib/recording/store'
+import { setGlass } from '../lib/glass'
 import { handle } from './util'
 
 const DEFAULTS = {
   theme: 'system' as const,
+  /*
+   * Enough that the desktop is unmistakably there and not so much that a note is
+   * read against somebody's photograph. It is the amount, not the material: at zero
+   * the Liquid Glass theme still has a vibrancy view under it, and nothing gets
+   * through.
+   */
+  glassTransparency: 45,
   staleAfterDays: THRESHOLDS.stillAfterDays,
   horizonDays: 21,
   sidebarWidth: PANELS.sidebar.default,
@@ -43,6 +51,9 @@ async function readSettings(): Promise<Settings> {
     activeWorkspaceId,
     onboardedAt: stored.onboardedAt ?? '',
     theme: (stored.theme as Settings['theme']) ?? DEFAULTS.theme,
+    // Clamped on the way out rather than on the way in: a number that predates the
+    // slider, or one typed into the database by hand, still has to draw something.
+    glassTransparency: Math.min(100, Math.max(0, num('glassTransparency', DEFAULTS.glassTransparency))),
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
     sidebarWidth: num('sidebarWidth', DEFAULTS.sidebarWidth),
@@ -107,6 +118,14 @@ export function registerSettingsHandlers(): void {
     await db().exec(DDL)
     for (const statement of MIGRATIONS) await db().query(statement)
   })
+
+  /*
+   * The theme's other half, and the half that can fail. It is a channel rather than
+   * something `settings:save` does on the way past because what comes back is not the
+   * setting: it is what this machine could actually give, which the screen has to say
+   * out loud.
+   */
+  handle('window:glass', ({ on }) => ({ material: setGlass(on) }))
 
   handle('shell:openExternal', async ({ url }) => {
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

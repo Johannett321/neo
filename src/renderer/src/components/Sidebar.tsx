@@ -49,7 +49,7 @@ export function Sidebar(): React.JSX.Element {
   return (
     <aside
       ref={ref}
-      className="hairline relative flex shrink-0 flex-col border-r transition-[background-color] duration-500 ease-out"
+      className="sidebar-surface glass-chrome hairline relative flex shrink-0 flex-col border-r transition-[background-color] duration-500 ease-out"
       style={{
         width,
         /*
@@ -59,8 +59,12 @@ export function Sidebar(): React.JSX.Element {
          * still a surface the sidebar's own text and marks have to read against, which
          * is what keeps this a mix into base-200 rather than the colour itself.
          */
-        backgroundColor: `color-mix(in oklch, ${tint} 30%, var(--color-base-200))`
-      }}
+        //
+        // A custom property rather than the background itself, because Liquid Glass
+        // has to make this same colour translucent and an inline style is the one
+        // thing a stylesheet cannot argue with. `.sidebar-surface` paints it.
+        ['--glass-tint' as string]: `color-mix(in oklch, ${tint} 30%, var(--color-base-200))`
+      } as React.CSSProperties}
     >
       <PanelResizeHandle
         side="left"
@@ -127,7 +131,7 @@ export function Sidebar(): React.JSX.Element {
             to={`/projects/${projectId}/settings`}
             className={({ isActive }) =>
               `flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
-                isActive ? 'bg-base-100 font-medium shadow-sm' : 'text-base-content/60 hover:bg-base-content/5'
+                isActive ? 'glass-lift bg-base-100 font-medium shadow-sm' : 'text-base-content/60 hover:bg-base-content/5'
               }`
             }
           >
@@ -144,7 +148,7 @@ export function Sidebar(): React.JSX.Element {
 const linkClass = ({ isActive }: { isActive: boolean }): string =>
   `mb-0.5 flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
     isActive
-      ? 'bg-base-100 font-medium text-base-content shadow-sm'
+      ? 'glass-lift bg-base-100 font-medium text-base-content shadow-sm'
       : 'text-base-content/65 hover:bg-base-content/5'
   }`
 
@@ -302,7 +306,7 @@ function WorkspaceSwitcher(): React.JSX.Element {
         <>
           {/* Click anywhere to dismiss, without stealing focus from the menu itself. */}
           <div className="fixed inset-0 z-40" onClick={close} />
-          <div className="rise hairline absolute bottom-[calc(100%-0.25rem)] left-2 right-2 z-50 overflow-hidden rounded-box border bg-base-100 shadow-xl shadow-black/10">
+          <div className="glass-raised rise hairline absolute bottom-[calc(100%-0.25rem)] left-2 right-2 z-50 overflow-hidden rounded-box border bg-base-100 shadow-xl shadow-black/10">
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-base-content/35">
               Switch workspace
             </div>

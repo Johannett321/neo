@@ -165,6 +165,40 @@ what needs changing can send you to the pane itself rather than to the front of 
 screen with an instruction to go and find it — which is how the assistant's "no key yet"
 panel behaves.
 
+### Themes, and Liquid Glass
+
+Light, Dark and System are what they say: a palette, chosen once in **Settings →
+Appearance** and then forgotten. They are picked from four cards, each one the app
+drawn in miniature in that theme's own colours — the Dark card is dark while you are
+sitting in Light, because a swatch that agreed with the window it was in would be
+showing you nothing you did not already know.
+
+**Liquid Glass** is the fourth, and it is not a fourth palette. It is a *material*: the
+colours still follow macOS exactly as System does, and what changes is the window,
+which becomes a pane of glass with your desktop behind it. It follows Apple's own rule
+about where glass belongs — the sidebar, the toolbar, menus, dialogs and the sheet the
+page is read on are glass, and the content sitting on that sheet is not. A note stays
+on something solid. Chrome floats.
+
+It comes with a **transparency slider**, from frosted to clear, because how much of
+your desktop you want to see through your work is not something anybody else can pick
+for you: a plain wallpaper takes far more of it than a photograph does. Nothing else in
+the app has a slider, and this earns one for the same reason a panel width does — there
+is no right answer, only yours. Neither end of it is the app as the other three themes
+draw it: at *frosted* the desktop is already a suggestion of colour behind a thick pane,
+and at *clear* it is a thin pane you read the wallpaper through — still a pane, because
+text has to sit on something. Choosing the theme is what turns the glass on; the slider
+only says how thick it is.
+
+Three honest limits. Only an operating system can blur what is *behind* a window, so on
+anything that is not macOS or Windows 11 the app frosts a backdrop of its own instead
+and says so under the slider rather than promising a desktop it cannot show you.
+Turning on **Reduce transparency** in macOS accessibility settings overrides the slider
+and frosts the glass solid, which is the whole point of that setting. And the glass
+stays glass when the window is not the one you are typing in — macOS's own instinct is
+to flatten it to grey, and a window you chose in order to see past is exactly the window
+that should not do that.
+
 ### The first launch
 The app opens the first time on an introduction rather than a form: what this is for,
 the three questions above, and the one constraint everything else follows from — it has

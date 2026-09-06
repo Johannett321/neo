@@ -106,12 +106,12 @@ function Shell(): React.JSX.Element {
   }, [onKeyDown])
 
   return (
-    <div className="flex h-full bg-base-100 text-base-content">
+    <div className="glass-window flex h-full bg-base-100 text-base-content">
       <Sidebar />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
         {!writing && (
-          <header className="drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
+          <header className="glass-chrome drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
             <button
               className="hairline flex h-8 w-full max-w-md items-center gap-2 rounded-field border bg-base-200/60 px-3 text-left text-[13px] text-base-content/40 transition hover:bg-base-200"
               onClick={() => setPaletteOpen(true)}
@@ -144,7 +144,7 @@ function Shell(): React.JSX.Element {
           </header>
         )}
 
-        <main className={`min-h-0 flex-1 ${writing ? '' : 'scroll-area'}`} ref={scroller}>
+        <main className={`glass-page min-h-0 flex-1 ${writing ? '' : 'scroll-area'}`} ref={scroller}>
           {/* A board should use the whole window; reading screens stay a comfortable width. */}
           <div
             className={
@@ -270,7 +270,7 @@ function Gate(): React.JSX.Element {
     )
   }, [firstRun, ready, settings.data, workspaces.length, archived.length])
 
-  if (!ready || firstRun === null) return <div className="h-full bg-base-100" />
+  if (!ready || firstRun === null) return <div className="glass-window h-full bg-base-100" />
   if (firstRun) return <Welcome onDone={() => setFirstRun(false)} />
   if (!active) return <Onboarding />
   return (

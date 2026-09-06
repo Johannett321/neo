@@ -193,7 +193,7 @@ export function Modal({
       }}
     >
       <div
-        className={`rise hairline relative w-full ${width} rounded-box border bg-base-100 shadow-2xl shadow-black/10`}
+        className={`glass-raised rise hairline relative w-full ${width} rounded-box border bg-base-100 shadow-2xl shadow-black/10`}
         role="dialog"
         aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}
@@ -240,7 +240,7 @@ export function Modal({
 
         {confirming && (
           <div className="absolute inset-0 z-10 flex items-center justify-center p-6">
-            <div className="rise hairline w-[19rem] rounded-box border bg-base-100 p-4 text-center shadow-xl shadow-black/15">
+            <div className="glass-raised rise hairline w-[19rem] rounded-box border bg-base-100 p-4 text-center shadow-xl shadow-black/15">
               <h4 className="text-sm font-semibold">Discard your changes?</h4>
               <p className="mt-1 text-[12px] leading-relaxed text-base-content/55">
                 What you have typed here has not been saved.
@@ -372,7 +372,7 @@ export function ConfirmDialog({
       }}
     >
       <div
-        className="rise hairline w-full max-w-sm rounded-box border bg-base-100 p-5 shadow-2xl shadow-black/20"
+        className="glass-raised rise hairline w-full max-w-sm rounded-box border bg-base-100 p-5 shadow-2xl shadow-black/20"
         role="alertdialog"
         aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}

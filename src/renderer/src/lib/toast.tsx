@@ -61,7 +61,7 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
               transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
               className="pointer-events-auto"
             >
-              <div className="hairline flex items-start gap-3 rounded-box border bg-base-100 px-3.5 py-3 shadow-xl shadow-black/10">
+              <div className="glass-raised hairline flex items-start gap-3 rounded-box border bg-base-100 px-3.5 py-3 shadow-xl shadow-black/10">
                 <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-success/12 text-success">
                   <Icon name={toast.icon ?? 'check'} size={13} strokeWidth={2.2} />
                 </span>

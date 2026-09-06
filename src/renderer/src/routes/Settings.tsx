@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
-import { useTheme, THEMES } from '@/lib/theme'
+import { useTheme, THEMES, type Theme } from '@/lib/theme'
 import { formatBytes } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
@@ -394,31 +394,244 @@ function ProfilePane(): React.JSX.Element {
   )
 }
 
+/**
+ * A theme is a thing you look at, so it is chosen by looking at it. Each card is the
+ * app in miniature — the column, the bar, the sheet the page is read on — drawn in
+ * that theme's own colours rather than the running one's, which is the whole point:
+ * the Dark card has to be dark while you are sitting in Light or it is not showing
+ * you anything you did not already know.
+ *
+ * The colours below are written out rather than taken from the theme tokens for the
+ * same reason. They are an illustration, not a surface, and three of them are always
+ * the wrong theme for the window they are in.
+ */
+const PREVIEW = {
+  light: { chrome: '#f3f3f5', page: '#ffffff', line: 'rgba(20,20,26,0.10)', bar: 'rgba(20,20,26,0.14)' },
+  dark: { chrome: '#232429', page: '#191a1e', line: 'rgba(255,255,255,0.10)', bar: 'rgba(255,255,255,0.17)' }
+} as const
+
+/** The one thing in the picker that is a photograph's stand-in rather than a colour. */
+const WALLPAPER = 'linear-gradient(135deg, #5b63f5 0%, #b34fb0 46%, #f0913c 100%)'
+
+function Bars({ tone, widths, gap = 5 }: { tone: string; widths: number[]; gap?: number }): React.JSX.Element {
+  return (
+    <div className="flex flex-col" style={{ gap }}>
+      {widths.map((w, i) => (
+        <div key={i} style={{ height: 3, width: `${w}%`, borderRadius: 2, background: tone }} />
+      ))}
+    </div>
+  )
+}
+
+/** One flat theme, drawn as the app: sidebar, toolbar, and a page of rows. */
+function FlatPreview({ mode }: { mode: 'light' | 'dark' }): React.JSX.Element {
+  const c = PREVIEW[mode]
+  return (
+    <div className="flex h-full w-full" style={{ background: c.page }}>
+      <div
+        className="flex h-full flex-col justify-start p-2"
+        style={{ width: '34%', background: c.chrome, borderRight: `1px solid ${c.line}` }}
+      >
+        <div style={{ height: 5, width: '55%', borderRadius: 2, background: c.bar, marginBottom: 8 }} />
+        <Bars tone={c.bar} widths={[80, 62, 70]} />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div style={{ height: 12, borderBottom: `1px solid ${c.line}` }} />
+        <div className="flex-1 p-2">
+          <Bars tone={c.bar} widths={[68, 90, 44]} gap={6} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The glass, and it is the real material rather than a picture of one: the wallpaper
+ * is painted *inside* the card, so `backdrop-filter` has something in the document to
+ * blur and the preview frosts for the same reason the app does. It reads the amount
+ * you are dragging, so the slider below has something to answer to.
+ */
+function GlassPreview({ strength }: { strength: number }): React.JSX.Element {
+  // The same two curves the material uses, at the same two ends — including the near
+  // one, where the glass is frosted rather than absent. A preview gentler than the
+  // thing it previews is a preview that lies about both ends of the slider.
+  const chrome = Math.max(0, 0.34 - 0.32 * strength)
+  const page = Math.max(0, 0.51 - 0.43 * strength)
+  const blur = 7 + 5 * strength
+  return (
+    <div className="relative h-full w-full" style={{ background: WALLPAPER }}>
+      <div
+        className="absolute inset-y-0 left-0 flex flex-col p-2"
+        style={{
+          width: '34%',
+          background: `rgba(255,255,255,${chrome})`,
+          backdropFilter: `blur(${blur}px) saturate(1.8)`,
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
+        }}
+      >
+        <div
+          style={{ height: 5, width: '55%', borderRadius: 2, background: 'rgba(20,20,26,0.34)', marginBottom: 8 }}
+        />
+        <Bars tone="rgba(20,20,26,0.28)" widths={[80, 62, 70]} />
+      </div>
+      <div
+        className="absolute inset-y-0 right-0 flex flex-col"
+        style={{
+          left: '34%',
+          background: `rgba(255,255,255,${page})`,
+          backdropFilter: `blur(${blur}px) saturate(1.8)`
+        }}
+      >
+        <div style={{ height: 12, borderBottom: '1px solid rgba(20,20,26,0.10)' }} />
+        <div className="flex-1 p-2">
+          <Bars tone="rgba(20,20,26,0.24)" widths={[68, 90, 44]} gap={6} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** System is both, cut on the diagonal, because that is exactly what it gives you. */
+function SystemPreview(): React.JSX.Element {
+  return (
+    <div className="relative h-full w-full">
+      <FlatPreview mode="light" />
+      <div
+        className="absolute inset-0"
+        style={{ clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }}
+      >
+        <FlatPreview mode="dark" />
+      </div>
+    </div>
+  )
+}
+
+function ThemePreview({ value, strength }: { value: Theme; strength: number }): React.JSX.Element {
+  if (value === 'light') return <FlatPreview mode="light" />
+  if (value === 'dark') return <FlatPreview mode="dark" />
+  if (value === 'system') return <SystemPreview />
+  return <GlassPreview strength={strength} />
+}
+
+const THEME_NOTE: Record<Theme, string> = {
+  light: 'Light whatever the machine is set to.',
+  dark: 'Dark whatever the machine is set to.',
+  system: 'Follows macOS, and changes with it while the app is open.',
+  glass: 'The window itself becomes glass. Colours still follow macOS; only the material changes.'
+}
+
 /** The theme lives here rather than in the top bar: you set it once and forget it. */
 function AppearancePane(): React.JSX.Element {
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme, transparency, setTransparency, material } = useTheme()
+
+  /*
+   * The amount you are dragging, before it is a setting. Committed on pointer-up
+   * exactly as a panel width is: a slider fires per pixel, and every one of those
+   * would be a write and a full cache invalidation. The custom property is set on
+   * every move regardless, so the window changes under the handle rather than when
+   * you let go of it.
+   */
+  const [dragged, setDragged] = useState<number | null>(null)
+  const shown = dragged ?? transparency
+
+  const preview = (n: number): void => {
+    setDragged(n)
+    document.documentElement.style.setProperty('--glass-set', String(n / 100))
+  }
+  const commit = (): void => {
+    if (dragged === null) return
+    setTransparency(dragged)
+    setDragged(null)
+  }
 
   return (
     <Panel>
-      <Field label="Theme" hint="System follows macOS, and changes with it while the app is open.">
-        <div className="flex flex-wrap gap-2 pt-1">
-          {THEMES.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => setTheme(option.value)}
-              className={`hairline flex items-center gap-2 rounded-field border px-3 py-2 text-[13px] transition ${
-                theme === option.value
-                  ? 'border-primary/50 bg-primary/[0.06] font-medium'
-                  : 'text-base-content/65 hover:bg-base-200'
-              }`}
-            >
-              <Icon name={option.icon} size={15} className="opacity-70" />
-              {option.label}
-              {theme === option.value && <Icon name="check" size={13} className="text-primary" />}
-            </button>
-          ))}
+      <Field label="Theme" hint={THEME_NOTE[theme]}>
+        <div className="grid grid-cols-2 gap-3 pt-1">
+          {THEMES.map((option) => {
+            const selected = theme === option.value
+            return (
+              <button
+                key={option.value}
+                onClick={() => setTheme(option.value)}
+                aria-pressed={selected}
+                className={`rounded-box border p-2 text-left transition ${
+                  selected
+                    ? 'border-primary ring-2 ring-primary/25'
+                    : 'hairline hover:border-base-content/25'
+                }`}
+              >
+                <div
+                  className="hairline aspect-[16/10] w-full overflow-hidden rounded-[7px] border"
+                  aria-hidden
+                >
+                  <ThemePreview value={option.value} strength={shown / 100} />
+                </div>
+                <div className="mt-2 flex items-center gap-2 px-0.5 pb-0.5">
+                  {/*
+                    A drawn radio and not an <input>: the whole card is the control, so
+                    a second focusable thing inside it would be a second tab stop for
+                    the same choice. It says which one is on; the button does the work.
+                  */}
+                  <span
+                    className={`flex size-[14px] shrink-0 items-center justify-center rounded-full border transition ${
+                      selected ? 'border-primary bg-primary' : 'border-base-content/30'
+                    }`}
+                  >
+                    {selected && <span className="size-[5px] rounded-full bg-primary-content" />}
+                  </span>
+                  <span className={`text-[13px] ${selected ? 'font-medium' : 'text-base-content/70'}`}>
+                    {option.label}
+                  </span>
+                </div>
+              </button>
+            )
+          })}
         </div>
       </Field>
+
+      {/*
+        Only under glass, because it is the only theme it means anything to. It is the
+        amount, not the material: at nothing at all the window is still a pane of
+        glass, and nothing gets through it.
+      */}
+      {theme === 'glass' && (
+        <div className="mt-6">
+          <Field
+            label="Transparency"
+            hint={
+              material === 'paint'
+                ? 'This machine cannot show the desktop through a window, so the app frosts a backdrop of its own instead.'
+                : 'How much of the desktop behind the window comes through the sidebar, the toolbar and the page. Even at the far end it is a thin pane rather than no pane: text has to sit on something.'
+            }
+          >
+            <div className="flex items-center gap-3 pt-1">
+              <span className="w-14 shrink-0 text-[11px] text-base-content/40">Frosted</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={shown}
+                onChange={(e) => preview(Number(e.target.value))}
+                onPointerUp={commit}
+                onKeyUp={commit}
+                onBlur={commit}
+                className="range range-xs range-primary flex-1"
+                aria-label="Transparency"
+              />
+              <span className="w-14 shrink-0 text-right text-[11px] text-base-content/40">Clear</span>
+              <span className="w-10 shrink-0 text-right text-[12px] tabular-nums text-base-content/60">
+                {shown}%
+              </span>
+            </div>
+          </Field>
+          <p className="mt-3 text-[11px] leading-relaxed text-base-content/40">
+            Turning on Reduce transparency in macOS accessibility settings overrides this
+            and frosts the glass solid.
+          </p>
+        </div>
+      )}
     </Panel>
   )
 }

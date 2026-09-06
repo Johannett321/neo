@@ -1035,6 +1035,33 @@ async function main(): Promise<void> {
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
   ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
 
+  /*
+   * Liquid Glass is a theme like any other as far as the database is concerned, and
+   * one number beside it. The number is clamped on the way out rather than on the way
+   * in, so a value written before the slider existed — or by hand — still draws.
+   */
+  ok('the glass amount defaults before it is ever set',
+     settings.glassTransparency === 45, String(settings.glassTransparency))
+  const glass = await call('settings:save', { theme: 'glass', glassTransparency: 80 })
+  ok('the glass theme and its amount round-trip',
+     glass.theme === 'glass' && glass.glassTransparency === 80)
+  await call('settings:save', { glassTransparency: 999 as unknown as number })
+  ok('an out-of-range glass amount is clamped rather than drawn',
+     (await call('settings:get')).glassTransparency === 100)
+  await call('settings:save', { theme: 'dark', glassTransparency: 45 })
+
+  /*
+   * Main's half of it. There is no vibrancy view in a headless test — and none on
+   * Linux at all — so what is asserted is the contract rather than the appearance:
+   * it answers with what this machine actually gave, never with what was asked for.
+   */
+  const material = (await call('window:glass', { on: true })).material
+  ok('asking for glass says what was actually got',
+     material === (process.platform === 'darwin' || process.platform === 'win32' ? 'window' : 'paint'),
+     material)
+  ok('turning glass off is never a window material',
+     (await call('window:glass', { on: false })).material === 'paint')
+
   // Every side panel remembers its own width, and each one falls back to its own
   // default rather than to whatever the last panel written happened to be.
   const widths = await call('settings:save', { sidebarWidth: 264, meetingWidth: 380 })

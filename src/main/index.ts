@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, powerMonitor, protocol, session, shell } fr
 import { closeDb, dataRoot, initDb, q } from './db/client'
 import { buildAppMenu } from './menu'
 import { ensureColumnsEverywhere } from './lib/board'
+import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from './lib/glass'
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
@@ -23,6 +24,7 @@ import { registerSearchHandlers } from './ipc/search'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTaskHandlers } from './ipc/tasks'
 import { registerWorkspaceHandlers } from './ipc/workspaces'
+import { invokeChannel } from './ipc/util'
 
 /**
  * The dev server's own URL, set by electron-vite when there is one, and the only
@@ -82,7 +84,29 @@ function createWindow(): BrowserWindow {
     // The traffic lights float over the sidebar; the sidebar reserves room for them.
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 22 },
-    backgroundColor: '#f7f7f8',
+    /*
+     * Clear whatever the theme, and vibrant whatever the theme. Neither can be undone
+     * after the window is built — an opaque window can never be made clear again, and
+     * `visualEffectState` below is read once and never again — so both are settled
+     * here and the theme decides only what gets painted over them. See lib/glass.ts.
+     *
+     * Deliberately *not* `transparent: true`, which was here briefly and had to go.
+     * Chromium cannot run a `backdrop-filter` in a transparent window — there is no
+     * opaque backdrop for it to read — and it fails the way these things always do,
+     * silently: menus and dialogs kept their translucency and quietly lost their
+     * blur, so the command palette sat over the page with every word behind it still
+     * legible. A clear background is enough for the vibrancy view to show through,
+     * and it costs nothing, because the material above it is never absent.
+     */
+    backgroundColor: initialBackground(),
+    vibrancy: initialVibrancy(),
+    /*
+     * The glass stays glass when the window is not the one you are typing in. macOS
+     * turns a vibrancy view off the moment its window stops being key — it goes flat
+     * grey behind whatever you switched to, which is the opposite of what you want
+     * from a window you chose in order to see through it.
+     */
+    visualEffectState: 'active',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -90,6 +114,10 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false
     }
   })
+
+  // Again, and not only through the constructor: `activate` opens a window into an
+  // app that is already running, and Windows has no constructor option for acrylic.
+  applyGlassTo(window)
 
   window.once('ready-to-show', () => window.show())
 
@@ -217,6 +245,8 @@ async function start(): Promise<void> {
   // the database is open: the tools it exposes are the app's own channels.
   await startBridge()
   buildAppMenu()
+  // Read before the window exists rather than told to it afterwards. See createWindow.
+  presetGlass((await invokeChannel('settings:get')).theme)
   createWindow()
 
   app.on('activate', () => {

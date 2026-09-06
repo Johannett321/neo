@@ -188,11 +188,12 @@ export function CommandPalette({
     <div
       // Marks the screen as covered: Escape belongs to whatever is on top of it.
       data-overlay
+      data-modal-backdrop
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 p-6 pt-[12vh] backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
-        className="rise hairline w-full max-w-2xl overflow-hidden rounded-box border bg-base-100 shadow-2xl shadow-black/20"
+        className="glass-raised rise hairline w-full max-w-2xl overflow-hidden rounded-box border bg-base-100 shadow-2xl shadow-black/20"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="hairline flex items-center gap-3 border-b px-4">

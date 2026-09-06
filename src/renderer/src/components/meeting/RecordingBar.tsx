@@ -41,7 +41,7 @@ export function RecordingBar(): React.JSX.Element | null {
     // Absolute within the main column rather than fixed to the window, so it centres
     // on the screen you are reading and never drifts under the assistant panel.
     <div className="pointer-events-none absolute inset-x-0 bottom-5 z-40 flex justify-center">
-      <div className="hairline pointer-events-auto flex items-center gap-3 rounded-full border bg-base-100/95 py-1.5 pl-3.5 pr-1.5 shadow-lg backdrop-blur">
+      <div className="glass-raised hairline pointer-events-auto flex items-center gap-3 rounded-full border bg-base-100/95 py-1.5 pl-3.5 pr-1.5 shadow-lg backdrop-blur">
         <span
           className={`size-2 shrink-0 rounded-full ${
             reconnecting ? 'bg-warning' : stopping ? 'bg-base-content/30' : 'animate-pulse bg-error'

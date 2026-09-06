@@ -275,6 +275,23 @@ export interface ApiMap {
 
   'shell:openExternal': { in: { url: string }; out: void }
 
+  /**
+   * Turn the window itself into glass, or take it back.
+   *
+   * Only an operating system can blur what is *behind* an application — a page's own
+   * `backdrop-filter` cannot see the desktop — so this is main's half of the Liquid
+   * Glass theme, and the half that can fail. macOS gets a vibrancy view under the
+   * web contents and Windows 11 an acrylic backdrop; anywhere else there is nothing
+   * to ask for. Only whether, never how much: the macOS material is fixed for the life
+   * of a window — see `lib/glass.ts` — so the amount is the renderer's paint alone. What comes back is what was actually got, never what was asked for:
+   * `window` means the desktop is showing through, `paint` means it is not and the
+   * renderer draws its own backdrop for the glass to sit on.
+   */
+  'window:glass': {
+    in: { on: boolean }
+    out: { material: 'window' | 'paint' }
+  }
+
   /* -------------------------------------------------------- the Claude connector */
 
   /** Where the Claude Desktop connector stands: installed, connected, or neither. */

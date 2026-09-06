@@ -118,6 +118,16 @@ body,
   height: 100%;
 }
 
+/*
+ * The window itself is created with a clear background — see `lib/glass.ts` for why
+ * it has to be, whatever the theme — so this is what makes every theme but Liquid
+ * Glass opaque. Without it the desktop shows through wherever the shell has not
+ * painted yet, which is nowhere for long but is visible while a screen is arriving.
+ */
+html {
+  background-color: var(--color-base-100);
+}
+
 body {
   font-family: var(--font-sans);
   /* Dates and counts line up in columns. */
@@ -709,4 +719,287 @@ summary,
   .welcome-light {
     animation: none;
   }
+}
+
+/*
+ * ───────────────────────────────────────────────────────────────── Liquid Glass ──
+ *
+ * A material, not a palette. Selecting it leaves `data-theme` saying `pm` or
+ * `pmdark` — it follows the operating system the way "System" does — and adds
+ * `data-glass`, which is the only thing any rule below keys off. That is what keeps
+ * this one block instead of a second and third copy of every token above.
+ *
+ * Apple's own is three things at once: the desktop *lensed* rather than merely
+ * blurred behind the chrome, a lit rim along the top edge where the material catches
+ * the light, and a saturation lift so colour survives the frosting. Only the second
+ * and third are a browser's to give. Blurring what is behind the *window* is the
+ * operating system's job — `backdrop-filter` cannot see past the document — which is
+ * why `window:glass` exists in main and why the attribute carries its answer:
+ *
+ *   [data-glass='window']  the OS is frosting the desktop under us; the app's own
+ *                          surfaces only have to get out of the way.
+ *   [data-glass='paint']   it is not, so the app draws a backdrop of its own and
+ *                          blurs that instead. Honest, and visibly a simulation.
+ *
+ * Which follows the rule Apple states plainly and this app has its own reasons to
+ * keep: glass belongs to the chrome that floats — the sidebar, the toolbar, menus,
+ * dialogs — and never to the content. A note you are reading sits on a sheet, and
+ * the sheet is what floats. Cards stay solid on purpose.
+ */
+[data-glass] {
+  /*
+   * The one control, 0–1, written by the renderer from the stored percentage. It is
+   * read through a fallback rather than used directly so that the accessibility
+   * override below can win: the preference is an inline style, and an inline style
+   * beats a stylesheet — but only for the property it actually sets.
+   */
+  --glass-strength: var(--glass-set, 0.45);
+
+  /*
+   * How much paint each layer keeps once the glass has taken its share.
+   *
+   * Neither end of this is the app as it looks in the other three themes, and the
+   * near end least of all: at nothing at all the material is already *frosted* — the
+   * desktop a suggestion of colour and movement behind a thick pane — because that is
+   * what the word at that end of the slider says and it has to be true. At the far end
+   * it is a thin pane you read the wallpaper through, and still a pane.
+   *
+   * So choosing the theme is what turns the glass on, and the slider only says how
+   * thick it is. All of that thickness is here: the macOS material underneath is the
+   * thinnest one there is and never changes, because it cannot be changed after the
+   * window is built without costing the theme its appearance in every window but the
+   * front one (see `lib/glass.ts`). So this is not the app's share of the material,
+   * it *is* the material's amount, which is why the near end has to be as heavy as it
+   * is. Where thin stops being legible is a judgement only the person looking at
+   * their own desktop can make, which is why what is left is a slider.
+   */
+  --glass-chrome: calc((0.6 - 0.56 * var(--glass-strength)) * 100%);
+  --glass-page: calc((0.78 - 0.7 * var(--glass-strength)) * 100%);
+  /*
+   * Menus and dialogs thin least of anything here, and the command palette is why.
+   * It is a field you type into over whatever you happened to be looking at, and at
+   * anything much thinner the orange of a button behind it comes through the sheet
+   * and lands next to the text you are reading. Glass, but the thick kind.
+   */
+  --glass-raised: calc((0.98 - 0.13 * var(--glass-strength)) * 100%);
+  --glass-card: calc((0.92 - 0.5 * var(--glass-strength)) * 100%);
+  --glass-fill: calc((0.82 - 0.5 * var(--glass-strength)) * 100%);
+
+  /*
+   * The theme's own three surface colours, kept solid.
+   *
+   * Read here, on the element the theme sets them on, and used everywhere below
+   * *instead of* the tokens — because the rule after this one replaces those tokens
+   * with translucent ones, and a sheet mixed from an already-translucent colour would
+   * compound its way to nothing. Custom properties substitute at computed-value time,
+   * so this has to be a different element from the one doing the replacing; that is
+   * why the replacement is on `body` and this is not.
+   */
+  --glass-solid-100: var(--color-base-100);
+  --glass-solid-200: var(--color-base-200);
+  --glass-solid-300: var(--color-base-300);
+}
+
+/*
+ * The one place the material is allowed past the chrome, and it is a concession to
+ * how the app is actually built rather than a change of mind about Apple's rule.
+ *
+ * Content should sit on something solid. But "solid" against a wallpaper reads as a
+ * slab of white paint dropped on a photograph — at the clear end of the slider the
+ * cards were the only opaque thing left on the screen, and they looked like a mistake
+ * rather than a decision. So the surface tokens are made translucent and everything
+ * built out of them — cards, panels, inputs, rows, board columns, the buttons that
+ * are not the primary one — thins with the rest. Ninety-odd call sites, none of which
+ * had to be touched, and none of which can now drift out of step with the material.
+ *
+ * They thin far *less* than the chrome does, and that is the point: a card is still
+ * plainly a card sitting above the page, and at the frosted end it is near enough to
+ * paint. What changes is that at the clear end it is glass too, rather than the one
+ * thing that refused to be.
+ */
+[data-glass] body {
+  --color-base-100: color-mix(in oklch, var(--glass-solid-100) var(--glass-card), transparent);
+  --color-base-200: color-mix(in oklch, var(--glass-solid-200) var(--glass-fill), transparent);
+  --color-base-300: color-mix(in oklch, var(--glass-solid-300) var(--glass-fill), transparent);
+
+  --glass-blur: calc(23px + 17px * var(--glass-strength));
+  /* The lit edge, and the shadow under it. Both grow with the amount, because a
+     thinner material catches more of an edge and less of a face. */
+  --glass-rim: color-mix(in oklch, white calc(49% + 23% * var(--glass-strength)), transparent);
+  --glass-sheen: calc(12% + 4% * var(--glass-strength));
+  --glass-drop: color-mix(in oklch, black calc(12% + 6% * var(--glass-strength)), transparent);
+}
+
+/*
+ * Not the window you are typing in. See `useTheme` for why this leans clearer rather
+ * than flatter; `min()` is what stops it from running past the end of its own scale.
+ */
+[data-glass][data-glass-idle] {
+  --glass-strength: min(1, calc(var(--glass-set, 0.45) + 0.15));
+}
+
+/* Dark glass is lit from a dimmer room: the rim is a suggestion, not a highlight. */
+[data-theme='pmdark'][data-glass] {
+  --glass-rim: color-mix(in oklch, white calc(16% + 8% * var(--glass-strength)), transparent);
+  --glass-sheen: calc(6% + 2% * var(--glass-strength));
+  --glass-drop: color-mix(in oklch, black calc(27% + 13% * var(--glass-strength)), transparent);
+}
+
+/*
+ * Reduce transparency is not a suggestion, and it cannot be honoured by moving the
+ * slider to nothing: nothing is still glass, which is the whole of the design above.
+ * It takes the paint back to solid instead — the one place the slider itself can
+ * never reach. Overriding the three derived values rather than `--glass-set` is also
+ * what lets it win: the preference is an inline style, and an inline style only beats
+ * a stylesheet over the property it actually sets.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  [data-glass] {
+    --glass-chrome: 100%;
+    --glass-page: 100%;
+    --glass-raised: 100%;
+    --glass-card: 100%;
+    --glass-fill: 100%;
+    --glass-blur: 0px;
+  }
+}
+
+/* Whatever the operating system put under the window is what should be seen. */
+[data-glass],
+[data-glass] body {
+  background-color: transparent;
+}
+
+[data-glass] .glass-window {
+  background-color: transparent;
+}
+
+/*
+ * Nothing behind the window, so the glass is given something to be glass *over*.
+ * Deliberately dim and slow-moving in colour rather than a picture: it stands in for
+ * a desktop, and a stand-in that draws the eye is worse than none.
+ */
+[data-glass='paint'] .glass-window {
+  background-color: var(--glass-solid-300);
+  background-image:
+    radial-gradient(64% 58% at 12% 0%, color-mix(in oklch, var(--color-primary) 16%, transparent), transparent 70%),
+    radial-gradient(58% 62% at 92% 12%, color-mix(in oklch, var(--color-secondary) 14%, transparent), transparent 68%),
+    radial-gradient(70% 66% at 78% 100%, color-mix(in oklch, var(--color-accent) 12%, transparent), transparent 72%);
+}
+
+/*
+ * The sidebar's own tint, painted from the custom property the component sets rather
+ * than from an inline background — which is what lets the rule below make the very
+ * same colour translucent. In every other theme this is the only rule that runs.
+ */
+.sidebar-surface {
+  background-color: var(--glass-tint);
+}
+
+/*
+ * The chrome: the column down the left, the bar across the top, the assistant beside
+ * the page. `--glass-tint` is whatever the surface was already tinted with — the
+ * sidebar carries the project's or the workspace's colour — so the tint survives
+ * being made translucent instead of being replaced by a neutral grey.
+ */
+[data-glass] .glass-chrome {
+  background-color: color-mix(
+    in oklch,
+    var(--glass-tint, var(--glass-solid-200)) var(--glass-chrome),
+    transparent
+  );
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklch, white var(--glass-sheen), transparent),
+    transparent 42%
+  );
+  box-shadow: inset 0 1px 0 0 var(--glass-rim);
+}
+
+/* The sheet the page is read on. Solid enough to read against, and no more. */
+[data-glass] .glass-page {
+  background-color: color-mix(in oklch, var(--glass-solid-100) var(--glass-page), transparent);
+}
+
+/*
+ * Menus, dialogs, the palette, the workspace switcher, a toast. These are the one
+ * kind of surface with something *inside the document* behind them, so they are the
+ * one kind whose blur a browser can actually do — everywhere, not only where the
+ * window is doing the rest.
+ */
+[data-glass] .glass-raised {
+  background-color: color-mix(in oklch, var(--glass-solid-100) var(--glass-raised), transparent);
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklch, white var(--glass-sheen), transparent),
+    transparent 55%
+  );
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
+  /* A panel this thin needs its edge drawn for it: a lit rim along the top and a
+     shadow deep enough to read against a page that is itself half wallpaper. */
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-rim),
+    0 24px 56px -14px color-mix(in oklch, black 38%, transparent);
+}
+
+/*
+ * The field behind a dialog is darkened under glass, and its own blur taken away.
+ *
+ * An element with a `backdrop-filter` is a backdrop root: a filter on anything inside
+ * it can only see what that root paints. So the backdrop's two pixels of blur blinded
+ * the dialog's, and the command palette came out a clear sheet with the page legible
+ * straight through it. Clearing the backdrop gives the dialog its blur back.
+ *
+ * The blur cannot simply move down to the backdrop instead — that was tried, and a
+ * full-window `backdrop-filter` does nothing here, while the panel's own works; the
+ * page it would be sampling is itself mostly wallpaper, and the wallpaper is behind
+ * the window rather than in the document. So separation is the one thing left, and
+ * it is done the way a search field over a desktop has always done it: the field goes
+ * dark, and the sheet sits on it lit along its top edge. Getting on for twice the
+ * dimming of the other themes, because there the field is a page and here it is
+ * somebody's photograph.
+ */
+[data-glass] [data-modal-backdrop] {
+  background-color: color-mix(in oklch, black 42%, transparent);
+  /* Both spellings: Tailwind emits the prefixed one, and clearing only the standard
+     property leaves the backdrop root standing with nothing to show for it. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/*
+ * The simulation's extra half. With the desktop showing through, the frosting is
+ * already there and a second blur over transparent pixels buys nothing; with a
+ * painted backdrop it is the whole effect.
+ */
+[data-glass='paint'] .glass-chrome,
+[data-glass='paint'] .glass-page {
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
+}
+
+/*
+ * A 9% hairline is drawn to sit on a surface of a known colour. Over a wallpaper it
+ * is drawn on whatever happens to be behind it, which is sometimes nothing at all.
+ */
+[data-glass] .hairline {
+  border-color: color-mix(in oklch, var(--color-base-content) 15%, transparent);
+}
+
+/*
+ * Where the light lands, so an active row reads as lifted glass rather than a
+ * lighter rectangle. This is the only place the material touches something small,
+ * and it earns it: on the sheet-coloured sidebar these two rows are otherwise the
+ * one thing in the app whose fill has nothing left to contrast with.
+ */
+[data-glass] .glass-lift {
+  background-color: color-mix(
+    in oklch,
+    var(--glass-solid-100) calc((0.7 - 0.25 * var(--glass-strength)) * 100%),
+    transparent
+  );
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-rim),
+    0 1px 2px 0 var(--glass-drop);
 }

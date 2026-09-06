@@ -210,6 +210,44 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   both read the one parser in `lib/markdown.ts`. The editor leaves every character in
   place because you are editing it; the renderer takes the syntax off because you are
   not. Add syntax to the parser, not to either one of them.
+- **Liquid Glass is a material, not a palette.** Selecting it leaves `data-theme`
+  saying `pm` or `pmdark` — it follows the OS the way *System* does — and adds
+  `data-glass` to the same element; every glass rule in `styles.css` keys off that and
+  nothing else. One number drives all of it: the renderer writes `--glass-set`, the
+  stylesheet reads it through a fallback into `--glass-strength` so
+  `prefers-reduced-transparency` can still win over an inline style.
+  The chrome (`.glass-chrome`), the sheet under the page (`.glass-page`) and floating
+  things (`.glass-raised`) thin a lot; the *surface tokens* thin a little, redefined
+  on `body` so `bg-base-100`/`200`/`300` carry alpha and ninety-odd call sites follow
+  without being touched. The solids are captured on `html` first, as
+  `--glass-solid-*`, and every glass surface mixes from those — mixing from a token
+  that has already been thinned compounds to nothing. That is why the capture and the
+  replacement are on different elements.
+  **Three macOS facts hold the rest of it up, all found the hard way:**
+  (1) The vibrancy material is fixed at `hud`, set in the `BrowserWindow`
+  constructor, in *every* theme, and never changed again. `visualEffectState: 'active'`
+  is what stops macOS flattening the glass to grey whenever the window is not key, and
+  Electron reads that option **only at construction** — `setVibrancy()` afterwards
+  builds a fresh effect view without it. A material that followed the slider cost the
+  theme its whole appearance in every window but the front one. So the slider is paint
+  only, and the paint has to carry the frosted end by itself.
+  (2) **Never `transparent: true`.** Chromium cannot run a `backdrop-filter` in a
+  transparent window, and fails silently: menus and dialogs keep their translucency
+  and quietly lose their blur. A clear `backgroundColor` is all the vibrancy view
+  needs. `html { background-color: var(--color-base-100) }` is what makes the other
+  three themes opaque over it.
+  (3) An element with a `backdrop-filter` is a **backdrop root**, so a filter inside it
+  can only see what that root paints. The modal backdrop's own blur therefore blinded
+  every dialog's; `[data-glass] [data-modal-backdrop]` clears it, in *both* spellings,
+  because Tailwind emits the `-webkit-` one too and clearing one leaves the root
+  standing. Moving the blur down to the backdrop instead does not work — a
+  full-window `backdrop-filter` does nothing here, though the panel's own does — so
+  what separates a dialog from the page is a darker field (42%, not the other themes'
+  25%) plus the thickest paint of any glass surface. A palette you can read a button's
+  orange through is the failure this is tuned against.
+  `window:glass` still exists for Windows 11's acrylic and to report whether the
+  desktop is actually showing through (`window`) or the app is drawing its own
+  backdrop (`paint`); on macOS it now reports and nothing more.
 - Workspace colours are identifiers, not surfaces — a dot or a 2px rule, never a filled
   block. Theme tokens for `pm` / `pmdark` live in `styles.css`.
 

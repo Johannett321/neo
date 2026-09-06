@@ -563,7 +563,21 @@ export interface Settings {
    * for an app you have been using for a year.
    */
   onboardedAt: string
-  theme: 'light' | 'dark' | 'system'
+  /**
+   * The palette, plus one material.
+   *
+   * `light`, `dark` and `system` choose a palette and nothing else. `glass` is not a
+   * fourth palette: it takes its colours from the operating system exactly as
+   * `system` does and turns the window itself into a translucent surface, which is
+   * why it carries an amount below and the other three do not.
+   */
+  theme: 'light' | 'dark' | 'system' | 'glass'
+  /**
+   * How much of what is behind the window shows through it, 0-100, and read only
+   * while the theme is `glass`. Zero is the app as it looks in every other theme —
+   * the material is still there, and nothing passes through it.
+   */
+  glassTransparency: number
   staleAfterDays: number
   horizonDays: number
   /**
