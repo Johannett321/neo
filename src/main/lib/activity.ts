@@ -1,5 +1,6 @@
 import type { ActivityKind } from '@shared/types'
-import { exec, q } from '../db/client'
+import { q1 } from '../db/client'
+import { upsert } from '../ipc/util'
 
 /**
  * Every mutation leaves a trace and bumps the project's activity clock.
@@ -12,6 +13,16 @@ import { exec, q } from '../db/client'
  * within the last half hour is refreshed in place instead of repeated. The summary is
  * rewritten too, so renaming a note while writing it does not leave the log describing
  * the title it used to have. Anything without an `entityId` always inserts.
+ *
+ * Both writes go through `upsert()`, so the activity line and the clock join the same
+ * operation batch as the change they describe. That is what turns "every mutation
+ * logs activity" from something each handler has to remember into something a device
+ * receiving the batch can rely on: it cannot arrive with the task and without the
+ * line about it.
+ *
+ * Coalescing is a *local* decision, resolved by finding the row first and then
+ * writing it by id. Two devices that each coalesce onto their own line simply end up
+ * with two lines, which is honest — they were two sittings.
  */
 export async function logActivity(
   projectId: string,
@@ -20,29 +31,29 @@ export async function logActivity(
   entityId?: string | null
 ): Promise<void> {
   const text = summary.slice(0, 300)
-  let coalesced = false
+  const now = new Date()
 
-  if (entityId) {
-    const hit = await q<{ id: string }>(
-      `UPDATE activity SET summary = $1, created_at = now()
-        WHERE id = (SELECT id FROM activity
-                     WHERE project_id = $2 AND kind = $3 AND entity_id = $4
-                       AND created_at > now() - interval '30 minutes'
-                     ORDER BY created_at DESC LIMIT 1)
-        RETURNING id`,
-      [text, projectId, kind, entityId]
-    )
-    coalesced = hit.length > 0
-  }
+  const recent = entityId
+    ? await q1<{ id: string }>(
+        `SELECT id FROM activity
+          WHERE project_id = $1 AND kind = $2 AND entity_id = $3
+            AND created_at > now() - interval '30 minutes'
+          ORDER BY created_at DESC LIMIT 1`,
+        [projectId, kind, entityId]
+      )
+    : null
 
-  if (!coalesced) {
-    await exec('INSERT INTO activity (project_id, kind, summary, entity_id) VALUES ($1, $2, $3, $4)', [
+  if (recent) {
+    await upsert('activity', { summary: text, createdAt: now }, recent.id)
+  } else {
+    await upsert('activity', {
       projectId,
       kind,
-      text,
-      entityId ?? null
-    ])
+      summary: text,
+      entityId: entityId ?? null,
+      createdAt: now
+    })
   }
 
-  await exec('UPDATE project SET last_activity_at = now() WHERE id = $1', [projectId])
+  await upsert('project', { lastActivityAt: now }, projectId)
 }

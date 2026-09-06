@@ -1,4 +1,5 @@
-import { exec, q, q1 } from '../db/client'
+import { q, q1 } from '../db/client'
+import { upsert } from '../ipc/util'
 
 /** What a new project's board looks like before anyone changes it. */
 export const DEFAULT_COLUMNS: { name: string; isDone: boolean }[] = [
@@ -16,10 +17,12 @@ export async function ensureColumns(projectId: string): Promise<void> {
   )
   if (existing && existing.n > 0) return
   for (const [index, column] of DEFAULT_COLUMNS.entries()) {
-    await exec(
-      'INSERT INTO board_column (project_id, name, sort_order, is_done) VALUES ($1, $2, $3, $4)',
-      [projectId, column.name, index, column.isDone]
-    )
+    await upsert('board_column', {
+      projectId,
+      name: column.name,
+      sortOrder: index,
+      isDone: column.isDone
+    })
   }
 }
 

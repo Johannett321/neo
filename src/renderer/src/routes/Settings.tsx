@@ -10,6 +10,7 @@ import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
 import { IconPicker } from '@/components/IconPicker'
 import { SettingsLayout } from '@/components/SettingsLayout'
+import { SyncPane } from '@/components/SyncPane'
 import { UpdatesPane } from '@/components/Updates'
 import { Field, Kbd, Panel } from '@/components/primitives'
 
@@ -64,6 +65,13 @@ export function SettingsPage(): React.JSX.Element {
           icon: 'mic',
           description: 'What a meeting recording listens to on this machine.',
           render: () => <AudioPane />
+        },
+        {
+          id: 'sync',
+          label: 'Sync',
+          icon: 'refresh',
+          description: 'Keep this Mac in step with your others, and back the work up.',
+          render: () => <SyncPane />
         },
         {
           id: 'data',

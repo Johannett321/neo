@@ -88,3 +88,17 @@ export class Notification {
 
 export const __handlers = handlers
 export const __dataDir = dir
+
+/**
+ * The OS keychain, which a headless run has no business touching.
+ *
+ * Reporting "not available" is the honest stub rather than a fake cipher: it takes
+ * the code down the path a machine with no keychain takes, which is the path that
+ * asks for the passphrase again on the next launch. A stub that pretended to encrypt
+ * would test a path that only exists in tests.
+ */
+export const safeStorage = {
+  isEncryptionAvailable: () => false,
+  encryptString: (value) => Buffer.from(value, 'utf8'),
+  decryptString: (buffer) => Buffer.from(buffer).toString('utf8')
+}

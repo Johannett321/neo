@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
 import { dataRoot, initDb, orphanedForeignKeys, q } from '../src/main/db/client'
+import { adoptExistingRows, initOplog, replayLog, SYNC_ORDER } from '../src/main/db/oplog'
+import { DEVICE_ONLY_COLUMNS } from '@shared/ops'
 import { mapWorkspace } from '../src/main/db/map'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
@@ -114,8 +116,19 @@ CREATE TABLE meeting (
   actions text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- The join table as it was: a composite key and no id of its own. Present here so
+-- that anything added to it later is applied against a table that lacks the column,
+-- which is the arrangement that catches a DDL statement referencing one too early.
+CREATE TABLE meeting_attendee (
+  meeting_id uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+  person_id  uuid NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  PRIMARY KEY (meeting_id, person_id)
+);
+
 CREATE TABLE setting (key text PRIMARY KEY, value text NOT NULL);
 `
+
+
 
 const ok = (label: string, cond: boolean, extra = ''): void => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? ` — ${extra}` : ''}`)
@@ -169,6 +182,8 @@ async function main(): Promise<void> {
 
   // The real thing: open that database with the current code.
   await initDb()
+  await initOplog()
+  await adoptExistingRows()
 
   /*
    * The data moved to the new home rather than being left behind or copied. A version
@@ -503,6 +518,8 @@ async function main(): Promise<void> {
 
   // Running it a second time must be a no-op, not a failure.
   await initDb()
+  await initOplog()
+  await adoptExistingRows()
   await ensureMeEverywhere()
   ok('dropping columns leaves every foreign key with its constraint',
      (await orphanedForeignKeys()).length === 0, (await orphanedForeignKeys()).join(', '))
@@ -517,6 +534,57 @@ async function main(): Promise<void> {
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM person WHERE NOT is_me'))[0]?.n === 2 &&
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM person WHERE is_me'))[0]?.n === 2,
      'repeated launches do not duplicate you')
+
+  /* ------------------------------------------------------------------ *
+   * The operation log, arriving on a database that predates it
+   * ------------------------------------------------------------------ */
+
+  const joinTableId = await q<{ n: number }>(
+    `SELECT count(*)::int AS n FROM information_schema.columns
+      WHERE table_name = 'meeting_attendee' AND column_name = 'id'`)
+  ok('the one join table gains an id of its own', joinTableId[0]?.n === 1)
+
+  ok('an old database ends up with a log describing everything that was already in it',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM op_batch'))[0]?.n > 0)
+
+  const orphans: string[] = []
+  for (const table of SYNC_ORDER) {
+    const gap = await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM ${table} t
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sync_row s WHERE s.table_name = $1 AND s.row_id = t.id::text
+        )`, [table])
+    if ((gap[0]?.n ?? 0) > 0) orphans.push(`${table}:${gap[0]?.n}`)
+  }
+  ok('and nothing is left out of it', orphans.length === 0, orphans.join(', '))
+
+  ok('a second launch adopts nothing, so years of work are not re-announced every morning',
+     (await adoptExistingRows()).rows === 0)
+
+  /*
+   * The same gate verify.ts holds new work to, held here against work that was
+   * written before the log existed. If this fails, an upgrade silently loses the
+   * thing it was supposed to protect.
+   */
+  const shape = async (): Promise<string> => {
+    const out: string[] = []
+    for (const table of SYNC_ORDER) {
+      const rows = await q<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY id`)
+      for (const row of rows) {
+        out.push(`${table}|` + Object.keys(row).sort()
+          .filter((k) => !DEVICE_ONLY_COLUMNS.includes(k))
+          .map((k) => `${k}=${JSON.stringify(row[k] instanceof Date ? (row[k] as Date).toISOString() : row[k])}`)
+          .join('|'))
+      }
+    }
+    return out.join('\n')
+  }
+  const wasThere = await shape()
+  await replayLog()
+  const nowThere = await shape()
+  const firstGap = wasThere.split('\n').find((line, i) => line !== nowThere.split('\n')[i]) ?? ''
+  ok('replaying an upgraded database reproduces it exactly',
+     wasThere === nowThere, firstGap.slice(0, 200))
 }
 
 main().catch((e) => {

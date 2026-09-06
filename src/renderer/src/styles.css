@@ -147,6 +147,28 @@ body {
 }
 
 /*
+ * Anything floating over the header has to say that it is not the header.
+ *
+ * A drag region is not a paint: macOS decides it from the layout and takes the press
+ * before the page ever sees it, whatever happens to be drawn on top. So a menu opened
+ * from the button at the end of the header — which is where every menu opened from
+ * there lands, the first fifty-two pixels of it — had rows that could be seen, could
+ * be hovered, and could not be clicked, because the window was busy being dragged.
+ * It looked like a hitbox that was slightly out; it was the title bar winning.
+ *
+ * Two selectors, and both are the app's own vocabulary rather than a list of
+ * components that would go stale: `.glass-raised` is what every floating surface here
+ * is (menus, dialogs, the palette, the switcher, a toast), and a full-window
+ * `fixed inset-0` is the invisible sheet each of them puts down to catch the click
+ * that dismisses it — which should dismiss it over the header too, rather than
+ * starting to move the window.
+ */
+.glass-raised,
+.fixed.inset-0 {
+  -webkit-app-region: no-drag;
+}
+
+/*
  * Anything you can press says so. A <button> gets the arrow cursor by default, and
  * most of what you press in this app — the settings panes, the workspace switcher,
  * the context and column menus, every daisyUI button — is one, so they all read as

@@ -1,6 +1,6 @@
 {
   "name": "neo",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A personal command centre for running several working lives at once.",
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",
@@ -37,7 +37,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
-    "verify:upgrade": "esbuild test/upgrade.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/upgrade.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/upgrade.mjs"
+    "verify:upgrade": "esbuild test/upgrade.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/upgrade.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/upgrade.mjs",
+    "verify:sync": "test/sync.sh"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

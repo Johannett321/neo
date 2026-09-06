@@ -1,11 +1,11 @@
 import { BrowserWindow } from 'electron'
 import type { AiEvent, Attachment, Workspace } from '@shared/types'
-import { exec, q, q1 } from '../db/client'
+import { q, q1 } from '../db/client'
 import { mapAttachment, mapChatMessage, mapConversation, mapWorkspace } from '../db/map'
 import { deleteAttachment } from '../lib/attachments'
 import { readIcon } from '../lib/icons'
 import { cancelRun, respondToRun, startRun } from '../lib/ai/run'
-import { handle } from './util'
+import { handle, remove, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -64,10 +64,7 @@ export function registerChatHandlers(): void {
   })
 
   handle('chat:rename', async ({ id, title }) => {
-    const row = await q1<any>('UPDATE conversation SET title = $2 WHERE id = $1 RETURNING *', [
-      id,
-      title.trim().slice(0, 120)
-    ])
+    const row = await upsert<any>('conversation', { title: title.trim().slice(0, 120) }, id)
     if (!row) throw new Error('Conversation not found')
     return mapConversation(row)
   })
@@ -75,7 +72,7 @@ export function registerChatHandlers(): void {
   handle('chat:delete', async ({ id }) => {
     // The rows go with the conversation by cascade; the files on disk do not.
     const files = await q<{ path: string }>('SELECT path FROM chat_attachment WHERE conversation_id = $1', [id])
-    await exec('DELETE FROM conversation WHERE id = $1', [id])
+    await remove('conversation', id)
     for (const file of files) await deleteAttachment(file.path)
   })
 
@@ -99,10 +96,7 @@ export function registerChatHandlers(): void {
   })
 
   handle('chat:setKey', async ({ workspaceId, apiKey }) => {
-    const row = await q1<any>('UPDATE workspace SET ai_api_key = $2 WHERE id = $1 RETURNING *', [
-      workspaceId,
-      apiKey.trim()
-    ])
+    const row = await upsert<any>('workspace', { aiApiKey: apiKey.trim() }, workspaceId)
     if (!row) throw new Error('Workspace not found')
     const workspace: Workspace = mapWorkspace(row, await readIcon(row.icon_path ?? ''))
     return workspace

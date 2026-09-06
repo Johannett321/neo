@@ -1,3 +1,4 @@
+import type { SyncBilling, SyncStatus } from './sync'
 import type {
   Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, ContentFolder, Conversation,
   Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
@@ -354,6 +355,18 @@ export interface ApiMap {
   'profile:save': { in: Partial<Profile>; out: Profile }
   /** What to put in the name field on first run, from the machine's own account. */
   'profile:suggestName': { in: void; out: { name: string } }
+
+  'sync:status': { in: void; out: SyncStatus }
+  'sync:signIn': { in: { serverUrl: string }; out: { connected: boolean; handle: string } }
+  'sync:unlock': { in: { passphrase: string }; out: { ok: boolean; reason: string } }
+  'sync:nudge': { in: void; out: { show: boolean } }
+  'sync:dismissNudge': { in: void; out: { show: boolean } }
+  'sync:now': { in: void; out: SyncStatus }
+  'sync:disconnect': { in: void; out: SyncStatus }
+  /** What the plans cost, which is the only thing the server has to ask Stripe. */
+  'sync:prices': { in: void; out: SyncBilling }
+  /** Opens Stripe in the real browser and answers whether it went. */
+  'sync:pay': { in: { kind: 'monthly' | 'yearly' | 'manage' }; out: { opened: boolean } }
 
   'settings:get': { in: void; out: Settings }
   'settings:save': { in: Partial<Settings>; out: Settings }

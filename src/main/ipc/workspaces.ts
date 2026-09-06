@@ -1,13 +1,13 @@
 import { dialog } from 'electron'
 import type { Workspace, WorkspaceLink } from '@shared/types'
-import { exec, q, q1 } from '../db/client'
+import { q, q1 } from '../db/client'
 import { mapWorkspace, mapWorkspaceLink } from '../db/map'
 import { ALLOWED_ICON_EXTENSIONS, MAX_BANNER_BYTES, deleteIcon, readIcon, storeIcon } from '../lib/icons'
 import { bannerUrl } from '../lib/recording/media'
 import { forgetWeather } from '../lib/weather'
 import { pruneRecordings } from '../lib/recording/store'
 import { ensureMe } from '../lib/profile'
-import { handle, pick, reorder, upsert } from './util'
+import { handle, pick, remove, reorder, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const withIcon = async (row: any): Promise<Workspace> =>
@@ -94,7 +94,7 @@ export function registerWorkspaceHandlers(): void {
 
   handle('workspace:delete', async ({ id }) => {
     const row = await q1<any>('SELECT icon_path, banner_path FROM workspace WHERE id = $1', [id])
-    await exec('DELETE FROM workspace WHERE id = $1', [id])
+    await remove('workspace', id)
     if (row?.icon_path) await deleteIcon(row.icon_path)
     if (row?.banner_path) await deleteIcon(row.banner_path)
     // Every project, meeting and recording inside it has gone; the audio has not.
@@ -102,10 +102,7 @@ export function registerWorkspaceHandlers(): void {
   })
 
   handle('workspace:setArchived', async ({ id, archived }) => {
-    const row = await q1<any>(
-      `UPDATE workspace SET archived_at = ${archived ? 'now()' : 'NULL'} WHERE id = $1 RETURNING *`,
-      [id]
-    )
+    const row = await upsert<any>('workspace', { archivedAt: archived ? new Date() : null }, id)
     if (!row) throw new Error('Workspace not found')
     return withIcon(row)
   })
@@ -179,7 +176,7 @@ export function registerWorkspaceHandlers(): void {
   })
 
   handle('workspaceLink:delete', async ({ id }) => {
-    await exec('DELETE FROM workspace_link WHERE id = $1', [id])
+    await remove('workspace_link', id)
   })
 
   handle('workspaceLink:reorder', async ({ ids }) => {

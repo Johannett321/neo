@@ -1,11 +1,11 @@
 import type { Task } from '@shared/types'
-import { exec, q1 } from '../db/client'
+import { q1 } from '../db/client'
 import { mapTask } from '../db/map'
 import { taskViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
 import { doneColumnId, ensureColumns, firstColumnId } from '../lib/board'
 import { mirrorProject } from '../lib/markdown'
-import { handle, pick, reorder, upsert } from './util'
+import { handle, pick, remove, reorder, upsert } from './util'
 
 export function registerTaskHandlers(): void {
   handle('task:list', async (filter) => {
@@ -59,15 +59,12 @@ export function registerTaskHandlers(): void {
     const target =
       status === 'done' ? await doneColumnId(current.project_id) : await firstColumnId(current.project_id)
 
-    const row = await q1<Record<string, unknown>>(
-      `UPDATE task
-       SET status = $2,
-           completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END,
-           column_id = COALESCE($3, column_id),
-           updated_at = now()
-       WHERE id = $1 RETURNING *`,
-      [id, status, target]
-    )
+    const row = await upsert<Record<string, unknown>>('task', {
+      status,
+      completedAt: status === 'done' ? new Date() : null,
+      ...(target ? { columnId: target } : {}),
+      updatedAt: new Date()
+    }, id)
     if (!row) throw new Error('Task not found')
     const task = mapTask(row)
     if (status === 'done') await logActivity(task.projectId, 'task_completed', `Completed: ${task.title}`)
@@ -80,15 +77,12 @@ export function registerTaskHandlers(): void {
     if (!column) throw new Error('Column not found')
     const done = column.is_done
 
-    const row = await q1<Record<string, unknown>>(
-      `UPDATE task
-       SET column_id = $2,
-           status = CASE WHEN $3 THEN 'done' ELSE 'open' END,
-           completed_at = CASE WHEN $3 THEN now() ELSE NULL END,
-           updated_at = now()
-       WHERE id = $1 RETURNING *`,
-      [id, columnId, done]
-    )
+    const row = await upsert<Record<string, unknown>>('task', {
+      columnId,
+      status: done ? 'done' : 'open',
+      completedAt: done ? new Date() : null,
+      updatedAt: new Date()
+    }, id)
     if (!row) throw new Error('Task not found')
     const task = mapTask(row)
     if (done) await logActivity(task.projectId, 'task_completed', `Completed: ${task.title}`)
@@ -97,7 +91,7 @@ export function registerTaskHandlers(): void {
   })
 
   handle('task:delete', async ({ id }) => {
-    await exec('DELETE FROM task WHERE id = $1', [id])
+    await remove('task', id)
   })
 
   handle('task:reorder', async ({ ids }) => {

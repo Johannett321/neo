@@ -1,5 +1,6 @@
 import { addDays, exec, q1, today } from '../db/client'
 import { mirrorAll } from './markdown'
+import { adoptExistingRows } from '../db/oplog'
 import { ensureColumns } from './board'
 import { ensureMe } from './profile'
 
@@ -342,5 +343,12 @@ export async function loadSampleData(): Promise<void> {
   await journal(nordic, 9, 'Lena walked me through the returns flow. It is genuinely complicated and genuinely ' +
     'not what we agreed. Priced as a change request, not absorbed.')
 
+  /*
+   * The rows above are written with plain SQL on purpose: this is a fixture, not
+   * something somebody did, and giving each line an operation of its own would put
+   * a fictional afternoon's work into your history. They are taken into the log
+   * afterwards, the same way an install that predates the log is.
+   */
+  await adoptExistingRows()
   await mirrorAll()
 }

@@ -51,6 +51,19 @@ export async function storeIcon(sourcePath: string, maxBytes = MAX_ICON_BYTES): 
 const cache = new Map<string, string | null>()
 
 /** Read a stored icon back as a data URL. Returns null if it has gone missing. */
+/**
+ * Forget one file, so the next read goes back to the disk.
+ *
+ * The cache holds a `null` for a file that was not there, which is right — an icon
+ * belonging to another workspace should not be looked for on every render. But a
+ * file that *arrives*, as one does when it is fetched from the sync server, would
+ * then go on reading as absent until the app was next opened, and an avatar that
+ * appears only after a restart looks exactly like one that never arrived.
+ */
+export function forgetIcon(filename: string): void {
+  cache.delete(filename)
+}
+
 export async function readIcon(filename: string): Promise<string | null> {
   if (!filename) return null
   const hit = cache.get(filename)

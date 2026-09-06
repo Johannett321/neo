@@ -5,7 +5,7 @@ import {
 } from '@shared/recording'
 import type { Recap, RecordingEvent, SpeakerName } from '@shared/types'
 import { exec, q, q1 } from '../../db/client'
-import { invokeChannel } from '../../ipc/util'
+import { invokeChannel, removeWhere, updateWhere, upsert } from '../../ipc/util'
 import { logActivity } from '../activity'
 import { mirrorProject } from '../markdown'
 import { segmentPath } from './store'
@@ -73,27 +73,31 @@ export async function announce(recordingId: string): Promise<void> {
  * everything after it into the right place instead of leaving a growing skew.
  */
 export async function recomputeTimeline(recordingId: string): Promise<void> {
-  await exec(
-    `UPDATE recording_segment s SET offset_ms = x.off
-     FROM (
-       SELECT id,
-              COALESCE(SUM(duration_ms) OVER (
-                ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-              ), 0) AS off
-       FROM recording_segment WHERE recording_id = $1
-     ) x
-     WHERE s.id = x.id AND s.offset_ms IS DISTINCT FROM x.off`,
+  // Where a segment starts is a fact about the recording, not about this machine, so
+  // it travels — which means a row at a time rather than the one statement this was.
+  // A recording is a handful of five-minute segments, not a table scan.
+  const offsets = await q<{ id: string; off: string }>(
+    `SELECT id, COALESCE(SUM(duration_ms) OVER (
+              ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS off,
+            offset_ms
+       FROM recording_segment WHERE recording_id = $1`,
     [recordingId]
   )
-  await exec(
-    `UPDATE recording r
-     SET duration_ms = COALESCE(
-           (SELECT SUM(duration_ms) FROM recording_segment WHERE recording_id = r.id), 0),
-         bytes = COALESCE(
-           (SELECT SUM(bytes) FROM recording_segment WHERE recording_id = r.id AND path <> ''), 0)
-     WHERE r.id = $1`,
+  for (const row of offsets) {
+    await upsert('recording_segment', { offsetMs: Number(row.off) }, row.id)
+  }
+  // The segment offsets above are this machine's bookkeeping. The two totals below
+  // are facts about the recording, so they go through the log like anything else.
+  const totals = await q1<{ duration: string; bytes: string }>(
+    `SELECT COALESCE(SUM(duration_ms), 0) AS duration,
+            COALESCE(SUM(bytes) FILTER (WHERE path <> ''), 0) AS bytes
+       FROM recording_segment WHERE recording_id = $1`,
     [recordingId]
   )
+  await upsert('recording', {
+    durationMs: Number(totals?.duration ?? 0),
+    bytes: Number(totals?.bytes ?? 0)
+  }, recordingId)
 }
 
 /* ------------------------------------------------------------------ recovery */
@@ -320,12 +324,13 @@ async function transcribeStep(recording: any): Promise<void> {
     return
   }
 
-  await exec(
-    `UPDATE recording SET transcript_state = 'running', transcript_engine = $2,
-            transcript_model = $3, transcript_error = '', updated_at = now()
-     WHERE id = $1`,
-    [recording.id, config.engine, config.model]
-  )
+  await upsert('recording', {
+    transcriptState: 'running',
+    transcriptEngine: config.engine,
+    transcriptModel: config.model,
+    transcriptError: '',
+    updatedAt: new Date()
+  }, recording.id)
   await exec(`UPDATE recording_segment SET state = 'running' WHERE id = $1`, [segment.id])
 
   let audio: Buffer
@@ -358,13 +363,16 @@ async function transcribeStep(recording: any): Promise<void> {
     // Written in one statement so that a crash leaves either all of this segment's
     // words or none of them — never half a segment that would then be transcribed
     // again and appear twice.
-    await exec(`DELETE FROM transcript_cue WHERE segment_id = $1`, [segment.id])
+    await removeWhere('transcript_cue', { segmentId: segment.id })
     for (const [index, cue] of cues.entries()) {
-      await exec(
-        `INSERT INTO transcript_cue (recording_id, segment_id, ord, start_ms, end_ms, text)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [recording.id, segment.id, start + index, offset + cue.startMs, offset + cue.endMs, cue.text]
-      )
+      await upsert('transcript_cue', {
+        recordingId: recording.id,
+        segmentId: segment.id,
+        ord: start + index,
+        startMs: offset + cue.startMs,
+        endMs: offset + cue.endMs,
+        text: cue.text
+      })
     }
     await exec(`UPDATE recording_segment SET state = 'done', error = '' WHERE id = $1`, [segment.id])
     await exec(
@@ -498,10 +506,7 @@ async function speakerStep(recording: any): Promise<void> {
     for (const cue of batch) {
       const speaker = assigned[Number(cue.ord)] || previous
       previous = speaker
-      await exec(
-        `UPDATE transcript_cue SET speaker = $2 WHERE recording_id = $1 AND ord = $3`,
-        [recording.id, speaker, Number(cue.ord)]
-      )
+      await updateWhere('transcript_cue', { recordingId: recording.id, ord: Number(cue.ord) }, { speaker })
     }
 
     await refreshSpeakerIndex(recording.id)
@@ -532,10 +537,7 @@ async function refreshSpeakerIndex(recordingId: string): Promise<void> {
   for (const { speaker } of labels) {
     next[speaker] = existing[speaker] ?? { name: '', personId: null }
   }
-  await exec(`UPDATE recording SET speakers = $2::jsonb WHERE id = $1`, [
-    recordingId,
-    JSON.stringify(next)
-  ])
+  await upsert('recording', { speakers: JSON.stringify(next) }, recordingId)
 }
 
 async function attendeeNames(meetingId: string): Promise<string[]> {
@@ -706,11 +708,11 @@ async function applyStep(recording: any): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
     // An empty recap will still be empty in five minutes, so stop rather than spin.
     if (/no recap to fold in/i.test(message)) {
-      await exec(
-        `UPDATE recording SET recap_written_at = now(), recap_todos_at = now(),
-                updated_at = now() WHERE id = $1`,
-        [recording.id]
-      )
+      await upsert('recording', {
+        recapWrittenAt: new Date(),
+        recapTodosAt: new Date(),
+        updatedAt: new Date()
+      }, recording.id)
       return
     }
     console.error('Could not fold the recap into the meeting:', error)
@@ -755,13 +757,16 @@ async function storeRecap(
   recording: any,
   written: { title: string; summary: string; recap: Recap }
 ): Promise<void> {
-  await exec(
-    `UPDATE recording SET summary_state = 'done', summary = $2, recap = $3::jsonb,
-            suggested_title = $4, summary_error = '', summarised_at = now(),
-            next_attempt_at = NULL, updated_at = now()
-     WHERE id = $1`,
-    [recording.id, written.summary, JSON.stringify(written.recap), written.title]
-  )
+  await upsert('recording', {
+    summaryState: 'done',
+    summary: written.summary,
+    recap: JSON.stringify(written.recap),
+    suggestedTitle: written.title,
+    summaryError: '',
+    summarisedAt: new Date(),
+    nextAttemptAt: null,
+    updatedAt: new Date()
+  }, recording.id)
 
   const meeting = await q1<{ project_id: string; title: string; occurred_on: string }>(
     `SELECT m.project_id, m.title, m.occurred_on FROM meeting m WHERE m.id = $1`,
