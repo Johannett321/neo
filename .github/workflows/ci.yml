@@ -10,6 +10,11 @@ jobs:
   check:
     name: Typecheck and verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # The whole run is seconds. A job still going after twenty minutes is a job
+    # that has hung, and without this it hangs for the full six hours — billed at
+    # ten times the rate on macOS, and leaving nothing readable, because a log is
+    # only published once the run is over.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

@@ -2098,5 +2098,16 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   console.error('THREW', e)
-  process.exitCode = 1
+  /*
+   * Leave at once, rather than setting an exit code and letting the loop drain.
+   *
+   * A throw part-way through skips `closeDb()`, and by then the MCP bridge is
+   * listening on its socket — so nothing is left to finish but nothing lets go
+   * either, and the process sits there forever. Locally that is a terminal you
+   * press Ctrl-C in; on a runner it is six hours of a job nobody is watching,
+   * billed at ten times the rate on macOS. A failed assertion says FAIL and
+   * carries on; anything that reaches here has already given up, so there is
+   * nothing left to tidy.
+   */
+  process.exit(1)
 })

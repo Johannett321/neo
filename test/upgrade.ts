@@ -506,5 +506,6 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   console.error('THREW', e)
-  process.exitCode = 1
+  // Leave at once rather than draining the loop — see the note in verify.ts.
+  process.exit(1)
 })

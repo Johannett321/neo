@@ -19,6 +19,19 @@ const slug = (s: string): string =>
 
 const safeDir = (s: string): string => s.replace(/[/\\:*?"<>|]/g, '-').trim() || 'untitled'
 
+/**
+ * Delete a directory and everything under it, patiently.
+ *
+ * `force` covers a directory that was never there; it does not cover Windows,
+ * where a delete is only a request. An indexer or a virus scanner holding a
+ * handle open for another moment leaves the parent non-empty at the instant we
+ * ask for it, and the whole rebuild fails with ENOTEMPTY on a file nothing is
+ * really using. Node has retries for exactly that list of errors and defaults
+ * them to none, so every recursive delete here asks for them.
+ */
+const rmTree = (path: string): Promise<void> =>
+  rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function writeProjectFiles(root: string, project: any): Promise<number> {
   // Folders are filing, so the mirror files it the same way: the folder a project is
@@ -42,7 +55,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
    * owns clears the same stale notes and keeps its hands off everything else.
    */
   for (const sub of ['notes', 'decisions', 'meetings', 'journal']) {
-    await rm(join(dir, sub), { recursive: true, force: true })
+    await rmTree(join(dir, sub))
   }
   await mkdir(dir, { recursive: true })
   let files = 0
@@ -253,7 +266,7 @@ export async function mirrorProject(projectId: string): Promise<void> {
 /** Full rebuild — also clears folders left behind by renames and deletions. */
 export async function mirrorAll(): Promise<{ files: number; dir: string }> {
   const root = markdownDir()
-  await rm(root, { recursive: true, force: true })
+  await rmTree(root)
   await mkdir(root, { recursive: true })
   const projects = await q<any>(`${PROJECT_ROW} ORDER BY w.sort_order, p.name`)
   let files = 0

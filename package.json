@@ -36,7 +36,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "verify": "esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
+    "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
     "verify:upgrade": "esbuild test/upgrade.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/upgrade.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/upgrade.mjs"
   },
   "dependencies": {
