@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useApi, useApiMutation } from '@/lib/api'
 import { Icon } from '@/components/Icon'
+import { Field, Panel } from '@/components/primitives'
 import { DEFAULT_SYNC_SERVER, type SyncBilling, type SyncStatus } from '@shared/sync'
 
 /**
@@ -36,7 +37,7 @@ export function SyncPane(): React.JSX.Element {
   const syncNow = useApiMutation('sync:now')
   const disconnect = useApiMutation('sync:disconnect')
 
-  if (!status) return <div className="text-sm opacity-60">Looking…</div>
+  if (!status) return <Panel><p className="text-[12px] text-base-content/55">Looking…</p></Panel>
 
   const connect = async (): Promise<void> => {
     setProblem('')
@@ -73,8 +74,8 @@ export function SyncPane(): React.JSX.Element {
 
   if (status.phase === 'off') {
     return (
-      <div className="flex flex-col gap-5 max-w-lg">
-        <p className="text-sm opacity-75">
+      <Panel>
+        <p className="max-w-xl text-[13px] leading-relaxed text-base-content/70">
           Neo keeps everything on this Mac. Connecting it to a sync server keeps your
           other machines in step and gives your work an off-site backup that is
           encrypted before it leaves this app — the server holds bytes it cannot read.
@@ -85,7 +86,7 @@ export function SyncPane(): React.JSX.Element {
           browser, which is a surprise worth spending three lines to avoid: somebody
           who does not expect it reads a new tab as having been sent somewhere.
         */}
-        <ol className="flex flex-col gap-2 text-sm opacity-75">
+        <ol className="mt-4 flex max-w-xl flex-col gap-2 text-[12.5px] leading-relaxed text-base-content/60">
           <Step n={1}>Your browser opens, and you sign in with a passkey — Touch ID,
             or your phone. There is no password to choose.</Step>
           <Step n={2}>Back here, you pick a passphrase. That is what encrypts your
@@ -95,19 +96,20 @@ export function SyncPane(): React.JSX.Element {
         </ol>
 
         {ownServer ? (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs opacity-60">Your server&rsquo;s address</span>
-            <input
-              className="input input-bordered input-sm"
-              placeholder="https://sync.example.com"
-              value={server}
-              onChange={(e) => setServer(e.target.value)}
-              autoFocus
-            />
-          </label>
+          <div className="mt-4 max-w-xs">
+            <Field label="Your server&rsquo;s address">
+              <input
+                className="input input-bordered input-sm w-full"
+                placeholder="https://sync.example.com"
+                value={server}
+                onChange={(e) => setServer(e.target.value)}
+                autoFocus
+              />
+            </Field>
+          </div>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="mt-5 flex items-center gap-2">
           <button
             className="btn btn-primary btn-sm"
             onClick={() => void connect()}
@@ -116,21 +118,21 @@ export function SyncPane(): React.JSX.Element {
             {signIn.isPending ? 'Waiting for your passkey…' : 'Connect with a passkey'}
           </button>
           {signIn.isPending ? (
-            <span className="text-xs opacity-55">Finish in the browser, then come back.</span>
+            <span className="text-[11.5px] text-base-content/50">Finish in the browser, then come back.</span>
           ) : null}
         </div>
 
-        {problem ? <p className="text-sm text-error">{problem}</p> : null}
+        {problem ? <div className="mt-3"><Notice tone="error">{problem}</Notice></div> : null}
 
         {ownServer ? null : (
           <button
-            className="link link-hover text-sm self-start opacity-80"
+            className="mt-4 self-start text-[12px] text-base-content/55 underline decoration-base-content/25 hover:decoration-current"
             onClick={() => setOwnServer(true)}
           >
             Use your own server
           </button>
         )}
-      </div>
+      </Panel>
     )
   }
 
@@ -138,48 +140,48 @@ export function SyncPane(): React.JSX.Element {
 
   if (status.phase === 'locked') {
     return (
-      <div className="flex flex-col gap-4 max-w-lg">
-        <p className="text-sm opacity-75">
-          Signed in as <span className="font-medium opacity-100">{status.accountHandle}</span>.
+      <Panel>
+        <p className="max-w-xl text-[13px] leading-relaxed text-base-content/70">
+          Signed in as <span className="font-medium text-base-content">{status.accountHandle}</span>.
           {status.firstDevice
             ? ' Now choose a passphrase. It encrypts everything before it leaves this Mac, and it never reaches the sync server.'
             : ' Type the passphrase you chose when you set this account up. It never reaches the sync server, which is why it has to be typed on each machine.'}
         </p>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs opacity-60">
-            {status.firstDevice ? 'Choose a passphrase' : 'Passphrase'}
-          </span>
-          <input
-            className="input input-bordered input-sm"
-            type="password"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            autoFocus
-          />
-        </label>
-
-        {status.firstDevice ? (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs opacity-60">And again</span>
+        <div className="mt-4 max-w-xs">
+          <Field label={status.firstDevice ? 'Choose a passphrase' : 'Passphrase'}>
             <input
-              className="input input-bordered input-sm"
+              className="input input-bordered input-sm w-full"
               type="password"
-              value={again}
-              onChange={(e) => setAgain(e.target.value)}
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              autoFocus
             />
-          </label>
-        ) : null}
+          </Field>
 
-        <p className="text-xs opacity-55">
+          {status.firstDevice ? (
+            <div className="mt-3">
+              <Field label="And again">
+                <input
+                  className="input input-bordered input-sm w-full"
+                  type="password"
+                  value={again}
+                  onChange={(e) => setAgain(e.target.value)}
+                />
+              </Field>
+            </div>
+          ) : null}
+        </div>
+
+        <p className="mt-3 max-w-lg text-[11.5px] leading-relaxed text-base-content/45">
           {status.firstDevice
             ? 'Nobody can reset this. If it is lost, so is everything the server holds — which is the same sentence as “the server cannot read it”, said from the other side. Your own Macs keep their copies either way.'
             : 'If it does not work, it is the passphrase rather than the passkey: the passkey has already been accepted.'}
         </p>
 
-        {problem ? <p className="text-sm text-error">{problem}</p> : null}
+        {problem ? <div className="mt-3"><Notice tone="error">{problem}</Notice></div> : null}
 
-        <div className="flex gap-2">
+        <div className="mt-4 flex gap-2">
           <button
             className="btn btn-primary btn-sm"
             onClick={() => void open()}
@@ -194,66 +196,99 @@ export function SyncPane(): React.JSX.Element {
             Sign out
           </button>
         </div>
-      </div>
+      </Panel>
     )
   }
 
   /* ---------------------------------------------------------- connected */
 
-  return (
-    <div className="flex flex-col gap-5 max-w-lg">
-      <Line status={status} />
+  const syncing = status.phase === 'syncing' || syncNow.isPending
 
-      <div className="flex flex-col gap-1 text-sm">
-        <Row label="Account" value={status.accountHandle} />
-        <Row label="Server" value={status.serverUrl.replace(/^https?:\/\//, '')} />
-        <Row
-          label="Waiting to send"
-          value={status.pending === 0 ? 'Nothing' : `${status.pending} change${status.pending === 1 ? '' : 's'}`}
-        />
-        <Row
-          label="Last synced"
-          value={status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleTimeString() : 'Not yet'}
-        />
-        {status.quotaBytes > 0 ? (
+  return (
+    <div className="flex flex-col gap-4">
+      <Plan billing={status.billing} onChanged={() => void refetch()} />
+
+      <Panel>
+        <Line status={status} />
+
+        <div className="hairline mt-3.5 flex flex-col gap-2 border-t pt-3.5">
+          <Row label="Account" value={status.accountHandle} />
+          <Row label="Server" value={status.serverUrl.replace(/^https?:\/\//, '')} />
           <Row
-            label="Files"
-            value={`${size(status.usedBytes)} of ${size(status.quotaBytes)}`}
+            label="Waiting to send"
+            value={status.pending === 0 ? 'Nothing' : `${status.pending} change${status.pending === 1 ? '' : 's'}`}
           />
-        ) : null}
-      </div>
+          <Row
+            label="Last synced"
+            value={status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleTimeString() : 'Not yet'}
+          />
+          {status.quotaBytes > 0 ? (
+            <div>
+              <Row
+                label="Files"
+                value={`${size(status.usedBytes)} of ${size(status.quotaBytes)}`}
+              />
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-base-content/10">
+                <div
+                  className={`h-full rounded-full ${
+                    status.usedBytes / status.quotaBytes > 0.9 ? 'bg-warning' : 'bg-primary'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      status.usedBytes > 0
+                        ? Math.max(2, (status.usedBytes / status.quotaBytes) * 100)
+                        : 0
+                    )}%`
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="hairline mt-3.5 flex gap-2 border-t pt-3.5">
+          <button
+            className="btn btn-sm gap-1.5"
+            onClick={() => void syncNow.mutateAsync().then(() => refetch())}
+            disabled={syncing}
+          >
+            <Icon name="refresh" size={12} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => void disconnect.mutateAsync().then(() => refetch())}
+          >
+            Disconnect this Mac
+          </button>
+        </div>
+      </Panel>
+
+      {status.error ? <Notice tone="error">{status.error}</Notice> : null}
 
       {status.filesOverQuota > 0 ? (
-        <p className="text-sm text-warning">
+        <Notice>
           {status.filesOverQuota} file{status.filesOverQuota === 1 ? '' : 's'} could not
           be sent — this account is out of space. Everything written stays here and keeps
           syncing; only the files are waiting.
-        </p>
+        </Notice>
       ) : null}
-
-      <Plan billing={status.billing} onChanged={() => void refetch()} />
-
-      {status.workspaces.length > 0 ? (
-        <div className="flex flex-col gap-1">
-          <span className="text-xs opacity-60">Workspaces</span>
-          {status.workspaces.map((workspace) => (
-            <div key={workspace.workspaceId} className="flex justify-between text-sm">
-              <span>{workspace.name}</span>
-              <span className="opacity-50 tabular-nums">{workspace.remoteSeq}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {status.error ? <p className="text-sm text-error">{status.error}</p> : null}
 
       {/*
         The next thing somebody wants, said once and where they are. Every step is a
         thing they have already done here, so it is a reminder rather than a manual.
       */}
-      <details className="text-sm">
-        <summary className="cursor-pointer opacity-75">Add another Mac</summary>
-        <ol className="mt-2 flex flex-col gap-2 opacity-75">
+      <details className="group px-1">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] text-base-content/55 hover:text-base-content/80">
+          <Icon
+            name="chevronRight"
+            size={12}
+            className="transition-transform group-open:rotate-90"
+          />
+          Add another Mac
+        </summary>
+        <ol className="mt-2.5 flex max-w-lg flex-col gap-2 text-[12px] leading-relaxed text-base-content/55">
           <Step n={1}>Install Neo there and let it finish setting itself up.</Step>
           <Step n={2}>Open app settings, Sync, and press Connect with a passkey — the
             same passkey, offered by the browser. There is nothing to type.</Step>
@@ -262,23 +297,7 @@ export function SyncPane(): React.JSX.Element {
         </ol>
       </details>
 
-      <div className="flex gap-2">
-        <button
-          className="btn btn-sm"
-          onClick={() => void syncNow.mutateAsync().then(() => refetch())}
-          disabled={syncNow.isPending || status.phase === 'syncing'}
-        >
-          {status.phase === 'syncing' || syncNow.isPending ? 'Syncing…' : 'Sync now'}
-        </button>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => void disconnect.mutateAsync().then(() => refetch())}
-        >
-          Disconnect this Mac
-        </button>
-      </div>
-
-      <p className="text-xs opacity-55">
+      <p className="px-1 text-[11.5px] leading-relaxed text-base-content/45">
         Disconnecting stops syncing here and forgets the account on this Mac. Nothing
         on the server is deleted, and your other machines carry on.
       </p>
@@ -308,17 +327,37 @@ function Plan({
     void pay.mutateAsync({ kind }).then(onChanged)
   }
 
+  /*
+   * The choice is between two prices, so each is drawn as the price rather than as
+   * a button that happens to mention one. The ring marks the better value, and it is
+   * only ever drawn when the saving was actually computed — never assumed.
+   */
+  const saving = savings(monthly, yearly)
   const buy = (
-    <div className="flex flex-wrap items-center gap-2">
-      <button className="btn btn-primary btn-sm" disabled={pay.isPending}
-              onClick={() => go('monthly')}>
-        {monthly ? `${monthly} a month` : 'Subscribe monthly'}
-      </button>
-      <button className="btn btn-sm" disabled={pay.isPending} onClick={() => go('yearly')}>
-        {yearly ? `${yearly} a year` : 'Subscribe yearly'}
-      </button>
+    <div>
+      <div className="grid grid-cols-2 gap-2">
+        <PriceChoice
+          price={monthly}
+          per="a month"
+          noun="Monthly"
+          disabled={pay.isPending}
+          onClick={() => go('monthly')}
+        />
+        <PriceChoice
+          price={yearly}
+          per="a year"
+          noun="Yearly"
+          badge={saving}
+          recommended={saving !== ''}
+          disabled={pay.isPending}
+          onClick={() => go('yearly')}
+        />
+      </div>
       {billing.hasCustomer ? (
-        <button className="link link-hover text-sm opacity-70" onClick={() => go('manage')}>
+        <button
+          className="mt-2 text-[12px] text-base-content/55 underline decoration-base-content/25 hover:decoration-current"
+          onClick={() => go('manage')}
+        >
           Billing
         </button>
       ) : null}
@@ -334,70 +373,190 @@ function Plan({
 
   if (billing.plan === 'active') {
     return (
-      <Block>
-        <Row
-          label="Plan"
-          value={billing.endingAt
-            ? `Ends ${date(billing.renewsAt)}`
-            : billing.renewsAt ? `Subscribed, renews ${date(billing.renewsAt)}` : 'Subscribed'}
-        />
+      <Panel>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[13px] font-medium">Plan</span>
+          <span className="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
+            {billing.endingAt
+              ? `Ends ${date(billing.renewsAt)}`
+              : billing.renewsAt ? `Renews ${date(billing.renewsAt)}` : 'Subscribed'}
+          </span>
+        </div>
         {billing.endingAt ? (
-          <p className="text-sm opacity-70">
+          <p className="mt-1.5 text-[12px] leading-relaxed text-base-content/55">
             Syncing carries on until then. After that your work stays on your own Macs
             and everything on the server can still be downloaded.
           </p>
         ) : null}
-        {manage}
-      </Block>
+        <div className="mt-3">{manage}</div>
+      </Panel>
     )
   }
 
   if (billing.plan === 'past_due') {
     return (
-      <Block>
-        <p className="text-sm text-warning">
+      <Panel>
+        <Notice>
           The last payment did not go through. Syncing carries on while it is retried —
           nothing has stopped and nothing has been lost.
-        </p>
-        {manage}
-      </Block>
+        </Notice>
+        <div className="mt-3">{manage}</div>
+      </Panel>
     )
   }
 
   if (billing.plan === 'trial' && billing.mayWrite) {
     return (
-      <Block>
-        <Row label="Plan" value={`Trial, ${remaining(billing.trialEndsAt)}`} />
-        <p className="text-sm opacity-70">
-          Everything works during the trial. Afterwards your work stays on this Mac
-          either way — a subscription is what keeps your machines in step.
-        </p>
-        {buy}
-      </Block>
+      /*
+       * The one card on the page that asks for something, so it is the one card
+       * allowed a tint: the accent at a whisper, and the days left drawn as a
+       * number rather than buried in a sentence. The fallback, for a trial with
+       * no date or none left, is the plain pill — a big "0" is a bug report.
+       */
+      <div className="hairline rounded-box border border-primary/30 bg-primary/5 p-4">
+        <div className="flex items-center gap-4">
+          <TrialDays iso={billing.trialEndsAt} />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">Trial</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+              Everything works during the trial. Afterwards your work stays on this Mac
+              either way — a subscription is what keeps your machines in step.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3.5">{buy}</div>
+      </div>
     )
   }
 
   /* Lapsed. Read only, and the wording has to make clear that is not the same as gone. */
   return (
-    <Block>
-      <p className="text-sm text-warning">
+    <Panel>
+      <Notice>
         This account is not subscribed. Everything already on the server can still be
         downloaded, on every machine, and nothing on this Mac has changed — but new
         work is not going out until a subscription picks it up.
-      </p>
-      {buy}
-    </Block>
+      </Notice>
+      <div className="mt-3.5">{buy}</div>
+    </Panel>
   )
 }
 
-function Block({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return <div className="hairline flex flex-col gap-2 rounded-box border p-3">{children}</div>
+/**
+ * One price, drawn as a card the way the format choices are: the thing itself large,
+ * what it means small. Without a price from the server it falls back to naming the
+ * period, so a server that has not said yet still offers the choice.
+ */
+function PriceChoice({
+  price, per, noun, badge, recommended = false, disabled, onClick
+}: {
+  price: string
+  per: string
+  /** What the card is called when there is no price to draw. */
+  noun: string
+  badge?: string
+  recommended?: boolean
+  disabled: boolean
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-field border bg-base-100 px-3.5 py-2.5 text-left transition ${
+        recommended
+          ? 'border-primary ring-2 ring-primary/25'
+          : 'hairline hover:border-base-content/25'
+      }`}
+    >
+      <span className="flex items-baseline justify-between gap-2">
+        <span className="text-[16px] font-semibold tracking-[-0.01em] tabular-nums">
+          {price || noun}
+        </span>
+        {badge ? (
+          <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">
+            {badge}
+          </span>
+        ) : null}
+      </span>
+      <span className="mt-0.5 block text-[11px] text-base-content/45">
+        {price ? per : 'Subscribe'}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * "Save 45%", computed from the two price strings rather than claimed. Prices arrive
+ * as display strings ("$9", "59 USD"), so this reads the first number out of each
+ * and stays silent — no badge, no ring — the moment either one does not parse.
+ */
+function savings(monthly: string, yearly: string): string {
+  const m = amount(monthly)
+  const y = amount(yearly)
+  if (m === null || y === null) return ''
+  const pct = Math.round((1 - y / (m * 12)) * 100)
+  return pct > 0 ? `Save ${pct}%` : ''
+}
+
+function amount(price: string): number | null {
+  const match = price.replace(',', '.').match(/\d+(\.\d+)?/)
+  return match ? Number(match[0]) : null
+}
+
+/**
+ * The trial's countdown as the card's anchor: a big number, tinted only when it is
+ * nearly out — colour means something here, and "ends soon" is the one fact worth
+ * lifting. Without a real date it is a quiet pill instead of a made-up figure.
+ */
+function TrialDays({ iso }: { iso: string }): React.JSX.Element {
+  const days = iso ? Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000) : null
+  if (days === null || days <= 0) {
+    return (
+      <span className="shrink-0 rounded-full bg-base-content/8 px-2 py-0.5 text-[11px] font-medium tabular-nums text-base-content/60">
+        {remaining(iso)}
+      </span>
+    )
+  }
+  const nearlyOut = days <= 3
+  return (
+    <div className="w-14 shrink-0 text-center">
+      <div
+        className={`text-[26px] font-semibold leading-none tracking-[-0.02em] tabular-nums ${
+          nearlyOut ? 'text-warning' : 'text-primary'
+        }`}
+      >
+        {days}
+      </div>
+      <div className="mt-1 text-[10.5px] leading-tight text-base-content/50">
+        {days === 1 ? 'day left' : 'days left'}
+      </div>
+    </div>
+  )
+}
+
+/** A small alert strip, in the same shape the recording pane's test result uses. */
+function Notice({
+  tone = 'warning', children
+}: { tone?: 'warning' | 'error'; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div
+      className={`hairline flex items-start gap-2 rounded-field border px-3 py-2 text-[12px] leading-relaxed ${
+        tone === 'error'
+          ? 'border-error/40 bg-error/5 text-error'
+          : 'border-warning/40 bg-warning/5 text-warning'
+      }`}
+    >
+      <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+      <span>{children}</span>
+    </div>
+  )
 }
 
 function Step({ n, children }: { n: number; children: React.ReactNode }): React.JSX.Element {
   return (
     <li className="flex gap-2.5">
-      <span className="mt-px w-4 shrink-0 text-right tabular-nums opacity-45">{n}</span>
+      <span className="mt-px w-4 shrink-0 text-right tabular-nums text-base-content/40">{n}</span>
       <span>{children}</span>
     </li>
   )
@@ -419,10 +578,15 @@ function Line({ status }: { status: SyncStatus }): React.JSX.Element {
               : (['check', 'Up to date.'] as const)
 
   const bad = status.phase === 'error' || !status.billing.mayWrite
+  const tone = bad ? 'text-error' : icon === 'check' ? 'text-success' : 'text-base-content/50'
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <Icon name={icon} className={bad ? 'text-error' : 'opacity-60'} />
-      <span className={bad ? 'text-error' : ''}>{words}</span>
+    <div className="flex items-center gap-2.5">
+      <Icon
+        name={icon}
+        size={15}
+        className={`shrink-0 ${tone} ${icon === 'refresh' ? 'animate-spin' : ''}`}
+      />
+      <span className={`text-[13px] font-medium ${bad ? 'text-error' : ''}`}>{words}</span>
     </div>
   )
 }
@@ -456,9 +620,9 @@ function remaining(iso: string): string {
 
 function Row({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <div className="flex justify-between">
-      <span className="opacity-60">{label}</span>
-      <span>{value}</span>
+    <div className="flex items-baseline justify-between gap-4 text-[12.5px]">
+      <span className="shrink-0 text-base-content/50">{label}</span>
+      <span className="truncate text-right">{value}</span>
     </div>
   )
 }
