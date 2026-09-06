@@ -248,8 +248,41 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   `window:glass` still exists for Windows 11's acrylic and to report whether the
   desktop is actually showing through (`window`) or the app is drawing its own
   backdrop (`paint`); on macOS it now reports and nothing more.
+- **Today's front block is furniture, and that is the whole licence for it.** The
+  banner, the bio, the links and the weather are per workspace (`banner_path`, `bio`,
+  `weather_*`, `workspace_link`) and **nothing derives from any of them** — not
+  attention, not the mirror, not search. That is precisely why the user is allowed to
+  arrange it when they are allowed to arrange almost nothing else: a banner that is
+  wrong costs a photograph, not an answer. The `today_show_*` columns are discrete
+  booleans rather than a JSON blob so `pick()`'s allowlist still means something.
+  There is deliberately **no switch for overdue or due today**: a Today page you can
+  turn the work off is a wallpaper. The banner is served over `neo-media://banner/…`
+  rather than inlined as a data URL like an icon — every mutation invalidates
+  `workspace:list`, and a photograph re-sent across the bridge on every keystroke that
+  saves is a real cost. It is validated against the database, not just against a
+  filename pattern, for the same reason a segment is.
+- **How a date, a clock and a temperature read is an app setting, never a workspace
+  one.** `clockFormat`, `dateFormat` and `temperatureUnits` in `settings`, all
+  defaulting to `system`, resolved for both processes by `shared/formats.ts`. The
+  renderer applies them through `applyDisplayPreferences()` — module state in
+  `lib/format.ts`, set **during** the shell's render (`lib/display.ts`) rather than
+  from an effect, because every screen that draws a date is a child of it and an
+  effect would leave one stale frame. Anything that previews a format must use the
+  pure `formatDateWith` / `formatTimeWith`: touching the module state to draw a
+  preview leaves the whole app formatting dates the way the last hovered option did.
+  Temperature is asked for in the unit it will be drawn in, so nothing converts a
+  reading afterwards and lands a degree out.
+- **The weather is the only outbound request in the app that is not a key you gave it.**
+  `lib/weather.ts` asks Open-Meteo — no account, no key — and sends a latitude and a
+  longitude and nothing else. Every path in it returns `null` rather than throwing, so a
+  refused connection costs the corner of one screen. Switched off means *no request*,
+  not a request whose answer is dropped, and `verify.ts` asserts that — which is also
+  what keeps the whole verify run offline. The location comes from the machine's own
+  IANA timezone (`Europe/Oslo` is a city, and the geocoder knows what to do with one)
+  unless a place is named, so it works on the first morning with nothing configured.
 - Workspace colours are identifiers, not surfaces — a dot or a 2px rule, never a filled
-  block. Theme tokens for `pm` / `pmdark` live in `styles.css`.
+  block. Theme tokens for `pm` / `pmdark` live in `styles.css`. This is why the Today
+  banner is a photograph or an ordinary panel and never a wash of the workspace's hue.
 
 ### Recording a meeting
 

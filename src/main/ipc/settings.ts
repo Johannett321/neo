@@ -15,6 +15,15 @@ import { handle } from './util'
 const DEFAULTS = {
   theme: 'system' as const,
   /*
+   * "System" for all three, which means the operating system already knows and is
+   * not asked again. The settings exist for the case it gets wrong — a Norwegian
+   * machine used by somebody who thinks in twelve hours, an English one in a country
+   * that writes the day first — and for nobody else.
+   */
+  clockFormat: 'system' as const,
+  dateFormat: 'system' as const,
+  temperatureUnits: 'system' as const,
+  /*
    * Enough that the desktop is unmistakably there and not so much that a note is
    * read against somebody's photograph. It is the amount, not the material: at zero
    * the Liquid Glass theme still has a vibrancy view under it, and nothing gets
@@ -40,6 +49,9 @@ async function readSettings(): Promise<Settings> {
       ? remembered
       : (workspaces[0]?.id ?? '')
 
+  const pickOne = <T extends string>(value: string | undefined, allowed: T[], fallback: T): T =>
+    allowed.includes(value as T) ? (value as T) : fallback
+
   const num = (k: keyof typeof DEFAULTS, fallback: number): number => {
     const parsed = Number(stored[k])
     return Number.isFinite(parsed) ? parsed : fallback
@@ -54,6 +66,11 @@ async function readSettings(): Promise<Settings> {
     // Clamped on the way out rather than on the way in: a number that predates the
     // slider, or one typed into the database by hand, still has to draw something.
     glassTransparency: Math.min(100, Math.max(0, num('glassTransparency', DEFAULTS.glassTransparency))),
+    // Read back through the list of what each one may be, so a value typed into the
+    // database by hand, or one left by an older build, still draws something.
+    clockFormat: pickOne(stored.clockFormat, ['system', '12', '24'], DEFAULTS.clockFormat),
+    dateFormat: pickOne(stored.dateFormat, ['system', 'dmy', 'mdy', 'ymd'], DEFAULTS.dateFormat),
+    temperatureUnits: pickOne(stored.temperatureUnits, ['system', 'c', 'f'], DEFAULTS.temperatureUnits),
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
     sidebarWidth: num('sidebarWidth', DEFAULTS.sidebarWidth),
@@ -71,7 +88,9 @@ const TABLES = [
   'task', 'note', 'decision', 'link', 'journal_entry', 'activity',
   // A transcript is writing, and the export is what survives this app. The audio is
   // not in here — it is a file in the data folder, which is already the backup.
-  'recording', 'recording_segment', 'transcript_cue'
+  'recording', 'recording_segment', 'transcript_cue',
+  // The links on a workspace's front page are typed by hand and are nowhere else.
+  'workspace_link'
 ] as const
 
 export function registerSettingsHandlers(): void {

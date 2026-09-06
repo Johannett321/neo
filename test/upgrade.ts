@@ -397,6 +397,41 @@ async function main(): Promise<void> {
        'SELECT collapsible_id FROM project WHERE id = $1', [oldProject.id]
      ))[0]?.collapsible_id === null)
 
+  /*
+   * The Today page's furniture arrived last of all. An upgraded database has never
+   * seen any of it, so what matters is that it comes back *on*: a workspace that has
+   * been used for a year should gain the block, not a blank where the counts were.
+   */
+  const [furnished] = await q<{
+    banner_path: string
+    bio: string
+    banner_x: number
+    today_show_clock: boolean
+    today_show_meeting_todos: boolean
+  }>(
+    `SELECT banner_path, bio, banner_x, today_show_clock, today_show_meeting_todos
+     FROM workspace ORDER BY name LIMIT 1`
+  )
+  ok('an old workspace gains the Today page settings, showing everything it used to',
+     furnished?.banner_path === '' && furnished?.bio === '' &&
+     furnished?.banner_x === 50 &&
+     furnished?.today_show_clock === true && furnished?.today_show_meeting_todos === true)
+
+  // The table is in the DDL and the workspace it hangs off predates it by a year.
+  const [oldLink] = await q<{ id: string }>(
+    `INSERT INTO workspace_link (workspace_id, label, url)
+     VALUES ($1, 'Intranet', 'https://intranet.example.com') RETURNING id`,
+    [oldProject.workspace_id]
+  )
+  ok('a workspace that predates the front page can be given links on it',
+     Boolean(oldLink?.id) &&
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM workspace_link'))[0]?.n === 1)
+
+  // An old workspace read back through the mapper has to draw, banner and all.
+  const [mappedRow] = await q<Record<string, unknown>>('SELECT * FROM workspace ORDER BY name LIMIT 1')
+  ok('and an upgraded workspace maps to one the Today page can draw',
+     mapWorkspace(mappedRow).banner === null && mapWorkspace(mappedRow).todayShowWeather === true)
+
   // An existing database has workspaces but no onboarding marker, which is exactly
   // the pair the renderer reads: it is the *absence of any workspace, ever* that says
   // this is a new install, so an upgrade lands in the app rather than in the pitch.

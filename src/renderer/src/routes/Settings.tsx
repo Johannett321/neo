@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
 import { useTheme, THEMES, type Theme } from '@/lib/theme'
-import { formatBytes } from '@/lib/format'
+import { formatBytes, formatDateWith, formatTemperature, formatTimeWith } from '@/lib/format'
+import { resolveTemperature, type ClockFormat } from '@shared/formats'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
@@ -40,6 +41,13 @@ export function SettingsPage(): React.JSX.Element {
           icon: 'sun',
           description: 'How the app looks on this machine.',
           render: () => <AppearancePane />
+        },
+        {
+          id: 'formats',
+          label: 'Formats',
+          icon: 'clock',
+          description: 'How a date, a clock and a temperature are written on this machine.',
+          render: () => <FormatsPane />
         },
         {
           id: 'audio',
@@ -633,6 +641,129 @@ function AppearancePane(): React.JSX.Element {
         </div>
       )}
     </Panel>
+  )
+}
+
+/**
+ * How a date, a clock and a temperature are written.
+ *
+ * On this machine and not on a workspace, which is the whole distinction: which
+ * working life you are in changes the photograph at the top of Today, and it does not
+ * change whether you count hours to twelve or to twenty-four.
+ *
+ * Every one of them defaults to what the operating system already says, which is right
+ * for almost everybody. They exist for the cases it gets wrong — a machine set to one
+ * country used by somebody who thinks in another's units — and the previews are there
+ * so the choice is made by looking rather than by decoding an abbreviation.
+ */
+function FormatsPane(): React.JSX.Element {
+  const settings = useApi('settings:get')
+  const save = useApiMutation('settings:save')
+  const current = settings.data
+  /*
+   * A day in a month whose name shortens, in a year that is not this one — so the
+   * year is part of every preview and "year first" is visibly a different answer
+   * from the other three rather than the same string with the parts moved.
+   */
+  const sample = '2025-11-08'
+
+  if (!current) return <Panel>…</Panel>
+
+  return (
+    <Panel>
+      <Field label="Clock" hint="Used by the time on Today and by anything that shows an hour.">
+        <Choice
+          value={current.clockFormat}
+          onChange={(clockFormat) => save.mutate({ clockFormat })}
+          options={[
+            { value: 'system', label: 'System', sample: exampleTime('system') },
+            { value: '24', label: '24-hour', sample: exampleTime('24') },
+            { value: '12', label: '12-hour', sample: exampleTime('12') }
+          ]}
+        />
+      </Field>
+
+      <div className="mt-5">
+        <Field
+          label="Dates"
+          hint="The order the parts come in. The month and weekday names stay in this machine's own language whichever you pick."
+        >
+          <Choice
+            value={current.dateFormat}
+            onChange={(dateFormat) => save.mutate({ dateFormat })}
+            options={[
+              { value: 'system', label: 'System', sample: formatDateWith('system', sample) },
+              { value: 'dmy', label: 'Day first', sample: formatDateWith('dmy', sample) },
+              { value: 'mdy', label: 'Month first', sample: formatDateWith('mdy', sample) },
+              { value: 'ymd', label: 'Year first', sample: formatDateWith('ymd', sample) }
+            ]}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-5">
+        <Field label="Temperature" hint="What the weather on Today is read in.">
+          <Choice
+            value={current.temperatureUnits}
+            onChange={(temperatureUnits) => save.mutate({ temperatureUnits })}
+            options={[
+              {
+                value: 'system',
+                label: 'System',
+                sample:
+                  resolveTemperature('system') === 'f'
+                    ? formatTemperature(64, 'f')
+                    : formatTemperature(18, 'c')
+              },
+              { value: 'c', label: 'Celsius', sample: formatTemperature(18, 'c') },
+              { value: 'f', label: 'Fahrenheit', sample: formatTemperature(64, 'f') }
+            ]}
+          />
+        </Field>
+      </div>
+    </Panel>
+  )
+}
+
+/** What a time looks like under one of the three clock choices, right now. */
+function exampleTime(choice: ClockFormat): string {
+  const at = new Date()
+  at.setHours(17, 5, 0, 0)
+  return formatTimeWith(choice, at)
+}
+
+/**
+ * A row of choices, each showing what it would actually look like. One control shape
+ * for all three questions, because they are one question asked three times.
+ */
+function Choice<T extends string>({
+  value,
+  onChange,
+  options
+}: {
+  value: T
+  onChange: (next: T) => void
+  options: { value: T; label: string; sample: string }[]
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-1.5 pt-1">
+      {options.map((option) => {
+        const selected = option.value === value
+        return (
+          <button
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            aria-pressed={selected}
+            className={`rounded-field border px-3 py-1.5 text-left transition ${
+              selected ? 'border-primary ring-2 ring-primary/25' : 'hairline hover:border-base-content/25'
+            }`}
+          >
+            <span className="block text-[13px] tabular-nums">{option.sample}</span>
+            <span className="mt-0.5 block text-[11px] text-base-content/45">{option.label}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 

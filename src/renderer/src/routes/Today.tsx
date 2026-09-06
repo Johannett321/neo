@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom'
 import type { TaskView } from '@shared/types'
 import { useApi } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace'
-import { formatLongDate, plural, projectColor } from '@/lib/format'
-import { Dot, EmptyState, PageHeader, Panel, Section } from '@/components/primitives'
+import { plural, projectColor } from '@/lib/format'
+import { Dot, EmptyState, Panel, Section } from '@/components/primitives'
 import { Icon } from '@/components/Icon'
 import { TaskDialog } from '@/components/TaskDialog'
 import { TaskList } from '@/components/TaskRow'
 import { Pending } from '@/components/PageTransition'
+import { TodayHero } from '@/components/today/TodayHero'
 import { NewProjectModal } from './Projects'
 
 export function TodayPage(): React.JSX.Element {
@@ -32,21 +33,23 @@ export function TodayPage(): React.JSX.Element {
    */
   const unstarted = projects.data !== undefined && projects.data.length === 0
 
+  /*
+   * What the rail carries is now partly a preference. It still only reserves its
+   * column when it has something in it — otherwise every list on the page was
+   * narrowed for an empty gutter — and switching both halves off is a way to get
+   * the full width back deliberately.
+   */
+  const attention = workspace.todayShowAttention ? data.needsAttention : []
+  const owed = workspace.todayShowMeetingTodos ? data.owedFromMeetings : []
+  const soon = workspace.todayShowSoon ? data.soon : []
+  const hasRail = attention.length > 0 || owed.length > 0
+
   return (
     <>
-      <PageHeader
-        title={formatLongDate(data.today)}
-        subtitle={
-          unstarted ? (
-            <span>Nothing in {workspace.name} yet.</span>
-          ) : (
-            <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <span>{plural(data.stats.activeProjects, 'active project')}</span>
-              <span>{plural(data.stats.openTasks, 'open item')}</span>
-              <span>{plural(data.stats.peopleTracked, 'person', 'people')}</span>
-            </span>
-          )
-        }
+      <TodayHero
+        workspace={workspace}
+        today={data.today}
+        stats={unstarted ? undefined : data.stats}
       />
 
       {unstarted ? (
@@ -88,15 +91,7 @@ export function TodayPage(): React.JSX.Element {
             </div>
           )}
 
-          <div
-            className={`grid gap-x-10 ${
-              // The rail only reserves its column when it has something in it —
-              // otherwise every list on the page was narrowed for an empty gutter.
-              data.needsAttention.length > 0 || data.owedFromMeetings.length > 0
-                ? 'lg:grid-cols-[minmax(0,1fr)_320px]'
-                : ''
-            }`}
-          >
+          <div className={`grid gap-x-10 ${hasRail ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
             <div>
               {data.overdue.length > 0 && (
                 <Section title="Overdue" count={data.overdue.length} tone="danger">
@@ -110,31 +105,25 @@ export function TodayPage(): React.JSX.Element {
                 </Section>
               )}
 
-              {data.soon.length > 0 && (
-                <Section title="Next seven days" count={data.soon.length}>
-                  <TaskList tasks={data.soon} showProject onEdit={setEditing} />
+              {soon.length > 0 && (
+                <Section title="Next seven days" count={soon.length}>
+                  <TaskList tasks={soon} showProject onEdit={setEditing} />
                 </Section>
               )}
             </div>
 
             <div>
-              {data.needsAttention.length > 0 && (
+              {attention.length > 0 && (
                 <Section title="Needs a look">
                   <Panel padded={false}>
-                    {data.needsAttention.map((project) => (
-                      <Link
+                    {attention.map((project) => (
+                      <RailRow
                         key={project.id}
                         to={`/projects/${project.id}`}
-                        className="row-hover hairline block border-b px-3 py-2.5 last:border-b-0"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Dot color={projectColor(project)} />
-                          <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-                        </span>
-                        <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
-                          {project.attention}
-                        </span>
-                      </Link>
+                        color={projectColor(project)}
+                        title={project.name}
+                        detail={project.attention ?? ''}
+                      />
                     ))}
                   </Panel>
                 </Section>
@@ -147,37 +136,25 @@ export function TodayPage(): React.JSX.Element {
                 ever call it late. Red because the whole point is that it is not
                 closed — the same red the overdue list uses, for the same reason.
               */}
-              {data.owedFromMeetings.length > 0 && (
+              {owed.length > 0 && (
                 <Section
                   title="Open to-dos from meetings"
-                  count={data.owedFromMeetings.reduce((total, m) => total + m.openTodos, 0)}
+                  count={owed.reduce((total, m) => total + m.openTodos, 0)}
                   tone="danger"
                 >
                   <Panel padded={false}>
-                    {data.owedFromMeetings.map((meeting) => (
-                      <Link
+                    {owed.map((meeting) => (
+                      <RailRow
                         key={meeting.meetingId}
                         to={`/projects/${meeting.projectId}/meetings/${meeting.meetingId}`}
-                        className="row-hover hairline block border-b px-3 py-2.5 last:border-b-0"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Dot
-                            color={projectColor({
-                              projectColor: meeting.projectColor,
-                              workspaceColor: workspace.color
-                            })}
-                          />
-                          <span className="min-w-0 flex-1 truncate text-[13px]">
-                            {meeting.title || 'Meeting'}
-                          </span>
-                          <span className="shrink-0 text-[11px] font-medium tabular-nums text-error">
-                            {meeting.openTodos}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
-                          {meeting.projectName} · {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
-                        </span>
-                      </Link>
+                        color={projectColor({
+                          projectColor: meeting.projectColor,
+                          workspaceColor: workspace.color
+                        })}
+                        title={meeting.title || 'Meeting'}
+                        detail={`${meeting.projectName} · ${plural(meeting.openTodos, 'open to-do', 'open to-dos')}`}
+                        badge={meeting.openTodos}
+                      />
                     ))}
                   </Panel>
                 </Section>
@@ -190,5 +167,50 @@ export function TodayPage(): React.JSX.Element {
       <TaskDialog open={editing !== null} onClose={() => setEditing(null)} task={editing} />
       <NewProjectModal open={creating} onClose={() => setCreating(false)} />
     </>
+  )
+}
+
+/**
+ * One row in the rail down the right. Both lists in it are the same shape — a thing
+ * with a colour, a name and one line saying why it is here — so they are one
+ * component, and the chevron that appears under the pointer says the row goes
+ * somewhere without adding a control to every row that does not.
+ */
+function RailRow({
+  to,
+  color,
+  title,
+  detail,
+  badge
+}: {
+  to: string
+  color: string
+  title: string
+  detail: string
+  badge?: number
+}): React.JSX.Element {
+  return (
+    <Link
+      to={to}
+      className="row-hover hairline group block border-b px-3 py-2.5 last:border-b-0"
+    >
+      <span className="flex items-center gap-2">
+        <Dot color={color} />
+        <span className="min-w-0 flex-1 truncate text-[13px]">{title}</span>
+        {badge !== undefined && (
+          <span className="shrink-0 rounded-full bg-error/12 px-1.5 py-px text-[10px] font-medium tabular-nums text-error">
+            {badge}
+          </span>
+        )}
+        <Icon
+          name="chevronRight"
+          size={13}
+          className="shrink-0 text-base-content/30 opacity-0 transition group-hover:opacity-100"
+        />
+      </span>
+      <span className="mt-0.5 block pl-[15px] text-[11px] leading-snug text-base-content/45">
+        {detail}
+      </span>
+    </Link>
   )
 }

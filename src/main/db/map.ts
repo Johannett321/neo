@@ -2,12 +2,13 @@ import type {
   Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
   Project, ProjectCollapsible, ProjectCollapsibleView, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
-  TaskView, TranscriptCue, Workspace
+  TaskView, TranscriptCue, Workspace, WorkspaceLink
 } from '@shared/types'
 import { EMPTY_RECAP } from '@shared/types'
 import type { CaptureState, Engine, Stage } from '@shared/recording'
 import { hasTimestamps } from '@shared/recording'
 import { daysBetween, iso, isoOrNull, today } from './client'
+import { bannerUrl } from '../lib/recording/media'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -32,7 +33,35 @@ export const mapWorkspace = (r: Row, icon: string | null = null): Workspace => (
   recapModel: r.recap_model ?? '',
   recapBaseUrl: r.recap_base_url ?? '',
   recapPrompt: r.recap_prompt ?? '',
+  bannerPath: r.banner_path ?? '',
+  // Built here rather than in the renderer so the renderer never learns where the
+  // file is, exactly as the icon's data URL keeps it from learning that.
+  banner: r.banner_path ? bannerUrl(r.banner_path) : null,
+  bannerX: r.banner_x ?? 50,
+  bannerY: r.banner_y ?? 50,
+  bio: r.bio ?? '',
+  weatherPlace: r.weather_place ?? '',
+  weatherLatitude: r.weather_latitude ?? null,
+  weatherLongitude: r.weather_longitude ?? null,
+  // Anything written before these columns existed reads as on, which is what an
+  // upgraded database should look like: the page gains its furniture, not a blank.
+  todayShowClock: r.today_show_clock ?? true,
+  todayShowWeather: r.today_show_weather ?? true,
+  todayShowBio: r.today_show_bio ?? true,
+  todayShowLinks: r.today_show_links ?? true,
+  todayShowStats: r.today_show_stats ?? true,
+  todayShowAttention: r.today_show_attention ?? true,
+  todayShowMeetingTodos: r.today_show_meeting_todos ?? true,
+  todayShowSoon: r.today_show_soon ?? true,
   createdAt: iso(r.created_at)
+})
+
+export const mapWorkspaceLink = (r: Row): WorkspaceLink => ({
+  id: r.id,
+  workspaceId: r.workspace_id,
+  label: r.label,
+  url: r.url,
+  sortOrder: r.sort_order
 })
 
 export const mapProject = (r: Row, icon: string | null = null): Project => ({

@@ -1,3 +1,5 @@
+import { resolveTemperature, type ClockFormat, type DateFormat, type TemperatureUnits } from '@shared/formats'
+
 /** Local calendar day as YYYY-MM-DD — never UTC, or "today" drifts after 01:00. */
 export function todayStr(d: Date = new Date()): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
@@ -23,17 +25,115 @@ export function addDays(value: string, days: number): string {
   return todayStr(d)
 }
 
-const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-const DATE_YEAR_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-const WEEKDAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+/* ------------------------------------------------------ how a date is written */
 
-export function formatDate(value: string | null): string {
-  if (!value) return ''
-  const d = parseDate(value)
-  return d.getFullYear() === new Date().getFullYear() ? DATE_FMT.format(d) : DATE_YEAR_FMT.format(d)
+/**
+ * The order the parts of a date come in, and whether the clock counts to twelve.
+ *
+ * Held in a module rather than passed down, because `formatDate` is called from about
+ * sixty places and none of them are the right place to be told about a preference.
+ * `applyDisplayPreferences` is called during the render of the provider at the top of
+ * the app, *before* anything below it draws, so a changed setting is already in force
+ * on the frame that follows it — an effect would leave one stale frame behind.
+ *
+ * `system` is the default and means the formatters are left exactly as they were: the
+ * operating system already knows, and for almost everybody it is right. The other
+ * choices reorder the parts and keep the machine's own month and weekday names, which
+ * is why they are built out of `formatToParts` rather than out of a forced locale —
+ * a Norwegian who writes the month first still wants "sep", not "Sep".
+ */
+let clockChoice: ClockFormat = 'system'
+let dateChoice: DateFormat = 'system'
+let temperatureChoice: TemperatureUnits = 'system'
+
+let DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+let DATE_YEAR_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+let WEEKDAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+let TIME_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+export function applyDisplayPreferences(next: {
+  clockFormat: ClockFormat
+  dateFormat: DateFormat
+  temperatureUnits: TemperatureUnits
+}): void {
+  clockChoice = next.clockFormat
+  dateChoice = next.dateFormat
+  temperatureChoice = next.temperatureUnits
+  TIME_FMT = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    // Undefined rather than a value: that is what leaves the locale to decide, and
+    // `hour12: false` is not the same thing — it forces 24 even where 12 is right.
+    hour12: clockChoice === '12' ? true : clockChoice === '24' ? false : undefined
+  })
 }
 
-export const formatLongDate = (value: string): string => WEEKDAY_FMT.format(parseDate(value))
+/** What "system" resolves to for a temperature, so a degree sign never guesses. */
+export const temperatureUnits = (): 'c' | 'f' => resolveTemperature(temperatureChoice)
+
+const part = (parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string =>
+  parts.find((p) => p.type === type)?.value ?? ''
+
+export function formatDate(value: string | null): string {
+  return formatDateWith(dateChoice, value)
+}
+
+export function formatLongDate(value: string): string {
+  return formatLongDateWith(dateChoice, value)
+}
+
+/**
+ * The same two functions with the choice passed in rather than read off the module.
+ *
+ * They exist so the settings screen can show what each option looks like *by
+ * formatting a date with it*, rather than by writing the example out by hand — a
+ * preview typed into the UI is a preview that can quietly stop being true. Nothing
+ * global is touched, which is the point: previewing four options must not leave the
+ * application drawing dates in the last one that was hovered.
+ */
+export function formatDateWith(choice: DateFormat, value: string | null): string {
+  if (!value) return ''
+  const d = parseDate(value)
+  const withYear = d.getFullYear() !== new Date().getFullYear()
+  const formatter = withYear ? DATE_YEAR_FMT : DATE_FMT
+  if (choice === 'system') return formatter.format(d)
+  if (choice === 'ymd') return todayStr(d)
+
+  const parts = formatter.formatToParts(d)
+  const day = part(parts, 'day')
+  const month = part(parts, 'month')
+  const year = withYear ? part(parts, 'year') : ''
+  return choice === 'dmy'
+    ? `${day} ${month}${year ? ` ${year}` : ''}`
+    : `${month} ${day}${year ? `, ${year}` : ''}`
+}
+
+export function formatLongDateWith(choice: DateFormat, value: string): string {
+  const d = parseDate(value)
+  if (choice === 'system') return WEEKDAY_FMT.format(d)
+
+  const parts = WEEKDAY_FMT.formatToParts(d)
+  const weekday = part(parts, 'weekday')
+  if (choice === 'ymd') return `${weekday}, ${todayStr(d)}`
+  const day = part(parts, 'day')
+  const month = part(parts, 'month')
+  return choice === 'dmy' ? `${weekday}, ${day} ${month}` : `${weekday}, ${month} ${day}`
+}
+
+/** The wall clock, to the minute, counting to twelve or to twenty-four as told. */
+export const formatTime = (at: Date): string => TIME_FMT.format(at)
+
+/** One clock choice, for the same reason `formatDateWith` exists. */
+export const formatTimeWith = (choice: ClockFormat, at: Date): string =>
+  new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: choice === '12' ? true : choice === '24' ? false : undefined
+  }).format(at)
+
+/** A temperature, in the unit it was actually read in. */
+export const formatTemperature = (value: number, units: 'c' | 'f'): string =>
+  `${value}°${units === 'f' ? 'F' : 'C'}`
 
 /** "Overdue by 3 days", "Today", "In 4 days" — the phrasing people actually think in. */
 export function dueLabel(days: number | null): string {

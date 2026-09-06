@@ -13,6 +13,7 @@ import { plural } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
 import { SettingsLayout } from '@/components/SettingsLayout'
+import { TodayPane } from '@/components/today/TodaySettings'
 import { WorkspaceModal, WORKSPACE_COLORS } from '@/components/WorkspaceModal'
 import { ConfirmButton, Field, Panel } from '@/components/primitives'
 
@@ -46,6 +47,13 @@ export function WorkspaceSettings(): React.JSX.Element {
             icon: 'sparkle',
             description: 'How you pick this workspace out of the switcher.',
             render: () => <IdentityPane workspace={workspace} />
+          },
+          {
+            id: 'today',
+            label: 'Today',
+            icon: 'today',
+            description: 'The banner, the weather and what the morning screen shows.',
+            render: () => <TodayPane workspace={workspace} />
           },
           {
             id: 'assistant',

@@ -10,6 +10,7 @@ import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
+import { registerWeatherHandlers } from '../src/main/ipc/weather'
 import { registerChatHandlers } from '../src/main/ipc/chat'
 import { registerMcpHandlers } from '../src/main/ipc/mcp'
 import { TOOLS } from '../src/main/lib/ai/tools'
@@ -19,11 +20,13 @@ import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
 import { announceChange, onChange } from '../src/main/lib/changes'
 import { attentionReason } from '../src/main/lib/attention'
+import { describeWeather } from '../src/shared/weather'
+import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath } from '../src/main/lib/recording/systemAudio'
-import { exec, q } from '../src/main/db/client'
+import { exec, iconDir, q } from '../src/main/db/client'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -74,6 +77,7 @@ async function main(): Promise<void> {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerWeatherHandlers()
   registerMcpHandlers()
   registerChatHandlers()
 
@@ -877,6 +881,26 @@ async function main(): Promise<void> {
   ok('and trying to catch the computer\'s own sound is on until it is turned off',
      (await call('settings:save', { captureSystemAudio: true })).captureSystemAudio === true)
 
+  /*
+   * How a date, a clock and a temperature read is about the person at the machine
+   * rather than about a working life, so it sits here beside the theme and not on a
+   * workspace. Every one defaults to what the operating system says.
+   */
+  const formats = await call('settings:save', {
+    clockFormat: '24', dateFormat: 'ymd', temperatureUnits: 'f'
+  })
+  ok('how a date, a clock and a temperature read is remembered on this machine',
+     formats.clockFormat === '24' && formats.dateFormat === 'ymd' &&
+     formats.temperatureUnits === 'f')
+  ok('and a value that is not one of the choices falls back to the system\'s own',
+     (await call('settings:save', { dateFormat: 'martian' })).dateFormat === 'system')
+  ok('"system" degrees resolve to one a forecast can actually be asked for',
+     ['c', 'f'].includes(resolveTemperature('system')) &&
+     resolveTemperature('f') === 'f' && resolveTemperature('c') === 'c')
+
+  // Put back, so the assertions below read dates the way the rest of the run does.
+  await call('settings:save', { clockFormat: 'system', temperatureUnits: 'system' })
+
   const engines = await call('workspace:save', {
     id: dayJob,
     transcribeEngine: 'local',
@@ -887,6 +911,87 @@ async function main(): Promise<void> {
      engines.transcribeEngine === 'local' &&
      engines.transcribeBaseUrl === 'http://127.0.0.1:9000/v1' &&
      engines.recapPrompt === 'Only the decisions, nothing else.')
+
+  /* ------------------------------------------- the Today page's own furniture */
+
+  /*
+   * All of this is decoration, and that is the point: nothing here is read by
+   * attention, by the mirror or by anything that decides what to do next, which is
+   * why it is the one part of the app the user gets to arrange. What it must still
+   * do is behave like everything else — clean up after itself, stay inside its
+   * workspace, and never make a network request nobody asked for.
+   */
+  mkdirSync(iconDir(), { recursive: true })
+  const firstBanner = '11111111-1111-4111-8111-111111111111.png'
+  const secondBanner = '22222222-2222-4222-8222-222222222222.png'
+  for (const file of [firstBanner, secondBanner]) writeFileSync(join(iconDir(), file), 'x')
+
+  const bannered = await call('workspace:save', { id: dayJob, bannerPath: firstBanner })
+  ok('a banner comes back as a URL the renderer can draw and not as a path it could read',
+     bannered.banner === `neo-media://banner/${firstBanner}` && !bannered.banner.includes(iconDir()),
+     bannered.banner)
+
+  await call('workspace:save', { id: dayJob, bannerPath: secondBanner })
+  ok('replacing a banner takes the old file with it',
+     !existsSync(join(iconDir(), firstBanner)) && existsSync(join(iconDir(), secondBanner)))
+
+  const bare = await call('workspace:save', { id: dayJob, bannerPath: '' })
+  ok('and removing one leaves nothing behind to draw',
+     bare.banner === null && !existsSync(join(iconDir(), secondBanner)))
+
+  const panned = await call('workspace:save', { id: dayJob, bannerX: 20, bannerY: 140 })
+  ok('a banner remembers which part of it is seen, and cannot be moved off its own edge',
+     panned.bannerX === 20 && panned.bannerY === 100)
+
+  const bio = await call('workspace:save', { id: dayJob, bio: 'Three squads, one roadmap.' })
+  ok('a workspace can say what you do in it', bio.bio === 'Three squads, one roadmap.')
+
+  // A link belongs to the working life rather than to a piece of work, so it is
+  // fenced to its workspace exactly as everything else scoped is.
+  const typed = await call('workspaceLink:save', { workspaceId: dayJob, url: 'intranet.company.com' })
+  ok('a link typed without a scheme is given one, and labels itself from the address',
+     typed.url === 'https://intranet.company.com' && typed.label === 'intranet.company.com')
+
+  const timesheet = await call('workspaceLink:save', {
+    workspaceId: dayJob, label: 'Timesheet', url: 'https://time.example.com'
+  })
+  ok('a link with no address is refused rather than saved blank',
+     await threw(() => call('workspaceLink:save', { workspaceId: dayJob, label: 'Nothing' }),
+                 'needs an address'))
+
+  await call('workspaceLink:reorder', { ids: [timesheet.id, typed.id] })
+  const ordered = await call('workspaceLink:list', { workspaceId: dayJob })
+  ok('links are drawn in the order they were put in',
+     ordered.map((l: any) => l.id).join() === [timesheet.id, typed.id].join())
+  ok('and one workspace never sees another one\'s links',
+     (await call('workspaceLink:list', { workspaceId: own })).length === 0)
+
+  await call('workspaceLink:delete', { id: typed.id })
+  ok('a link can be taken off again',
+     (await call('workspaceLink:list', { workspaceId: dayJob })).length === 1)
+
+  const hidden = await call('workspace:save', {
+    id: dayJob, todayShowWeather: false, todayShowSoon: false
+  })
+  ok('what Today shows is remembered per workspace',
+     hidden.todayShowWeather === false && hidden.todayShowSoon === false &&
+     hidden.todayShowAttention === true)
+
+  /*
+   * The weather is the only thing in this application that talks to the internet
+   * without a key of yours, so switching it off has to mean *no request* rather
+   * than a request whose answer is dropped. This assertion is what keeps that true:
+   * it returns null, and it returns it without a socket, which is also why the whole
+   * verify run stays offline.
+   */
+  ok('weather switched off asks nobody anything',
+     (await call('weather:get', { workspaceId: dayJob })) === null)
+
+  ok('a weather code becomes the same words and the same picture on both sides',
+     describeWeather(0, true).icon === 'weatherSun' &&
+     describeWeather(0, false).icon === 'weatherMoon' &&
+     describeWeather(61).text === 'Light rain' &&
+     describeWeather(-1).text === '')
 
   // A to-do agreed in a room is on no board and carries no date, so nothing else on
   // Today would ever raise it. The workspace screen carries it up itself.

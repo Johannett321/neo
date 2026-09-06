@@ -4,7 +4,8 @@ import type {
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
-  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, Workspace
+  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, WeatherNow,
+  WeatherPlace, Workspace, WorkspaceLink
 } from './types'
 
 /** Every scoped request names its workspace explicitly — there is no implicit "all". */
@@ -45,6 +46,32 @@ export interface ApiMap {
    * and editing behave the same. Returns null if the picker was cancelled.
    */
   'icon:pick': { in: void; out: { iconPath: string; dataUrl: string } | null }
+  /**
+   * The same picker for the photograph across the top of Today. Separate from
+   * `icon:pick` because the two differ in every way that matters to the person
+   * choosing: what the dialog is called, how big the file may be, and — since a
+   * banner is served over `neo-media://` rather than inlined — what comes back.
+   */
+  'banner:pick': { in: void; out: { bannerPath: string; url: string } | null }
+
+  /** The links on this workspace's front page, in the order they are drawn. */
+  'workspaceLink:list': { in: Scope; out: WorkspaceLink[] }
+  'workspaceLink:save': { in: Draft<WorkspaceLink>; out: WorkspaceLink }
+  'workspaceLink:delete': { in: { id: string }; out: void }
+  'workspaceLink:reorder': { in: { ids: string[] }; out: void }
+
+  /**
+   * The weather where this workspace is read, or null.
+   *
+   * The only channel in the app that leaves the machine without an API key, and the
+   * only one whose failure is uninteresting: no network, no location, a service
+   * having a bad day and a switched-off preference all come back the same way, and
+   * Today simply does not draw that corner. It sends a latitude and a longitude and
+   * nothing else — see `main/lib/weather.ts`.
+   */
+  'weather:get': { in: Scope; out: WeatherNow | null }
+  /** Places matching a name, for choosing one in settings. Empty on any failure. */
+  'weather:search': { in: { query: string }; out: WeatherPlace[] }
 
   'project:list': { in: ProjectFilter; out: ProjectSummary[] }
   'project:get': { in: { id: string; touch?: boolean }; out: ProjectDetail }

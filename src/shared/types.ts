@@ -1,3 +1,5 @@
+import type { ClockFormat, DateFormat, TemperatureUnits } from './formats'
+
 /**
  * The contract between the Electron main process and the renderer.
  * Everything that crosses the IPC bridge is described here.
@@ -68,7 +70,95 @@ export interface Workspace {
   recapBaseUrl: string
   /** What the recap is asked for. Empty means the default in `shared/recording.ts`. */
   recapPrompt: string
+
+  /* --------------------------------------------------- the Today page's own look */
+
+  /** Filename inside icons/, the photograph across the top of Today. Empty for none. */
+  bannerPath: string
+  /**
+   * The banner as a URL the renderer can put in an `src`, or null when there is none.
+   *
+   * A `neo-media://` URL rather than a data URL, unlike the icon beside it, and for
+   * one reason: an icon is a few kilobytes and a banner is a photograph. Handing a
+   * megabyte of base64 across the bridge on every `workspace:list` — which every
+   * mutation in the app invalidates — is a cost paid on every keystroke that saves.
+   */
+  banner: string | null
+  /**
+   * Which part of the banner is shown, as `object-position` percentages. A photograph
+   * is rarely the shape of the strip it is drawn in, so most of one axis is cropped
+   * away; these say which part survives. 50/50 is centred, and is what a banner that
+   * has never been dragged shows.
+   */
+  bannerX: number
+  bannerY: number
+  /** A line about what you do in this working life. Markdown is not parsed here. */
+  bio: string
+  /**
+   * Where the weather is read for. Empty means it is worked out from the machine's
+   * own timezone, which is what makes it say something before anyone configures it.
+   */
+  weatherPlace: string
+  weatherLatitude: number | null
+  weatherLongitude: number | null
+  /**
+   * What Today is allowed to show. Overdue and due today are not in here: they are
+   * the reason the screen exists, and one you can switch off is a wallpaper.
+   */
+  todayShowClock: boolean
+  todayShowWeather: boolean
+  todayShowBio: boolean
+  todayShowLinks: boolean
+  todayShowStats: boolean
+  todayShowAttention: boolean
+  todayShowMeetingTodos: boolean
+  todayShowSoon: boolean
+
   createdAt: string
+}
+
+/**
+ * A link on the workspace's front page. Not a project's `Link`: it belongs to the
+ * working life rather than to a piece of work, and it carries no kind, because the
+ * kinds exist to tell a repository from a board and these are just the things you
+ * open in the morning.
+ */
+export interface WorkspaceLink {
+  id: string
+  workspaceId: string
+  label: string
+  url: string
+  sortOrder: number
+}
+
+/**
+ * The weather where you are, as far as a forecast service will say. Everything here
+ * is already in the workspace's own unit — the renderer draws a number, it does not
+ * convert one.
+ */
+export interface WeatherNow {
+  /** The place it is actually for, in words, so a wrong guess is visible. */
+  place: string
+  temperature: number
+  high: number
+  low: number
+  /** Which unit it was actually fetched in, so the degree sign cannot disagree. */
+  units: 'c' | 'f'
+  /** WMO weather code, kept so the words and the icon come from one table. */
+  code: number
+  description: string
+  isDay: boolean
+  /** When it was fetched, so a stale reading can say so rather than pretend. */
+  fetchedAt: string
+}
+
+/** A candidate place, from searching for one by name. */
+export interface WeatherPlace {
+  name: string
+  region: string
+  country: string
+  latitude: number
+  longitude: number
 }
 
 /**
@@ -578,6 +668,18 @@ export interface Settings {
    * the material is still there, and nothing passes through it.
    */
   glassTransparency: number
+  /**
+   * How the time, the date and the temperature read. On this machine rather than on
+   * a workspace: which working life you are in changes the photograph at the top of
+   * Today, not whether you count hours to twelve or to twenty-four.
+   *
+   * `system` everywhere by default, which means whatever the operating system already
+   * says — the right answer for almost everybody, and the reason these are three
+   * quiet choices rather than a setup step.
+   */
+  clockFormat: ClockFormat
+  dateFormat: DateFormat
+  temperatureUnits: TemperatureUnits
   staleAfterDays: number
   horizonDays: number
   /**

@@ -21,14 +21,21 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml'
 }
 
+/**
+ * A banner is a photograph across the top of a screen rather than a mark beside a
+ * name, so it is allowed to be bigger. It is not allowed to be unbounded: the file
+ * is copied into the data folder, and the data folder is what people back up.
+ */
+export const MAX_BANNER_BYTES = 8 * 1024 * 1024
+
 /** Copy a chosen image into icons/ and return the stored filename. */
-export async function storeIcon(sourcePath: string): Promise<string> {
+export async function storeIcon(sourcePath: string, maxBytes = MAX_ICON_BYTES): Promise<string> {
   const ext = extname(sourcePath).toLowerCase()
   if (!ALLOWED_ICON_EXTENSIONS.includes(ext)) {
     throw new Error(`Unsupported image type: ${ext || 'unknown'}`)
   }
-  if (statSync(sourcePath).size > MAX_ICON_BYTES) {
-    throw new Error('That image is larger than 2 MB.')
+  if (statSync(sourcePath).size > maxBytes) {
+    throw new Error(`That image is larger than ${Math.round(maxBytes / (1024 * 1024))} MB.`)
   }
   await mkdir(iconDir(), { recursive: true })
   const filename = `${randomUUID()}${ext}`

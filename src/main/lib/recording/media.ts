@@ -1,6 +1,8 @@
 import { protocol } from 'electron'
 import { Readable } from 'node:stream'
-import { q1 } from '../../db/client'
+import { readFile } from 'node:fs/promises'
+import { extname, join } from 'node:path'
+import { iconDir, q1 } from '../../db/client'
 import { readSegmentStream, segmentBytes } from './store'
 
 /**
@@ -21,6 +23,14 @@ export const MEDIA_SCHEME = 'neo-media'
 
 export const segmentUrl = (segmentId: string): string => `${MEDIA_SCHEME}://segment/${segmentId}`
 
+/**
+ * The workspace banner, over the same scheme and for the same reason as the audio:
+ * it is a photograph, and a photograph handed over the bridge as base64 would be
+ * re-sent on every `workspace:list` — which is to say after every write in the app.
+ * The renderer gets a URL and still never learns a path.
+ */
+export const bannerUrl = (filename: string): string => `${MEDIA_SCHEME}://banner/${encodeURIComponent(filename)}`
+
 /** Must run before the app is ready, which is why it is not part of the handler. */
 export const MEDIA_SCHEME_PRIVILEGES = {
   scheme: MEDIA_SCHEME,
@@ -32,6 +42,7 @@ const RANGE = /^bytes=(\d*)-(\d*)$/
 export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     const url = new URL(request.url)
+    if (url.hostname === 'banner') return serveBanner(url)
     if (url.hostname !== 'segment') return new Response('Not found', { status: 404 })
 
     const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
@@ -85,4 +96,46 @@ export function registerMediaProtocol(): void {
       return new Response('Not found', { status: 404 })
     }
   })
+}
+
+const BANNER_FILE = /^[0-9a-f-]{36}\.(png|jpg|jpeg|webp|gif|svg)$/i
+
+/**
+ * Serve a workspace's banner. The filename is checked against the shape this app
+ * writes *and* against the database, so the only images reachable here are ones a
+ * workspace actually points at — a URL typed by hand can name nothing else, and a
+ * banner that has been replaced stops being served the moment the row changes.
+ */
+async function serveBanner(url: URL): Promise<Response> {
+  const file = decodeURIComponent(url.pathname.replace(/^\//, ''))
+  if (!BANNER_FILE.test(file)) return new Response('Not found', { status: 404 })
+
+  const row = await q1<{ banner_path: string }>(
+    'SELECT banner_path FROM workspace WHERE banner_path = $1 LIMIT 1',
+    [file]
+  )
+  if (!row) return new Response('Not found', { status: 404 })
+
+  try {
+    const bytes = await readFile(join(iconDir(), file))
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        'content-type': BANNER_MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+        // The filename is a UUID and its contents never change, so the window may
+        // keep it: without this the photograph is re-read on every navigation.
+        'cache-control': 'private, max-age=31536000, immutable'
+      }
+    })
+  } catch {
+    return new Response('Not found', { status: 404 })
+  }
+}
+
+const BANNER_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml'
 }

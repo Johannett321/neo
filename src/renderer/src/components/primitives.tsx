@@ -81,13 +81,31 @@ export function Section({
 }): React.JSX.Element {
   const toneClass =
     tone === 'danger' ? 'text-error' : tone === 'warn' ? 'text-warning' : 'text-base-content/45'
+  /*
+   * The count is a pill rather than a second number in the heading. It reads as a
+   * quantity at a glance instead of as part of the words, which matters most where
+   * the heading is already coloured — "Overdue 4" in red is a phrase, and a red four
+   * in a red pill is a number. Changed here rather than on one screen: the project's
+   * own Today deliberately uses the same headings as the workspace's, and the two are
+   * meant to stay one habit.
+   */
+  const pillClass =
+    tone === 'danger'
+      ? 'bg-error/12 text-error'
+      : tone === 'warn'
+        ? 'bg-warning/15 text-warning'
+        : 'bg-base-content/8 text-base-content/55'
   return (
     <section className="mb-9">
-      <div className="mb-2.5 flex items-baseline justify-between gap-3">
-        <h2 className={`text-[11px] font-semibold uppercase tracking-[0.09em] ${toneClass}`}>
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <h2
+          className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.09em] ${toneClass}`}
+        >
           {title}
           {count !== undefined && count > 0 && (
-            <span className="ml-1.5 font-normal tabular-nums opacity-70">{count}</span>
+            <span className={`rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums ${pillClass}`}>
+              {count}
+            </span>
           )}
         </h2>
         {action}

@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS workspace (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- A link you put on the workspace's own front page: the intranet, the timesheet, the
+-- one dashboard you open every morning. Deliberately not the link table, which hangs
+-- off a project and carries a kind that decides its icon — these are yours, they
+-- belong to no project, and a label is all they say. Nothing derives from them.
+CREATE TABLE IF NOT EXISTS workspace_link (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  label        text NOT NULL,
+  url          text NOT NULL,
+  sort_order   integer NOT NULL DEFAULT 0,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
 -- Somewhere to file projects, and nothing more: no dates, no state, no work of its
 -- own. Deleting one is handled in the handler, which lifts everything inside it up a
 -- level first; the cascade here is only the backstop for a workspace going away, and
@@ -376,6 +389,7 @@ CREATE INDEX IF NOT EXISTS idx_decision_project   ON decision (project_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_project    ON meeting (project_id, occurred_on DESC);
 CREATE INDEX IF NOT EXISTS idx_meeting_todo       ON meeting_todo (meeting_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_link_project       ON link (project_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_workspace_link    ON workspace_link (workspace_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_journal_project    ON journal_entry (project_id);
 CREATE INDEX IF NOT EXISTS idx_activity_project   ON activity (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversation_ws    ON conversation (workspace_id, updated_at DESC);
@@ -416,6 +430,41 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_model text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_base_url text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS recap_prompt text NOT NULL DEFAULT ''`,
+  // The Today page's own furniture. A workspace is a working life, and its front page
+  // is allowed to look like one: a photograph across the top, a line about what you do
+  // here, a place to read the weather for. None of it is derived from anything and
+  // nothing derives from it — it is the one part of the app that is decoration, which
+  // is exactly why it is safe to let the user own it.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS banner_path text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT ''`,
+  // Which part of the banner you actually see. A photograph is rarely five times as
+  // wide as it is tall, so `object-fit: cover` throws most of one away; these two are
+  // the `object-position` that decides which part goes. Percentages, because the strip
+  // is a different width on every window, and 50/50 — dead centre — is what a picture
+  // that has never been dragged should show.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS banner_x integer NOT NULL DEFAULT 50`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS banner_y integer NOT NULL DEFAULT 50`,
+  // Where the weather is read for. Empty means "work it out from the machine's own
+  // timezone", which is what makes it work before anybody has configured anything.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS weather_place text NOT NULL DEFAULT ''`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS weather_latitude double precision`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS weather_longitude double precision`,
+  // Degrees are about the person, not about the working life — nobody wants Celsius
+  // in the day job and Fahrenheit in their own company — so the unit lives in app
+  // settings beside the clock and the date format, and the column goes.
+  `ALTER TABLE workspace DROP COLUMN IF EXISTS weather_units`,
+  // What the page is allowed to show. Discrete columns rather than one JSON blob, so
+  // `pick()`'s allowlist still means something and a typo cannot invent a preference.
+  // There is no toggle for overdue or due today: those two are what the screen is for,
+  // and a Today page you can switch the work off is a wallpaper.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_clock boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_weather boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_bio boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_links boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_stats boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_attention boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_meeting_todos boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_soon boolean NOT NULL DEFAULT true`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS suggested_title text NOT NULL DEFAULT ''`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_written_at timestamptz`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_todos_at timestamptz`,

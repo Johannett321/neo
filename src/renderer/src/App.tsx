@@ -12,6 +12,7 @@ import { useApi, useLiveData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider, useContextMenu } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
+import { useDisplayPreferences } from '@/lib/display'
 import { useTheme } from '@/lib/theme'
 import { RecorderProvider } from '@/lib/recorder'
 import { WorkspaceProvider, useWorkspaces } from '@/lib/workspace'
@@ -64,8 +65,10 @@ function Shell(): React.JSX.Element {
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
   const assistant = useAssistant()
-  // The preference lives in Settings; the shell only applies it.
+  // The preference lives in Settings; the shell only applies it. Same for how a date,
+  // a clock and a temperature are written — applied here so every screen below agrees.
   useTheme()
+  useDisplayPreferences()
 
   /**
    * The application menu drives the same actions the keyboard and buttons do, rather

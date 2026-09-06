@@ -62,6 +62,12 @@ account, no server, no telemetry, no paid tier. Nothing about the projects you m
 leaves your laptop, which matters when your notes say what you actually think about a
 stakeholder.
 
+There are exactly two things that ever leave it, both of them yours to switch off. The
+assistant and the meeting transcription go wherever you point them — an API key you
+supply, or a model running on the machine itself. And the weather on the Today page asks
+Open-Meteo for a forecast: no account and no key, a latitude and a longitude and nothing
+else, and it draws nothing at all if that fails.
+
 ## Install
 
 Download the latest build for your platform from
@@ -375,12 +381,49 @@ one is for. Each row carries a rule in **its project's** colour rather
 than its workspace's — every row on this screen belongs to the same workspace, so that
 colour was the same on all of them and told you nothing.
 
+It opens with a block that says whose day it is and which working life you are in. A
+photograph across the top if you upload one, the greeting with your name, a line about
+what you do here, the time and the date, the weather, and the links you open every
+morning — the intranet, the timesheet, the one dashboard you actually read. All of it is
+**per workspace**, because with three or four of them the first question of the morning
+is genuinely *where am I*, and a photograph answers that faster than a label does. The
+day job and your own company are different rooms and are allowed to look like it.
+
+None of it is derived from anything, and nothing derives from it. That is what makes it
+safe to hand over: a banner that is wrong costs you a photograph, not an answer. Each
+block has a switch in **Workspace → Today**, so a workspace you have not decorated draws
+the plain screen it always drew rather than a half-finished one. Overdue and due today
+have no switch, because they are what the screen is for.
+
+A banner is dragged into place rather than cropped: the preview in **Workspace →
+Today** is close to the shape the strip is drawn in on the page, and dragging the
+picture inside it says which part survives — a photograph is rarely five times as wide
+as it is tall, so most of one axis is thrown away and you should be the one choosing
+which. A replaced picture starts centred again, because the old numbers described a
+different photograph.
+
+The weather is the only part that leaves the machine. It sends a latitude and a longitude
+to Open-Meteo — no account, no key, nothing about your work — and works out where you are
+from the machine's own timezone unless you name a place, so it says something on the first
+morning without a setup step. Switched off, it makes no request at all.
+
 Having nothing due and having nothing at all are different facts and get opposite
 screens. A workspace with projects in it and a clear week says so and sends you off to
 work. A workspace with nothing in it yet is not congratulated for being on top of
 things: it says the next step is one project, explains what a project is for, and
 offers the button — because this is the one screen in the app that has nothing to
 derive an answer from.
+
+### How things read
+The clock, the date and the temperature follow the operating system, and can be told
+not to, in **Settings → Formats**. Twelve or twenty-four hours; day first, month first
+or year first; Celsius or Fahrenheit. Each option shows what it would actually look
+like rather than describing itself, and picking a date order keeps the machine's own
+month and weekday names — a Norwegian who writes the month first still gets *sep*.
+
+They are app settings and not workspace settings on purpose: which working life you are
+in changes the photograph at the top of Today, and it does not change whether you count
+hours to twelve or to twenty-four.
 
 ### You
 You are a person too. One profile — name and photo, edited in Settings — mirrored into

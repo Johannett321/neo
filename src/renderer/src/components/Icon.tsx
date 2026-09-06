@@ -58,7 +58,28 @@ const PATHS = {
   waveform: 'M3 12h2M7 8v8M11 4.5v15M15 8v8M19 10.5v3M21.5 12h.01',
   // Two stars rather than one: the single sparkle already means the assistant, and
   // this is the smaller thing — a field filling itself in, not a conversation.
-  sparkles: 'M9.5 3l1.5 4.1L15 8.5l-4 1.4L9.5 14 8 9.9 4 8.5l4-1.4L9.5 3zM17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z'
+  sparkles: 'M9.5 3l1.5 4.1L15 8.5l-4 1.4L9.5 14 8 9.9 4 8.5l4-1.4L9.5 3zM17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z',
+
+  /*
+   * The weather, on the same grid and the same single stroke as everything else, so
+   * the corner of Today that reads the sky belongs to the same drawing as the rest of
+   * the app. The names match the table in `shared/weather.ts`, which is the one place
+   * a WMO code turns into words and a picture.
+   */
+  weatherSun: 'M12 4V2m0 20v-2m8-8h2M2 12h2m13.6-5.6l1.4-1.4M5 19l1.4-1.4m0-11.2L5 5m14 14l-1.4-1.4M16 12a4 4 0 11-8 0 4 4 0 018 0z',
+  weatherMoon: 'M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z',
+  weatherCloud: 'M7 18h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 18z',
+  weatherPartly: 'M9 19h8a3.2 3.2 0 000-6.4 4.6 4.6 0 00-8.7-1.2A3.3 3.3 0 009 19zM7.8 8.4a3.2 3.2 0 015-1.8M10.5 2.8v1.5M5.6 4.6l1.1 1.1M3.4 9.3H5',
+  weatherPartlyNight: 'M9 19h8a3.2 3.2 0 000-6.4 4.6 4.6 0 00-8.7-1.2A3.3 3.3 0 009 19zM15 3a3.5 3.5 0 004.4 4.6A3.7 3.7 0 0115 3z',
+  weatherFog: 'M7 15h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 15zM5 18.5h14M7.5 21.5h9',
+  weatherDrizzle: 'M7 16.5h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 16.5zM9.5 19v1.2M13 19v1.8M16.5 19v1.2',
+  weatherRain: 'M7 16.5h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 16.5zM9 19v2.2M12.5 19v2.8M16 19v2.2',
+  weatherSnow: 'M7 16.5h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 16.5zM9.5 19.5h.01M12.5 19.5h.01M15.5 19.5h.01M11 22h.01M14 22h.01',
+  weatherStorm: 'M7 16.5h10a3.5 3.5 0 000-7 5 5 0 00-9.6-1.4A3.7 3.7 0 007 16.5zM13 18.2l-2.6 3.3h2.9l-1.7 2.3',
+  /** A picture, for the banner across the top of Today. */
+  image: 'M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM4 16l4.5-4.5 4 4 3-3L20 16M9.3 9.3h.01',
+  /** Somewhere to take hold of a row you are about to drag. */
+  grip: 'M9.5 6h.01M14.5 6h.01M9.5 12h.01M14.5 12h.01M9.5 18h.01M14.5 18h.01'
 } as const
 
 interface IconProps {

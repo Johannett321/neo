@@ -23,6 +23,7 @@ import { registerRecordingHandlers } from './ipc/recordings'
 import { registerSearchHandlers } from './ipc/search'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTaskHandlers } from './ipc/tasks'
+import { registerWeatherHandlers } from './ipc/weather'
 import { registerWorkspaceHandlers } from './ipc/workspaces'
 import { invokeChannel } from './ipc/util'
 
@@ -147,6 +148,7 @@ function registerHandlers(): void {
   registerDashboardHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerWeatherHandlers()
   registerMcpHandlers()
   // Registered last: the assistant's tools call the channels above by name.
   registerChatHandlers()
@@ -199,6 +201,7 @@ async function start(): Promise<void> {
   const referenced = await q<{ icon_path: string }>(
     `SELECT icon_path FROM workspace
      UNION ALL SELECT icon_path FROM project
+     UNION ALL SELECT banner_path FROM workspace
      UNION ALL SELECT avatar_path FROM person
      UNION ALL SELECT value FROM setting WHERE key = 'profileAvatarPath'`
   )
