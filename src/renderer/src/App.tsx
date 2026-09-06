@@ -44,7 +44,7 @@ function screenKey(pathname: string): string {
 }
 
 function Shell(): React.JSX.Element {
-  const { switchTo } = useWorkspaces()
+  const { active, switchTo } = useWorkspaces()
   // Inside a project the target is already known, so it is never asked for.
   const inProject = useMatch('/projects/:id/*')
   const isBoard = Boolean(useMatch('/projects/:id/kanban'))
@@ -88,6 +88,20 @@ function Shell(): React.JSX.Element {
       else if (command === 'forward') history.forward()
     })
   }, [navigate, assistant])
+
+  /**
+   * Following a notification. It is the only way into the app that can name a
+   * workspace other than the one on screen, so the workspace is switched first and
+   * the path is followed after — arriving at a project in the wrong area would draw
+   * a screen with nothing on it, which is exactly the failure workspace isolation
+   * exists to prevent.
+   */
+  useEffect(() => {
+    return window.api.onOpen(({ workspaceId, path }) => {
+      if (workspaceId && workspaceId !== active?.id) switchTo(workspaceId)
+      navigate(path)
+    })
+  }, [navigate, switchTo, active?.id])
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     const meta = e.metaKey || e.ctrlKey

@@ -12,6 +12,7 @@ import { useWorkspace, useWorkspaces } from '@/lib/workspace'
 import { plural } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
+import { NotificationPane } from '@/components/NotificationSettings'
 import { SettingsLayout } from '@/components/SettingsLayout'
 import { TodayPane } from '@/components/today/TodaySettings'
 import { WorkspaceModal, WORKSPACE_COLORS } from '@/components/WorkspaceModal'
@@ -54,6 +55,13 @@ export function WorkspaceSettings(): React.JSX.Element {
             icon: 'today',
             description: 'The banner, the weather and what the morning screen shows.',
             render: () => <TodayPane workspace={workspace} />
+          },
+          {
+            id: 'notifications',
+            label: 'Notifications',
+            icon: 'bell',
+            description: 'What this working life is worth being interrupted about.',
+            render: () => <NotificationPane workspace={workspace} />
           },
           {
             id: 'assistant',

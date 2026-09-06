@@ -287,6 +287,46 @@ export interface ApiMap {
 
   'search:query': { in: Scope & { q: string }; out: SearchHit[] }
 
+  /**
+   * What this workspace would say out loud this morning, given what it is set to say.
+   *
+   * Derived on every call and stored nowhere, like the attention line: the deadlines
+   * and the due dates are the only inputs, so there is no reminder to create, snooze
+   * or tidy up after. Empty is the ordinary answer on an ordinary day.
+   *
+   * The delivery loop reads it, and so does the settings pane — which is the point of
+   * it being a channel rather than something the loop works out privately. A screen
+   * that can show you the sentence you have just configured is worth more than any
+   * amount of prose explaining what the switches do.
+   */
+  'notification:pending': { in: Scope; out: import('./types').PendingNotification[] }
+  /**
+   * Put one on the desktop now, whatever the settings say and without writing down
+   * that it happened.
+   *
+   * macOS decides whether an application may show notifications at the moment it
+   * first tries, and offers no way to ask beforehand — so, exactly as with the audio
+   * tap, the only honest way to answer "will this work" is to do it, and this is also
+   * what makes the operating system put its own question on screen. What comes back
+   * is what actually happened rather than that it was attempted: the failure arrives
+   * on an event a moment later, not as a thrown error, which is why an earlier version
+   * of this reported success while nothing appeared.
+   *
+   * A refusal and a prompt still waiting for an answer are indistinguishable from
+   * here — both are "not allowed, yet" — so `reason` says so rather than guessing.
+   */
+  'notification:test': { in: void; out: { shown: boolean; reason: string } }
+  /**
+   * What this machine can do about notifications at all, before anything is shown.
+   *
+   * `gated` is the interesting one: it says the operating system will not let an
+   * application show a notification until the person has agreed to it, which is true
+   * of macOS and not of Windows or Linux. It is what decides whether the first-run
+   * flow has a panel about notifications in it — asking somewhere that never asks
+   * would be a step that does nothing.
+   */
+  'notification:capability': { in: void; out: { supported: boolean; gated: boolean } }
+
   'profile:get': { in: void; out: Profile }
   'profile:save': { in: Partial<Profile>; out: Profile }
   /** What to put in the name field on first run, from the machine's own account. */

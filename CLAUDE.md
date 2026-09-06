@@ -109,10 +109,44 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   constraint. (The graded health level this replaced was removed deliberately: the colour
   had to be decoded and clashed with the workspace palette. Colour on a project now means
   identity only.)
+- **A notification is the attention line, delivered.** `src/main/lib/notify.ts` is the
+  pure half — rows and preferences in, sentences out, the way `attention.ts` works —
+  and `lib/notifier.ts` is the runner that puts them on the desktop. Every one of the
+  five moments is read off a deadline or a due date, so **there is no reminder object**:
+  nothing to create, snooze or tidy up, and nothing that can go stale. Three rules hold
+  it up. **One notification per kind, never one per item** — four cards due tomorrow is
+  one sentence, because an app with four cards in the notification centre is an app
+  whose notifications get switched off. **An exact day, never a window**: a warning
+  fires on the morning that is exactly N days out and on no other, because a window
+  would fire again every day until the date arrived. And **one delivery a day**, at an
+  hour set in app settings — a deadline is a calendar fact and nothing about it happens
+  at 14:07. Whether this *machine* may interrupt you, when, and at weekends are app
+  settings; *what is worth saying* is per workspace, the same seam the recording
+  settings are split along. Being said once is a row and a unique index
+  (`notification (workspace_id, kind, on_date)`), claimed **before** the notification is
+  shown — never a timer and never a comparison of timestamps, so four restarts before
+  lunch interrupt you once. `notification:pending` is a channel rather than something
+  the runner works out privately so the settings pane can show the real sentence; the
+  runner reads workspace *ids* straight from SQL because `workspace:list` reads an icon
+  off disk per workspace and this ticks every minute, but every question about what is
+  *inside* a workspace still goes through the scoped channel, one workspace at a time.
+  **A notification that failed does not throw.** `show()` returns at once and a refusal
+  arrives on a `failed` event a moment later, so `showNotification()` awaits `show` or
+  `failed` and reports what the desktop actually did — a version that returned as soon
+  as it had asked said "Sent" while nothing appeared. There is no API for *may I?*
+  either: showing one **is** the request, which is why `notification:test` is both the
+  button in settings and what the first-run flow presses to make macOS put its question
+  on screen. Only macOS asks — `notification:capability` reports `gated`, and that is
+  what decides whether the flow has that panel at all, because a consent screen on a
+  platform that never asks is a step that does nothing.
 - **Pausing is the one hand-set state, and it only subtracts.** `status = 'paused'` is
   set from the project card's context menu or the Status field, and the whole of what it
-  does is fence `dashboard:today` — tasks, meeting to-dos, needs-a-look and the header
-  counts, all through the one `inWorkspace` clause. It is allowed past the no-hand-kept-
+  does is fence *being asked something* — `dashboard:today` (tasks, meeting to-dos,
+  needs-a-look and the header counts, all through the one `inWorkspace` clause) and
+  `notification:pending`, which repeats that clause word for word. A notification is
+  Today reaching out to you rather than waiting to be opened, so the two have to answer
+  the same way; that is the extent of it, and it is not a licence to add a third.
+  It is allowed past the no-hand-kept-
   status rule for the same reason a folder is: nothing *derives* anything from it, and a
   stale one costs you a quiet project rather than a wrong answer. On the projects page it
   only ever changes how loud a card is — the band across its corner, and the whole card
@@ -472,6 +506,20 @@ label), `CFBundleIdentifier` (LaunchServices' cached name) and the **bundle's fi
 `Electron.app` → `Neo.app` and rewriting `node_modules/electron/path.txt` — and drops the
 stale LaunchServices entry. It runs on `npm run dev` and after every install. If the dock
 starts saying "Electron" again, that script is where to look.
+
+**Rewriting that plist invalidates the signature, and the dev bundle has to be re-signed
+after it.** Electron ships with its own linker-signed one — `Identifier=Electron`,
+`Info.plist=not bound` — and once the keys and the executable name have been changed it
+describes a bundle that no longer exists; `codesign --verify` fails outright. macOS then
+refuses everything it gates on a signed bundle, **silently**: a notification comes back
+`UNErrorDomain error 1` (*not allowed*) with no prompt ever shown, which looks exactly
+like the feature not having been written, and the `NS*UsageDescription` strings the same
+script just set are never read either. So `dev-branding.mjs` ends by ad-hoc signing with
+`com.svartdal.neo.dev`, which is `scripts/sign-adhoc.mjs` doing the same job for a
+packaged build. It skips when the signature is already ours — and reads `codesign -dv`
+off **stderr**, which is where it writes even on success. The signature is content
+derived, so re-signing unchanged bytes keeps whatever macOS remembered; a new Electron
+changes the bytes and the permissions are asked for again.
 
 One consequence of renaming the executable: Electron derives `app.isPackaged` from that
 name, so a development run reports itself as **packaged**. Anything choosing a behaviour

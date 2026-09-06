@@ -427,6 +427,36 @@ async function main(): Promise<void> {
      Boolean(oldLink?.id) &&
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM workspace_link'))[0]?.n === 1)
 
+  const [told] = await q<{
+    notify: boolean
+    notify_project_ahead_days: number
+    notify_task_ahead_days: number
+    notify_task_day_after: boolean
+  }>(
+    `SELECT notify, notify_project_ahead_days, notify_task_ahead_days, notify_task_day_after
+     FROM workspace ORDER BY name LIMIT 1`
+  )
+  ok('an old workspace arrives with the same notification settings a new one gets',
+     told?.notify === true && told?.notify_project_ahead_days === 7 &&
+     told?.notify_task_ahead_days === 1 && told?.notify_task_day_after === true)
+
+  // The table is in the DDL, its workspace predates it, and the unique index on it is
+  // the whole of the once-a-day guarantee rather than an optimisation over one.
+  await q(
+    `INSERT INTO notification (workspace_id, kind, on_date, title)
+     VALUES ($1, 'task-day', '2026-01-05', 'Something is due today')`,
+    [oldProject.workspace_id]
+  )
+  const twice = await q<{ id: string }>(
+    `INSERT INTO notification (workspace_id, kind, on_date, title)
+     VALUES ($1, 'task-day', '2026-01-05', 'Said again')
+     ON CONFLICT (workspace_id, kind, on_date) DO NOTHING RETURNING id`,
+    [oldProject.workspace_id]
+  )
+  ok('and the same thing cannot be said to it twice on one day',
+     twice.length === 0 &&
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM notification'))[0]?.n === 1)
+
   // An old workspace read back through the mapper has to draw, banner and all.
   const [mappedRow] = await q<Record<string, unknown>>('SELECT * FROM workspace ORDER BY name LIMIT 1')
   ok('and an upgraded workspace maps to one the Today page can draw',

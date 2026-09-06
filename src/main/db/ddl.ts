@@ -223,6 +223,27 @@ CREATE TABLE IF NOT EXISTS setting (
   value text NOT NULL
 );
 
+-- That something was said, so that it is not said twice.
+--
+-- The notifications themselves are derived from deadlines and due dates every time
+-- they are asked for and are never written down — there is no reminder here to
+-- create, edit or clean up after. This table holds one fact and nothing else: this
+-- workspace was told this kind of thing on this day. The unique index below is what
+-- makes the whole thing idempotent, and it is why a machine that starts and stops
+-- four times before lunch still only interrupts you once.
+CREATE TABLE IF NOT EXISTS notification (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  kind         text NOT NULL,
+  -- The calendar day it was delivered on, as YYYY-MM-DD, for the same reason every
+  -- other calendar date in here is text: a day is a day where the user is sitting.
+  on_date      text NOT NULL,
+  -- Kept because it costs nothing and makes "what did it actually say" answerable.
+  title        text NOT NULL DEFAULT '',
+  body         text NOT NULL DEFAULT '',
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
 -- A chat with the assistant. Scoped to a workspace like everything else, so the
 -- assistant opened inside a client's area cannot answer out of the day job's.
 CREATE TABLE IF NOT EXISTS conversation (
@@ -465,6 +486,18 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_attention boolean NOT NULL DEFAULT true`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_meeting_todos boolean NOT NULL DEFAULT true`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS today_show_soon boolean NOT NULL DEFAULT true`,
+  // What this working life is allowed to say out loud, and when. Discrete columns
+  // again rather than a blob, for the reason above. The two "how many days before"
+  // are numbers with zero meaning never, rather than a switch and a number that
+  // could disagree with each other; an upgraded database therefore arrives with the
+  // same defaults a new one gets, and the machine's own master switch above it is
+  // what decides whether any of it is heard.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify_project_ahead_days integer NOT NULL DEFAULT 7`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify_project_on_the_day boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify_task_ahead_days integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify_task_on_the_day boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS notify_task_day_after boolean NOT NULL DEFAULT true`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS suggested_title text NOT NULL DEFAULT ''`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_written_at timestamptz`,
   `ALTER TABLE recording ADD COLUMN IF NOT EXISTS recap_todos_at timestamptz`,
@@ -597,5 +630,9 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_project_collapsible ON project (collapsible_id)`,
   `CREATE INDEX IF NOT EXISTS idx_collapsible_level ON project_collapsible (workspace_id, folder_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`,
+  // Said once, and once only. Not merely a lookup: the insert that claims a day is
+  // what decides whether the notification is shown at all, so this index is the
+  // guard itself rather than an optimisation over one.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_once ON notification (workspace_id, kind, on_date)`
 ]

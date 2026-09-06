@@ -216,6 +216,14 @@ The name field starts filled in from the machine's own account, the workspace na
 offers the three people actually use, and the progress rail starts with a segment
 already complete, because installing it and opening it is not nothing.
 
+On macOS there is a third panel, about **notifications**, and it comes after the
+workspace on purpose: by then there is an area of work with a name on it, so the offer
+is a sentence about your own deadlines rather than about a feature. Pressing the button
+posts a real notification, which is the only way to make macOS ask whether Neo may show
+them; *Not now* sits beside it and leaves the app silent. Windows and Linux do not put
+that question to you, so there the panel does not exist and the rail is three segments
+again.
+
 It is shown **once**, and only to a genuinely new installation — the flow writes down
 that it finished. Deleting or archiving your last workspace a year later gets the short
 "create a workspace" screen instead, which is also where the archived ones are listed
@@ -333,7 +341,8 @@ to chase, so **Pause project** (right-click any project card, or the Status fiel
 settings) takes the whole thing off Today: its overdue items, what is due this week, the
 to-dos a meeting left owing in it, and the nudge to come and look at it. The counts in
 the header come down with them, because a screen that says eleven open and lists four is
-worse than either.
+worse than either. It goes quiet on the desktop too — a paused project never notifies,
+for the same reason and by the same rule.
 
 The project itself is untouched — its board, meetings, notes and log are all still there,
 and opening it shows everything. The card says so before it is read: a banded corner across
@@ -682,6 +691,60 @@ This used to be a coloured health dot on every project surface — green, amber,
 the explanation hidden behind a tooltip. The colour was a thing you had to learn to read,
 and it competed with the workspace colours for meaning; the reason itself turned out to be
 the only part worth showing. Colour on a project now means identity, nothing more.
+
+### Notifications
+The other half of *needs a look*: the same facts, brought to you on the days you would
+want them, rather than waiting for you to open the app.
+
+There are five moments, and every one of them is read off work you have already
+written down — a project's deadline, a due date on a card. Nothing here is a reminder
+you create, snooze or tidy up after; there is no reminder object at all. A deadline
+**a week out** (or however many days you choose), and again **on the day**. A card
+**due tomorrow**, **due today**, and **still open the morning after it was due**. That
+last one happens once. Something that has been late for a fortnight is a fact about
+the project, and Today is where a fact like that lives — a notification that repeats
+until you act is how an app teaches you to dismiss it without reading.
+
+Everything due on the same morning arrives as **one** notification. Three cards due
+tomorrow is *"3 items are due tomorrow"*, not three separate interruptions; clicking it
+opens the project when they all share one and Today when they do not, switching
+workspace on the way if the deadline belongs to a working life you are not currently
+looking at. A paused project says nothing at all, exactly as it asks nothing of Today.
+
+**The settings are split down the same seam as everything else.** Whether this
+computer may interrupt you, at what hour, and whether it does so at weekends are
+**app** settings — questions about the machine in front of you and the week you are
+having, beside the clock format and the microphone. *What is worth being interrupted
+about* is a **workspace** setting, because a client you are on call for and the thing
+you tinker with on Sundays deserve different answers, and you make that decision once
+per working life rather than once per deadline.
+
+There is **one delivery a day**, at an hour you pick, and nothing can turn it into a
+stream. That is not a missing feature. A deadline is a calendar fact — nothing about it
+happens at 14:07 — so being told once, in the morning, is the whole of what an honest
+reminder can be; anything more often is the app asking to be looked at. If the machine
+was asleep at nine, you are told when it wakes up, and if it was off all day you are
+not told at all, because the deadline is still on Today where you were going to look
+anyway.
+
+It is said **once**, and that guarantee is a row in the database rather than a timer:
+the delivery claims the day before it says anything, so a machine restarted four times
+before lunch interrupts you exactly as often as one left running. **Workspace →
+Notifications** shows the sentences this workspace would actually hand you this morning,
+built from the same code that delivers them — five switches about hypothetical mornings
+are hard to reason about, and one line of real output is not.
+
+Your operating system decides whether an app may show notifications at all, and will
+not say so beforehand — there is no way to ask the question except by showing one. So
+**macOS gets a panel in the first-run flow**: after your first workspace exists, Neo
+makes its case in three lines and the button posts a real notification, which is what
+makes macOS put its own *Allow* dialog up. Declining is a button next to it, not a link
+under it, and nothing blocks you either way. Windows and Linux do not gate notifications
+behind a prompt, so on those the panel is not there at all.
+
+**Settings → Notifications** has the same button for afterwards, and it reports what the
+desktop actually did with it rather than that it was asked — a refusal arrives a moment
+after the notification is posted, not as an error, so "Sent" was a lie worth removing.
 
 ### Capturing something
 `⌘N` opens one dialog for the four things worth capturing in a hurry — a **task**, a

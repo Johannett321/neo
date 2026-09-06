@@ -8,6 +8,7 @@ import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from '.
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
+import { kickNotifications, startNotifications, stopNotifications } from './lib/notifier'
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
 import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
 import { pruneRecordings } from './lib/recording/store'
@@ -17,6 +18,7 @@ import { registerContentHandlers } from './ipc/content'
 import { registerDashboardHandlers } from './ipc/dashboard'
 import { registerMcpHandlers } from './ipc/mcp'
 import { registerMeetingHandlers } from './ipc/meetings'
+import { registerNotificationHandlers } from './ipc/notifications'
 import { registerPeopleHandlers } from './ipc/people'
 import { registerProjectHandlers } from './ipc/projects'
 import { registerRecordingHandlers } from './ipc/recordings'
@@ -43,6 +45,11 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL
 // Set before the app is ready: after that, macOS has already built the menu bar and
 // it keeps saying "Electron" for the rest of the session.
 app.setName('Neo')
+
+// Windows identifies the application that a notification came from by this and by
+// nothing else; without it a notification is built, shown, and never appears. It is
+// harmless everywhere else, so it is not worth a platform check.
+app.setAppUserModelId('com.svartdal.neo')
 
 // Also before the app is ready, and for a similar reason: a scheme's privileges are
 // read once, when the first renderer process is created. This is what lets an
@@ -146,6 +153,7 @@ function registerHandlers(): void {
   registerMeetingHandlers()
   registerRecordingHandlers()
   registerDashboardHandlers()
+  registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
   registerWeatherHandlers()
@@ -230,8 +238,15 @@ async function start(): Promise<void> {
 
   // A laptop that has been shut for a week wakes with a backlog and, more to the
   // point, with a network again — which is usually why the last attempt failed.
-  powerMonitor.on('resume', () => kick())
-  powerMonitor.on('unlock-screen', () => kick())
+  // And the morning's deadlines with it, for the machine that was shut at nine and
+  // opened at eleven. The tick would find them a minute later anyway; this is so that
+  // opening the lid and being told are the same moment.
+  const caughtUp = (): void => {
+    kick()
+    kickNotifications()
+  }
+  powerMonitor.on('resume', caughtUp)
+  powerMonitor.on('unlock-screen', caughtUp)
 
   // Told to the window as well, because the microphone lives there and does not
   // survive a suspend. Hearing about it here is what makes a recording pick back up
@@ -251,6 +266,16 @@ async function start(): Promise<void> {
   // Read before the window exists rather than told to it afterwards. See createWindow.
   presetGlass((await invokeChannel('settings:get')).theme)
   createWindow()
+
+  /*
+   * Last, and with the way back to a window rather than a window: on macOS the app
+   * goes on running with every window closed, and a notification clicked in that
+   * state has to be able to open one rather than quietly doing nothing.
+   */
+  startNotifications(() => {
+    const [existing] = BrowserWindow.getAllWindows()
+    return existing && !existing.isDestroyed() ? existing : createWindow()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -287,6 +312,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   closing = true
   stopPipeline()
+  stopNotifications()
   // The helper hands its audio device back to Core Audio when its stdin closes. Left
   // running it would keep a private aggregate device alive after the app has gone.
   stopSystemAudio()

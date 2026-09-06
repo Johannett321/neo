@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion'
-import { useApi, useApiMutation } from '@/lib/api'
+import { call as callApi, useApi, useApiMutation } from '@/lib/api'
 import { EASE } from '@/lib/motion'
 import { useTheme } from '@/lib/theme'
 import { useWorkspaces } from '@/lib/workspace'
@@ -31,8 +31,20 @@ import { WORKSPACE_COLORS } from '@/components/WorkspaceModal'
  * screen would vanish mid-save and the app would arrive behind it.
  */
 
-type Step = 'intro' | 'tour' | 'profile' | 'workspace' | 'ready'
-const STEPS: Step[] = ['intro', 'tour', 'profile', 'workspace', 'ready']
+type Step = 'intro' | 'tour' | 'profile' | 'workspace' | 'notifications' | 'ready'
+
+/**
+ * The flow without the panel that asks for permission, which is most desktops.
+ *
+ * Windows shows a notification and lets you switch it off afterwards, and a Linux
+ * desktop has no per-application permission at all — so on both, a screen asking for
+ * consent would be asking for something nobody is going to be asked for. macOS does
+ * put the question up, and there is exactly one way to raise it: show a notification.
+ * `notification:capability` is what decides, so the check is a fact main reports
+ * rather than a platform string the renderer has read for itself.
+ */
+const BASE_STEPS: Step[] = ['intro', 'tour', 'profile', 'workspace', 'ready']
+const GATED_STEPS: Step[] = ['intro', 'tour', 'profile', 'workspace', 'notifications', 'ready']
 
 /** The three names people actually give their first workspace. */
 const SUGGESTIONS = ['Day job', 'My company', 'Client work']
@@ -50,6 +62,20 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
   const saveSettings = useApiMutation('settings:save')
   const loadSample = useApiMutation('settings:loadSample')
 
+  /*
+   * Latched on the first answer, exactly as the gate in App is and for the same kind
+   * of reason: `index` is a position in this list, so a list that grew underneath
+   * somebody would move them to a different panel than the one they were reading.
+   */
+  const capability = useApi('notification:capability')
+  const [steps, setSteps] = useState<Step[]>(BASE_STEPS)
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    if (settled || !capability.data) return
+    setSteps(capability.data.gated && capability.data.supported ? GATED_STEPS : BASE_STEPS)
+    setSettled(true)
+  }, [capability.data, settled])
+
   const [index, setIndex] = useState(0)
   // Which way the panels travel. Going back reverses it, so the movement always
   // agrees with the button that caused it.
@@ -61,6 +87,14 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
   const [avatarPath, setAvatarPath] = useState('')
   const [avatar, setAvatar] = useState<string | null>(null)
   const [touchedName, setTouchedName] = useState(false)
+
+  /*
+   * What the desktop said when it was asked. Null until the button is pressed, and
+   * kept so the panel can answer honestly either way — a refusal and a prompt that is
+   * still open are indistinguishable from in here, so it says that rather than
+   * guessing which one happened.
+   */
+  const [asked, setAsked] = useState<{ shown: boolean; reason: string } | null>(null)
 
   const [workspaceName, setWorkspaceName] = useState('')
   const [color, setColor] = useState(WORKSPACE_COLORS[0] as string)
@@ -74,7 +108,15 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
     if (machine && !touchedName && !name) setName(machine)
   }, [suggestedName.data?.name, touchedName, name])
 
-  const step = STEPS[index] as Step
+  const step = steps[index] as Step
+  /*
+   * The rail names the things that are done, so it has to gain a segment when the
+   * flow does — three full bars with two panels still to go would be the progress
+   * bar lying in the one direction a progress bar is never forgiven for.
+   */
+  const rail = steps.includes('notifications')
+    ? ['Neo is installed', 'You', 'Your first workspace', 'Notifications']
+    : ['Neo is installed', 'You', 'Your first workspace']
   // Two of the five panels have nothing to type into, and a form only submits on
   // Return from a field inside it — so on those the button takes the focus itself
   // and Return keeps working the whole way through.
@@ -85,7 +127,7 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
 
   const go = (delta: number): void => {
     setDirection(delta)
-    setIndex((current) => Math.min(STEPS.length - 1, Math.max(0, current + delta)))
+    setIndex((current) => Math.min(steps.length - 1, Math.max(0, current + delta)))
   }
 
   /** Nothing is written until here. Order matters: you exist before the workspace
@@ -128,9 +170,45 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
   const canContinue =
     step === 'profile' ? Boolean(name.trim()) : step === 'workspace' ? Boolean(workspaceName.trim()) : true
 
+  /**
+   * Ask the operating system, then carry on whatever it answers.
+   *
+   * There is no API for "may I?" — showing one is the request — so this posts a real
+   * notification, which is both the question macOS puts on screen and, once it has
+   * been allowed, the thing the person sees and recognises later. The flow is never
+   * blocked on the answer: an app that will not let you past a permission screen is
+   * an app that has confused its own convenience for consent.
+   */
+  const askAndContinue = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      setAsked(await callApi('notification:test'))
+    } catch {
+      setAsked({ shown: false, reason: 'Your system did not answer.' })
+    }
+    setBusy(false)
+  }
+
+  /** Keep it quiet, and say so in settings rather than leaving it on and ignored. */
+  const declineNotifications = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await saveSettings.mutateAsync({ notifications: false })
+    } catch {
+      // Nothing to say: the switch is in Settings either way.
+    }
+    setBusy(false)
+    go(1)
+  }
+
   const submit = (): void => {
     if (!canContinue) return
     if (step === 'ready') void finish()
+    // Pressed once it asks; pressed again it moves on, so the answer has somewhere to
+    // land and "allowed" is confirmed on the screen that asked for it.
+    else if (step === 'notifications' && !asked) void askAndContinue()
     else go(1)
   }
 
@@ -182,7 +260,7 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
           a task with a percentage on it, and putting one there would have said "four
           more screens of this" at the exact moment the app is making its case.
         */}
-        {index >= 2 && <Rail at={index - 2} />}
+        {index >= 2 && <Rail at={index - 2} steps={rail} />}
 
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -230,6 +308,7 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
                     }}
                   />
                 )}
+                {step === 'notifications' && <Notifications asked={asked} />}
                 {step === 'ready' && (
                   <Ready
                     name={name}
@@ -270,8 +349,20 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
             <div className="ml-auto flex items-center gap-3">
               {step === 'intro' && (
                 <span className="hidden text-[12px] text-base-content/40 sm:block">
-                  Two short steps and you are in
+                  {steps.includes('notifications') ? 'Three' : 'Two'} short steps and you are in
                 </span>
+              )}
+              {/* Declining is a button beside the one that agrees, not a link hidden
+                  under it: a choice you have to hunt for is not one you were offered. */}
+              {step === 'notifications' && !asked && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm text-base-content/50"
+                  disabled={busy}
+                  onClick={() => void declineNotifications()}
+                >
+                  Not now
+                </button>
               )}
               <button
                 ref={primary}
@@ -283,11 +374,15 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
                   ? 'Show me'
                   : step === 'tour'
                     ? 'Set it up'
-                    : step === 'ready'
-                      ? busy
-                        ? 'Opening…'
-                        : 'Open Neo'
-                      : 'Continue'}
+                    : step === 'notifications'
+                      ? asked
+                        ? 'Continue'
+                        : 'Turn them on'
+                      : step === 'ready'
+                        ? busy
+                          ? 'Opening…'
+                          : 'Open Neo'
+                        : 'Continue'}
                 {!busy && <Icon name="arrowRight" size={13} />}
               </button>
             </div>
@@ -304,8 +399,7 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
  * nothing tells a truthful story about the remaining effort in the least motivating
  * way available.
  */
-function Rail({ at }: { at: number }): React.JSX.Element {
-  const steps = ['Neo is installed', 'You', 'Your first workspace']
+function Rail({ at, steps }: { at: number; steps: string[] }): React.JSX.Element {
   return (
     <div className="hairline flex items-center gap-3 border-b px-9 py-3.5">
       {steps.map((label, i) => {
@@ -604,6 +698,95 @@ function WorkspaceStep({
 
 /** What you made, before it is written. The two shortcuts are the two that matter on
  *  an empty app: putting something in, and finding it again. */
+/**
+ * The one panel in the flow that asks for something the app cannot give itself.
+ *
+ * It is here rather than at the first launch of the app because a permission prompt
+ * with no explanation in front of it is a prompt people decline: by this point there
+ * is a workspace with a name on it, and "we will tell you when something in it is
+ * close" is a sentence about their own work rather than about a feature. The pitch is
+ * also the honest one — what arrives is a deadline, once a day, and nothing else.
+ *
+ * Only shown where the operating system actually asks. See `notification:capability`.
+ */
+function Notifications({
+  asked
+}: {
+  asked: { shown: boolean; reason: string } | null
+}): React.JSX.Element {
+  const moments: [IconName, string][] = [
+    ['flag', 'A project deadline a week out, and again on the day'],
+    ['clock', 'A card due tomorrow, and one due today'],
+    ['alert', 'Anything still open the morning after it was due']
+  ]
+
+  return (
+    <div>
+      <Line>
+        <h1 className="text-[24px] font-semibold tracking-[-0.02em]">
+          Be told before it is late
+        </h1>
+      </Line>
+      <Line className="mt-2">
+        <p className="max-w-[32rem] text-[13.5px] leading-relaxed text-base-content/60">
+          Neo works out what is coming from the dates already on your work — there is no
+          reminder to set, and nothing to dismiss. Once a morning it says the one thing
+          worth knowing, and the rest of the day it is quiet.
+        </p>
+      </Line>
+
+      <Line className="mt-6">
+        <div className="hairline space-y-2.5 rounded-box border bg-base-200/40 px-4 py-3.5">
+          {moments.map(([glyph, label]) => (
+            <div key={label} className="flex items-center gap-2.5">
+              <Icon name={glyph} size={14} className="shrink-0 text-primary" />
+              <span className="text-[12.5px] text-base-content/65">{label}</span>
+            </div>
+          ))}
+        </div>
+      </Line>
+
+      <Line className="mt-4">
+        <p className="text-[11.5px] leading-relaxed text-base-content/40">
+          Nine in the morning, never at weekends, and one notification however many things
+          are due on it. All of it is yours to change in Settings, per workspace, and you
+          can turn the whole thing off in a click.
+        </p>
+      </Line>
+
+      {/*
+        The answer, once there is one. A refusal and a prompt still sitting on screen
+        look identical from in here, so the failing case says what to do about either
+        rather than announcing which it thinks happened.
+      */}
+      <Line className="mt-5">
+        {asked === null ? (
+          <p className="text-[12px] leading-relaxed text-base-content/45">
+            Your Mac will ask you to allow it. Nothing is sent anywhere — a notification is
+            drawn by this machine, from work that never leaves it.
+          </p>
+        ) : asked.shown ? (
+          <div className="flex items-start gap-2.5 text-[12.5px] text-base-content/65">
+            <Icon name="check" size={15} className="mt-px shrink-0 text-success" />
+            <span>
+              That one just appeared on your desktop. Deadlines will arrive looking like it.
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2.5 text-[12.5px] text-base-content/65">
+            <Icon name="alert" size={15} className="mt-px shrink-0 text-warning" />
+            <span>
+              Nothing appeared yet. If your Mac has just asked, choose Allow — otherwise you
+              can switch Neo on under Notifications in System Settings, and send yourself a
+              test one from Settings whenever you like.
+            </span>
+          </div>
+        )}
+      </Line>
+    </div>
+  )
+}
+
 function Ready({
   name,
   workspaceName,

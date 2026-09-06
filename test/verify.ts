@@ -1,9 +1,10 @@
-import { ipcMain, __handlers } from 'electron'
+import { ipcMain, __handlers, __notifications } from 'electron'
 import { initDb, closeDb, clearStrandedTriggers, orphanedForeignKeys } from '../src/main/db/client'
 import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
 import { registerTaskHandlers } from '../src/main/ipc/tasks'
 import { registerMeetingHandlers } from '../src/main/ipc/meetings'
+import { registerNotificationHandlers } from '../src/main/ipc/notifications'
 import { registerRecordingHandlers } from '../src/main/ipc/recordings'
 import { registerPeopleHandlers } from '../src/main/ipc/people'
 import { registerContentHandlers } from '../src/main/ipc/content'
@@ -20,13 +21,15 @@ import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
 import { announceChange, onChange } from '../src/main/lib/changes'
 import { attentionReason } from '../src/main/lib/attention'
+import { deliveryDue } from '../src/main/lib/notify'
+import { deliverNotifications } from '../src/main/lib/notifier'
 import { describeWeather } from '../src/shared/weather'
 import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath } from '../src/main/lib/recording/systemAudio'
-import { exec, iconDir, q } from '../src/main/db/client'
+import { addDays, exec, iconDir, q, today as todayDate } from '../src/main/db/client'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -59,6 +62,13 @@ const threw = async (fn: () => Promise<unknown>, contains: string): Promise<bool
   }
 }
 
+/** Today, at a given time, for asserting what happens at ten past nine. */
+const at = (hours: number, minutes: number): Date => {
+  const when = new Date()
+  when.setHours(hours, minutes, 0, 0)
+  return when
+}
+
 const ok = (label: string, cond: boolean, extra = ''): void => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? ` — ${extra}` : ''}`)
   if (!cond) process.exitCode = 1
@@ -75,6 +85,7 @@ async function main(): Promise<void> {
   registerMeetingHandlers()
   registerRecordingHandlers()
   registerDashboardHandlers()
+  registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
   registerWeatherHandlers()
@@ -1605,6 +1616,163 @@ async function main(): Promise<void> {
                  'YYYY-MM-DD'))
   ok('changing the start date leaves the rest of the project alone',
      born.name === seenProject.name && born.deadline === seenProject.deadline)
+
+
+  /* -------------------------------------------------------------- notifications */
+
+  /*
+   * Everything here is derived from a deadline or a due date, so this exercises it
+   * the only honest way: put dates on real work and ask what the app would say.
+   *
+   * The workspace is its own, because the assertions are about the exact sentence
+   * and the sample data has deadlines of its own scattered through it.
+   */
+  const quiet = await call('workspace:save', { name: 'Notified' })
+  const now = todayDate()
+
+  const rollout = await call('project:save', {
+    workspaceId: quiet.id, name: 'Rollout', deadline: addDays(now, 7)
+  })
+  await call('project:save', {
+    workspaceId: quiet.id, name: 'Next year', deadline: addDays(now, 30)
+  })
+  await call('task:save', { projectId: rollout.id, title: 'Book the room', dueDate: addDays(now, 1) })
+  await call('task:save', { projectId: rollout.id, title: 'Send the deck', dueDate: now })
+  await call('task:save', { projectId: rollout.id, title: 'Chase legal', dueDate: addDays(now, -1) })
+  await call('task:save', { projectId: rollout.id, title: 'Chase finance', dueDate: addDays(now, -1) })
+
+  const said = await call('notification:pending', { workspaceId: quiet.id })
+  const of = (kind: string): any => said.find((n: any) => n.kind === kind)
+
+  ok('a deadline exactly a week out is worth saying, and one a month out is not',
+     of('project-ahead')?.title === "Rollout's deadline is in 7 days" &&
+     said.filter((n: any) => n.kind === 'project-ahead').length === 1,
+     said.map((n: any) => n.title).join(' | '))
+
+  ok('one card due tomorrow is named',
+     of('task-ahead')?.title === 'Book the room is due tomorrow', of('task-ahead')?.title)
+
+  ok('and one due today says so, with the project it is in underneath',
+     of('task-day')?.title === 'Send the deck is due today' &&
+     of('task-day')?.body === 'Rollout · Notified', of('task-day')?.body)
+
+  // Two of anything is one notification, never two. An app that puts four cards in
+  // the notification centre is an app whose notifications get switched off.
+  ok('several late items arrive as one sentence, not one each',
+     of('task-after')?.title === '2 items were due yesterday' && of('task-after')?.count === 2,
+     of('task-after')?.title)
+
+  ok('a group inside one project opens that project, not the whole of Today',
+     of('task-after')?.path === `/projects/${rollout.id}`, of('task-after')?.path)
+
+  ok('nothing is said about a deadline that is neither today nor exactly the warning out',
+     said.every((n: any) => !/Next year/.test(n.title)))
+
+  // Paused is the one hand-set state, and this is the same thing it already does to
+  // Today: a project you have put down stops asking, on screen and on the desktop.
+  await call('project:save', { id: rollout.id, status: 'paused' })
+  ok('a paused project says nothing at all',
+     (await call('notification:pending', { workspaceId: quiet.id })).length === 0)
+  await call('project:save', { id: rollout.id, status: 'active' })
+
+  const fewer = await call('workspace:save', {
+    id: quiet.id, notifyTaskDayAfter: false, notifyProjectAheadDays: 0
+  })
+  ok('a switch turned off silences its own kind and leaves the rest',
+     fewer.notifyProjectAheadDays === 0 &&
+     (await call('notification:pending', { workspaceId: quiet.id }))
+       .every((n: any) => n.kind !== 'task-after' && n.kind !== 'project-ahead'))
+
+  ok('how many days ahead cannot be set to something that would never fire',
+     (await call('workspace:save', { id: quiet.id, notifyProjectAheadDays: 900 }))
+       .notifyProjectAheadDays === 90)
+
+  await call('workspace:save', {
+    id: quiet.id, notifyTaskDayAfter: true, notifyProjectAheadDays: 7
+  })
+
+  ok('a workspace with notifications off is silent however much is overdue in it',
+     (await call('workspace:save', { id: quiet.id, notify: false })).notify === false &&
+     (await call('notification:pending', { workspaceId: quiet.id })).length === 0)
+  await call('workspace:save', { id: quiet.id, notify: true })
+
+  ok('and one workspace is never told about another one\'s work',
+     (await call('notification:pending', { workspaceId: own }))
+       .every((n: any) => !/Rollout|Book the room/.test(`${n.title} ${n.body}`)))
+
+  /* the delivery itself */
+
+  ok('nothing is delivered before the hour you asked for it',
+     !deliveryDue(at(8, 59), '09:00', true) && deliveryDue(at(9, 0), '09:00', true))
+
+  const saturday = new Date(2026, 0, 3, 10, 0)
+  const monday = new Date(2026, 0, 5, 10, 0)
+  ok('and nothing at the weekend unless you said so',
+     !deliveryDue(saturday, '09:00', false) && deliveryDue(saturday, '09:00', true) &&
+     deliveryDue(monday, '09:00', false))
+
+  await call('settings:save', { notifications: false, notifyWeekends: true, onboardedAt: '' })
+  ok('a machine that has never finished the introduction is never interrupted by one',
+     (await deliverNotifications(at(10, 0))) === 0)
+
+  await call('settings:save', { onboardedAt: new Date().toISOString() })
+  ok('nor is one whose owner has turned notifications off',
+     (await deliverNotifications(at(10, 0))) === 0 && __notifications.length === 0)
+
+  await call('settings:save', { notifications: true })
+  const delivered = await deliverNotifications(at(10, 0))
+  ok('the morning delivery puts the day on the desktop', delivered > 0, `${delivered} shown`)
+  ok('and what it showed is what the workspace said it would',
+     __notifications.some((n: any) => n.title === 'Send the deck is due today'),
+     __notifications.map((n: any) => n.title).join(' | '))
+
+  // The whole of the once-a-day guarantee is a row and a unique index, so a machine
+  // restarted four times before lunch is the same as one left running.
+  const shownOnce = __notifications.length
+  ok('running it again the same day says nothing twice',
+     (await deliverNotifications(at(11, 30))) === 0 && __notifications.length === shownOnce)
+
+  ok('what was said is written down, once per kind per day',
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM notification WHERE workspace_id = $1 AND on_date = $2`,
+       [quiet.id, now]
+     ))[0]?.n === said.length,
+     `${said.length} kinds`)
+
+  // Something new arriving after the delivery is still told, because its kind has
+  // not been claimed today. What cannot happen is the same kind arriving twice.
+  await call('workspace:save', { id: quiet.id, notifyTaskDayAfter: false })
+  await exec('DELETE FROM notification WHERE workspace_id = $1 AND kind = $2', [quiet.id, 'task-day'])
+  await call('task:save', { projectId: rollout.id, title: 'One more', dueDate: now })
+  const laterThatDay = await deliverNotifications(at(12, 0))
+  ok('a kind whose day has not been claimed is still delivered',
+     laterThatDay === 1 && __notifications[__notifications.length - 1].title === '2 items are due today',
+     __notifications[__notifications.length - 1]?.title)
+
+  // The desktop's answer, not the fact that it was asked. `show()` resolves nothing
+  // and throws nothing — a refusal arrives on an event a moment later — so reporting
+  // straight away is how this came to say "Sent" while nothing appeared.
+  const tested = await call('notification:test')
+  ok('a test notification reports what the desktop did with it, not that it was tried',
+     tested.shown === true && tested.reason === '' &&
+     __notifications[__notifications.length - 1].title === 'Neo can reach you here',
+     __notifications[__notifications.length - 1]?.title)
+
+  ok('and it is a test rather than a delivery, so it claims no day',
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM notification WHERE title = 'Neo can reach you here'`))[0]?.n === 0)
+
+  // Only macOS puts a question in front of an app before it may show one, and that is
+  // the whole of what decides whether the first-run flow has a panel about it.
+  const canNotify = await call('notification:capability')
+  ok('the app reports whether this desktop asks permission before it will show one',
+     canNotify.supported === true && canNotify.gated === (process.platform === 'darwin'),
+     `${process.platform}: gated=${canNotify.gated}`)
+
+  await call('workspace:delete', { id: quiet.id })
+  ok('deleting the workspace takes what it was told with it',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM notification WHERE workspace_id = $1',
+                             [quiet.id]))[0]?.n === 0)
 
   /* ------------------------------------------------- the bridge Claude Desktop uses */
 

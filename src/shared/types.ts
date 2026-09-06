@@ -114,7 +114,80 @@ export interface Workspace {
   todayShowMeetingTodos: boolean
   todayShowSoon: boolean
 
+  /* ------------------------------------------------- what it is allowed to say */
+
+  /**
+   * Whether this working life may put anything on the desktop at all.
+   *
+   * Per workspace, because that is the unit a decision like this is actually made
+   * in: a client you are on call for may nudge you and the side project may keep
+   * quiet, and neither answer is right for both. The machine's own switch is in app
+   * settings and wins over this one — that is the one you reach for on holiday.
+   */
+  notify: boolean
+  /**
+   * How many days before a project's own deadline you are told, and **zero means
+   * never**. One number rather than a switch and a number beside it, so the two can
+   * never disagree about whether this is on; turning it back on restores the
+   * default rather than leaving you at nought days, which would say nothing.
+   */
+  notifyProjectAheadDays: number
+  /** And again on the morning of the deadline itself. */
+  notifyProjectOnTheDay: boolean
+  /** The same two, for a due date on a card. Zero is off, exactly as above. */
+  notifyTaskAheadDays: number
+  notifyTaskOnTheDay: boolean
+  /**
+   * The morning after something was due and is still open. Once — the day after,
+   * and never again. An item that has been late for three weeks is a fact about the
+   * project, and Today is where a fact like that lives; a notification that repeats
+   * until you act is how an app teaches you to dismiss it without reading.
+   */
+  notifyTaskDayAfter: boolean
+
   createdAt: string
+}
+
+/* -------------------------------------------------------------- notifications */
+
+/**
+ * The five moments Neo is willing to interrupt you at. All five are read off the
+ * work — a deadline, a due date — so there is nothing here to keep true by hand,
+ * exactly as there is nothing behind `attentionReason`.
+ */
+export type NotificationKind =
+  | 'project-ahead'
+  | 'project-day'
+  | 'task-ahead'
+  | 'task-day'
+  | 'task-after'
+
+/**
+ * One thing worth saying out loud, already written. Derived on the way past and
+ * never stored: what *is* stored is only that it has been said today, so it is not
+ * said twice.
+ *
+ * One of these covers every item of its kind — "3 items are due tomorrow", not three
+ * notifications — because a notification centre with nine cards in it from one app is
+ * a notification centre you turn off.
+ */
+export interface PendingNotification {
+  kind: NotificationKind
+  workspaceId: string
+  /** The fact, in the same plain words the attention line uses. */
+  title: string
+  /** Which project, or which items, and the working life it happened in. */
+  body: string
+  /** Where clicking it goes: a project when they all share one, Today otherwise. */
+  path: string
+  /** How many items it speaks for, so a screen can say so without recounting. */
+  count: number
+}
+
+/** Where a clicked notification puts you. The workspace comes first: it may not be the one on screen. */
+export interface OpenTarget {
+  workspaceId: string
+  path: string
 }
 
 /**
@@ -680,6 +753,27 @@ export interface Settings {
   clockFormat: ClockFormat
   dateFormat: DateFormat
   temperatureUnits: TemperatureUnits
+  /**
+   * Whether this machine may show a desktop notification at all.
+   *
+   * The master switch, and an app setting rather than a workspace one for the same
+   * reason the clock format is: it is about the computer in front of you and the
+   * week you are having, not about which working life the work belongs to. Off here
+   * silences every workspace; on here lets each of them answer for itself.
+   */
+  notifications: boolean
+  /**
+   * When in the morning they arrive, as `HH:MM` on a 24-hour clock regardless of how
+   * you have asked for a clock to be *drawn*.
+   *
+   * There is one delivery a day and this is it. A deadline is a calendar fact, not an
+   * event — nothing about it happens at 14:07 — so the honest shape is a single quiet
+   * moment when you are told what is coming, and silence for the rest of the day. If
+   * the machine was asleep at the time, it is said when the machine comes back.
+   */
+  notifyAt: string
+  /** Whether that delivery happens on a Saturday or a Sunday. Off, by default. */
+  notifyWeekends: boolean
   staleAfterDays: number
   horizonDays: number
   /**

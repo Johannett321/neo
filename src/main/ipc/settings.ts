@@ -30,6 +30,12 @@ const DEFAULTS = {
    * through.
    */
   glassTransparency: 45,
+  /*
+   * Early enough to be read before the day starts and late enough that it is not
+   * read in bed. It is one delivery, not a stream: everything Neo has to say about
+   * the day's deadlines arrives at this moment and then it is quiet.
+   */
+  notifyAt: '09:00',
   staleAfterDays: THRESHOLDS.stillAfterDays,
   horizonDays: 21,
   sidebarWidth: PANELS.sidebar.default,
@@ -71,6 +77,15 @@ async function readSettings(): Promise<Settings> {
     clockFormat: pickOne(stored.clockFormat, ['system', '12', '24'], DEFAULTS.clockFormat),
     dateFormat: pickOne(stored.dateFormat, ['system', 'dmy', 'mdy', 'ymd'], DEFAULTS.dateFormat),
     temperatureUnits: pickOne(stored.temperatureUnits, ['system', 'c', 'f'], DEFAULTS.temperatureUnits),
+    // On, and quiet at weekends. A command centre that never says a deadline is
+    // tomorrow is a filing cabinet; one that says it on a Sunday morning is rude.
+    notifications: (stored.notifications ?? 'true') !== 'false',
+    // Read back through the shape it has to be in, exactly as the formats above are:
+    // a time this cannot parse would mean a delivery that never comes, and silently.
+    notifyAt: /^([01]\d|2[0-3]):[0-5]\d$/.test(stored.notifyAt ?? '')
+      ? (stored.notifyAt as string)
+      : DEFAULTS.notifyAt,
+    notifyWeekends: stored.notifyWeekends === 'true',
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
     sidebarWidth: num('sidebarWidth', DEFAULTS.sidebarWidth),
@@ -130,7 +145,12 @@ export function registerSettingsHandlers(): void {
     // The audio goes with the rows. It is the one thing this app owns that lives
     // outside the database, so it is the one thing a wipe has to be told about.
     await rm(recordingDir(), { recursive: true, force: true })
-    for (const table of [...TABLES, 'summary_part']) {
+    // `notification` is named here and not in TABLES: it is not part of the export,
+    // because a record of what was said last Tuesday is not your work. It still has
+    // to be dropped by name — CASCADE takes the foreign key with the workspace table
+    // and leaves the rows behind, and a `CREATE TABLE IF NOT EXISTS` afterwards would
+    // find the table already there and never restore the key.
+    for (const table of [...TABLES, 'summary_part', 'notification']) {
       await exec(`DROP TABLE IF EXISTS ${table} CASCADE`)
     }
     await exec('DROP TABLE IF EXISTS setting CASCADE')

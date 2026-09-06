@@ -4,6 +4,7 @@ import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
 import { useTheme, THEMES, type Theme } from '@/lib/theme'
 import { formatBytes, formatDateWith, formatTemperature, formatTimeWith } from '@/lib/format'
 import { resolveTemperature, type ClockFormat } from '@shared/formats'
+import { useToast } from '@/lib/toast'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
@@ -48,6 +49,13 @@ export function SettingsPage(): React.JSX.Element {
           icon: 'clock',
           description: 'How a date, a clock and a temperature are written on this machine.',
           render: () => <FormatsPane />
+        },
+        {
+          id: 'notifications',
+          label: 'Notifications',
+          icon: 'bell',
+          description: 'Whether this machine may interrupt you, and when.',
+          render: () => <NotificationsPane />
         },
         {
           id: 'audio',
@@ -656,6 +664,149 @@ function AppearancePane(): React.JSX.Element {
  * country used by somebody who thinks in another's units — and the previews are there
  * so the choice is made by looking rather than by decoding an abbreviation.
  */
+/**
+ * Whether this computer is allowed to interrupt you, and at what hour.
+ *
+ * The machine's half of notifications, and only the machine's half: *what* is worth
+ * saying is a question about a working life, so it is asked once per workspace and
+ * lives over in workspace settings. The split is the same one the recording pane
+ * makes — which microphone is about this desk, which model is about this client.
+ *
+ * There is one delivery a day, and nothing here can turn it into a stream. That is
+ * not an omission: a deadline is a calendar fact, so being told once, at an hour you
+ * chose, is the whole of what an honest reminder can be. Anything more frequent
+ * would be the app asking to be looked at rather than telling you something.
+ */
+function NotificationsPane(): React.JSX.Element {
+  const settings = useApi('settings:get')
+  const save = useApiMutation('settings:save')
+  const toast = useToast()
+  const current = settings.data
+
+  if (!current) return <Panel>…</Panel>
+
+  const on = current.notifications
+
+  return (
+    <div className="space-y-4">
+      <Panel>
+        <label className="flex cursor-pointer items-center gap-3">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-medium">Notify me on this machine</span>
+            <span className="mt-0.5 block text-[12px] leading-relaxed text-base-content/55">
+              Off here and nothing is shown, whatever any workspace says. It is the switch
+              to reach for on holiday, rather than turning each area off in turn.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-sm"
+            checked={on}
+            onChange={(e) => save.mutate({ notifications: e.target.checked })}
+          />
+        </label>
+      </Panel>
+
+      <Panel className={on ? '' : 'pointer-events-none opacity-40'}>
+        <Field
+          label="When"
+          hint="Everything Neo has to say about the day's deadlines arrives at this moment, once, and then it is quiet. If the machine was asleep, you are told when it comes back."
+        >
+          <select
+            className="select select-bordered select-sm w-44"
+            value={current.notifyAt}
+            onChange={(e) => save.mutate({ notifyAt: e.target.value })}
+          >
+            {HALF_HOURS.map((at) => (
+              <option key={at} value={at}>
+                {formatTimeWith(current.clockFormat, atTime(at))}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <label className="mt-5 flex cursor-pointer items-center gap-3">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px]">Weekends too</span>
+            <span className="block text-[11px] text-base-content/45">
+              Off by default. A deadline that falls on a Monday is still there on Monday.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-sm"
+            checked={current.notifyWeekends}
+            onChange={(e) => save.mutate({ notifyWeekends: e.target.checked })}
+          />
+        </label>
+      </Panel>
+
+      <Panel>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium">Does it get through?</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+              Your operating system decides whether an app may show notifications the first
+              time it tries, and will not say beforehand. So the only honest way to find out
+              is to send one.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm shrink-0 gap-1.5"
+            onClick={() => {
+              /*
+               * What comes back is what the desktop actually did with it, not that it
+               * was asked — the refusal arrives on an event a moment after `show()`,
+               * so a version of this that reported straight away said "Sent" while
+               * nothing appeared, which is the worst answer available.
+               */
+              void call('notification:test').then(({ shown, reason }) =>
+                toast({
+                  icon: 'bell',
+                  title: shown ? 'That one is on your desktop' : 'Your system would not show it',
+                  detail: shown
+                    ? 'Deadlines will arrive looking like that.'
+                    : `${reason} If your system asked just now, answer it and try again; otherwise Neo is switched off in your notification settings.`
+                })
+              )
+            }}
+          >
+            <Icon name="bell" size={13} />
+            Send one now
+          </button>
+        </div>
+      </Panel>
+
+      <p className="px-1 text-[12px] leading-relaxed text-base-content/45">
+        What each area of your working life is worth being told about — a deadline a week
+        out, a card due tomorrow — is set per workspace, in{' '}
+        <Link
+          to="/workspace?pane=notifications"
+          className="underline decoration-base-content/25 hover:decoration-current"
+        >
+          its own settings
+        </Link>
+        .
+      </p>
+    </div>
+  )
+}
+
+/** Every half hour of the day, as the `HH:MM` the setting is stored in. */
+const HALF_HOURS = Array.from({ length: 48 }, (_, i) => {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(Math.floor(i / 2))}:${i % 2 ? '30' : '00'}`
+})
+
+/** That time today, so it can be drawn the way this machine has asked for times. */
+function atTime(hhmm: string): Date {
+  const [hours, minutes] = hhmm.split(':').map(Number)
+  const at = new Date()
+  at.setHours(hours ?? 0, minutes ?? 0, 0, 0)
+  return at
+}
+
 function FormatsPane(): React.JSX.Element {
   const settings = useApi('settings:get')
   const save = useApiMutation('settings:save')

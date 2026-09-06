@@ -53,6 +53,15 @@ export const mapWorkspace = (r: Row, icon: string | null = null): Workspace => (
   todayShowAttention: r.today_show_attention ?? true,
   todayShowMeetingTodos: r.today_show_meeting_todos ?? true,
   todayShowSoon: r.today_show_soon ?? true,
+  // Same reading as the row above it: a database written before any of this existed
+  // comes back saying what a new one would say, rather than silent. The machine's
+  // own switch is still in front of all of them.
+  notify: r.notify ?? true,
+  notifyProjectAheadDays: r.notify_project_ahead_days ?? 7,
+  notifyProjectOnTheDay: r.notify_project_on_the_day ?? true,
+  notifyTaskAheadDays: r.notify_task_ahead_days ?? 1,
+  notifyTaskOnTheDay: r.notify_task_on_the_day ?? true,
+  notifyTaskDayAfter: r.notify_task_day_after ?? true,
   createdAt: iso(r.created_at)
 })
 

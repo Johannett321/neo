@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
-import type { AiEvent, RecordingEvent } from '@shared/types'
+import type { AiEvent, OpenTarget, RecordingEvent } from '@shared/types'
 
 /**
  * The only surface the renderer gets. The database connection, the filesystem and
@@ -40,6 +40,19 @@ const api = {
     ipcRenderer.on('data', listener)
     return () => {
       ipcRenderer.off('data', listener)
+    }
+  },
+  /**
+   * "Show them this." Sent when a desktop notification is clicked, and the only
+   * message in the app that can name a workspace other than the one on screen — a
+   * notification about the day job can arrive while you are looking at a client's
+   * area, so the workspace travels with the path and is switched to first.
+   */
+  onOpen(callback: (target: OpenTarget) => void): () => void {
+    const listener = (_event: unknown, payload: OpenTarget): void => callback(payload)
+    ipcRenderer.on('open', listener)
+    return () => {
+      ipcRenderer.off('open', listener)
     }
   },
   /**

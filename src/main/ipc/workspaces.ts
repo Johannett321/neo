@@ -30,7 +30,13 @@ export function registerWorkspaceHandlers(): void {
       // attention, by the mirror or by anything that decides what you should do next.
       'bannerPath', 'bannerX', 'bannerY', 'bio', 'weatherPlace', 'weatherLatitude', 'weatherLongitude',
       'todayShowClock', 'todayShowWeather', 'todayShowBio', 'todayShowLinks', 'todayShowStats',
-      'todayShowAttention', 'todayShowMeetingTodos', 'todayShowSoon'
+      'todayShowAttention', 'todayShowMeetingTodos', 'todayShowSoon',
+      // What this working life may say out loud. Not furniture — these decide whether
+      // something interrupts you — but still nothing that anything derives from: the
+      // deadlines they read are the same ones Today reads, and forgetting to set one
+      // costs you a nudge, never an answer.
+      'notify', 'notifyProjectAheadDays', 'notifyProjectOnTheDay',
+      'notifyTaskAheadDays', 'notifyTaskOnTheDay', 'notifyTaskDayAfter'
     ])
 
     // Where the banner sits is a percentage, and a percentage outside 0-100 draws a
@@ -39,6 +45,15 @@ export function registerWorkspaceHandlers(): void {
     for (const axis of ['bannerX', 'bannerY'] as const) {
       if (fields[axis] !== undefined) {
         fields[axis] = Math.min(100, Math.max(0, Math.round(Number(fields[axis]) || 0)))
+      }
+    }
+
+    // How many days ahead you are warned, clamped where it is written rather than
+    // trusted. Zero means never, and the top is a quarter — a warning further out
+    // than that is not a warning, it is a second copy of the deadline.
+    for (const days of ['notifyProjectAheadDays', 'notifyTaskAheadDays'] as const) {
+      if (fields[days] !== undefined) {
+        fields[days] = Math.min(90, Math.max(0, Math.round(Number(fields[days]) || 0)))
       }
     }
 

@@ -38,5 +38,31 @@ export const session = {
 export class BrowserWindow {
   static getAllWindows = () => []
 }
+/**
+ * The desktop, such as it is. There is nothing to show a notification on in a
+ * headless run, so every one that would have been shown is kept instead — which is
+ * how `verify.ts` asserts what the app said, and that it only said it once.
+ */
+export const __notifications = []
+export class Notification {
+  static isSupported = () => true
+  constructor(options) {
+    this.options = options
+    this.listeners = new Map()
+  }
+  on(event, fn) {
+    this.listeners.set(event, fn)
+    return this
+  }
+  // A real one answers on `show` or `failed` a moment after this is called, and the
+  // code under test waits for whichever arrives. A stub that stayed silent would
+  // still pass, on the timeout, a second and a half at a time.
+  show() {
+    __notifications.push(this.options)
+    this.listeners.get('show')?.()
+  }
+  close() {}
+}
+
 export const __handlers = handlers
 export const __dataDir = dir

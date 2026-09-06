@@ -8,7 +8,7 @@
  * Packaged builds are unaffected; this only rebrands the development bundle, and it
  * re-runs after every npm install.
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, renameSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -87,6 +87,52 @@ writeFileSync(PATH_FILE, `${NAME}.app/Contents/MacOS/${binaryName}`)
 
 const icon = join(ROOT, 'build/icon.icns')
 if (existsSync(icon)) copyFileSync(icon, join(APP, 'Contents/Resources/electron.icns'))
+
+/*
+ * Everything above invalidates the signature the bundle arrived with, and that has
+ * consequences well beyond Gatekeeper.
+ *
+ * Electron ships its own linker-signed ad-hoc signature, which reports
+ * `Identifier=Electron` and `Info.plist=not bound`. Rewriting the plist and renaming
+ * the binary leaves that signature describing a bundle that no longer exists —
+ * `codesign --verify` fails outright — and macOS then refuses everything it gates on
+ * a signed bundle. **Notifications are refused with `UNErrorDomain error 1` before
+ * any prompt is shown**, which from the outside is indistinguishable from the feature
+ * not being implemented, and the privacy usage strings set above are never read
+ * either, so recording asks for nothing and is refused.
+ *
+ * Re-signing ad-hoc with the app's own identifier binds the plist and seals the
+ * resources, and all of it starts working. This is `scripts/sign-adhoc.mjs` doing the
+ * same job for a packaged build, and it is here for the same reason.
+ *
+ * The signature is content-derived, so re-signing unchanged bytes produces the same
+ * hash and whatever macOS remembered is still remembered. Installing a new Electron
+ * changes the bytes and the permissions are asked for again — the price of having no
+ * Developer ID, and a much smaller one than never being asked.
+ */
+// `codesign -dv` writes its report to **stderr** and still exits zero, so this reads
+// both streams rather than the return value — which is empty, and which is how a
+// check like this comes to re-sign on every run while claiming to have skipped.
+const inspected = spawnSync('codesign', ['-dv', APP], { encoding: 'utf8' })
+const signedAs = `${inspected.stdout ?? ''}${inspected.stderr ?? ''}`
+const alreadyOurs =
+  signedAs.includes('Identifier=com.svartdal.neo.dev') && signedAs.includes('Info.plist entries=')
+if (!alreadyOurs) {
+  try {
+    execFileSync(
+      'codesign',
+      ['--force', '--deep', '--sign', '-', '--identifier', 'com.svartdal.neo.dev', APP],
+      { stdio: 'pipe' }
+    )
+    console.log('Development bundle re-signed, so macOS will show its notifications and prompts.')
+  } catch (error) {
+    console.warn(
+      'Could not re-sign the development bundle; macOS will refuse notifications and the ' +
+        'microphone in `npm run dev`:',
+      String(error.stderr ?? error).trim()
+    )
+  }
+}
 
 // macOS caches bundle metadata; without re-registering, the old name and icon persist.
 const lsregister =
