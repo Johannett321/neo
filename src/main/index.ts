@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, powerMonitor, protocol, session, shell } from 'electron'
 import { closeDb, dataRoot, initDb, q } from './db/client'
+import { adoptExistingRows, initOplog } from './db/oplog'
 import { buildAppMenu } from './menu'
 import { ensureColumnsEverywhere } from './lib/board'
 import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from './lib/glass'
@@ -225,6 +226,17 @@ async function start(): Promise<void> {
   )
 
   await initDb()
+  /*
+   * The log comes up before anything writes to it, and the adoption pass comes before
+   * the housekeeping below — `ensureMeEverywhere()` and friends all write, and they
+   * must write *as themselves* rather than being swept up as rows that were always
+   * here. On an install that predates the log this is the launch that gives years of
+   * work its history; on every launch after it, it finds nothing and costs one query
+   * per table.
+   */
+  await initOplog()
+  const adopted = await adoptExistingRows()
+  if (adopted.rows > 0) console.log(`Took ${adopted.rows} existing row(s) into the operation log.`)
   await ensureMeEverywhere()
   await ensureMeOnAllProjects()
   await ensureColumnsEverywhere()

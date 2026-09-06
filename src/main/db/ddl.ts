@@ -177,7 +177,12 @@ CREATE TABLE IF NOT EXISTS meeting (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- The one join table, and the only row in the schema that had no id of its own.
+-- It has one now: the operation log addresses every row it carries by a single id,
+-- and a composite key would mean a second way of naming a row for one table's sake.
+-- The pair stays unique — that is what the table is for — so nothing else changes.
 CREATE TABLE IF NOT EXISTS meeting_attendee (
+  id         uuid NOT NULL DEFAULT gen_random_uuid(),
   meeting_id uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
   person_id  uuid NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   PRIMARY KEY (meeting_id, person_id)
@@ -417,6 +422,51 @@ CREATE TABLE IF NOT EXISTS summary_part (
   UNIQUE (recording_id, ord)
 );
 
+
+-- Every write in the application, as it happened.
+--
+-- Deliberately without a foreign key to workspace: the log outlives the rows it
+-- describes, exactly as activity.entity_id does. A batch that deleted a workspace
+-- must still be readable afterwards, or the deletion could never be sent anywhere.
+--
+-- seq is a local cursor and nothing more — it says what this machine has yet to
+-- hand to a transport. The *ordering* of the data is the hlc, which is the same on
+-- every device; the sequence number is only ever "what have I not sent".
+CREATE TABLE IF NOT EXISTS op_batch (
+  seq            bigserial PRIMARY KEY,
+  id             uuid NOT NULL UNIQUE,
+  workspace_id   uuid,
+  device_id      text NOT NULL,
+  actor_id       uuid,
+  schema_version integer NOT NULL,
+  hlc            text NOT NULL,
+  -- local | remote. A remote batch is recorded so that replay reproduces state and
+  -- so a third device can be fed from this one, but it is never sent back.
+  origin         text NOT NULL DEFAULT 'local',
+  ops            jsonb NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+-- Per-row sync metadata, kept beside the domain tables rather than inside them.
+--
+-- One table instead of a jsonb column on all twenty-five: nothing in the schema
+-- above changes shape, pick()'s allowlists keep meaning exactly what they meant,
+-- and a row's stamps disappear with it. It holds two things:
+--
+--   field_hlc   when each column was last written, so last-write-wins is decided per
+--               field rather than per row — two devices editing a project's name and
+--               its deadline in the same minute must not cost one of them.
+--   deleted_hlc the tombstone. A cascade is deterministic, so only the parent delete
+--               travels; this is what stops a task created on the phone from
+--               resurrecting a project a Mac deleted while the phone was offline.
+CREATE TABLE IF NOT EXISTS sync_row (
+  table_name  text NOT NULL,
+  row_id      text NOT NULL,
+  field_hlc   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  deleted_hlc text,
+  PRIMARY KEY (table_name, row_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
@@ -438,6 +488,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recording_meeting ON recording (meeting_id
 CREATE INDEX IF NOT EXISTS idx_recording_segment ON recording_segment (recording_id, ord);
 CREATE INDEX IF NOT EXISTS idx_transcript_cue    ON transcript_cue (recording_id, ord);
 CREATE INDEX IF NOT EXISTS idx_summary_part      ON summary_part (recording_id, ord);
+CREATE INDEX IF NOT EXISTS idx_op_batch_pending  ON op_batch (origin, seq);
+CREATE INDEX IF NOT EXISTS idx_op_batch_ws       ON op_batch (workspace_id, seq);
+CREATE INDEX IF NOT EXISTS idx_sync_row_dead     ON sync_row (table_name, row_id) WHERE deleted_hlc IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attendee_id ON meeting_attendee (id);
 
 `
 
@@ -452,6 +506,7 @@ CREATE INDEX IF NOT EXISTS idx_summary_part      ON summary_part (recording_id, 
  */
 export const MIGRATIONS: string[] = [
   // 1. Columns first. Nothing below may reference a column added further down.
+  `ALTER TABLE meeting_attendee ADD COLUMN IF NOT EXISTS id uuid NOT NULL DEFAULT gen_random_uuid()`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
   // The assistant's key is per workspace, because the workspace is the boundary it

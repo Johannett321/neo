@@ -1,8 +1,8 @@
 import OpenAI from 'openai'
 import { DEFAULT_MODEL } from '@shared/ai'
 import type { AiEvent, AttachmentUpload, Profile } from '@shared/types'
-import { exec, q, q1, today } from '../../db/client'
-import { invokeChannel } from '../../ipc/util'
+import { q, q1, today } from '../../db/client'
+import { invokeChannel, upsert } from '../../ipc/util'
 import { readAttachment, shapeOf, storeAttachment } from '../attachments'
 import { TOOLS, TOOLS_BY_NAME, type ToolContext } from './tools'
 
@@ -100,13 +100,15 @@ async function saveMessage(
   blocks: unknown[],
   tools: Record<string, unknown> = {}
 ): Promise<string> {
-  const row = await q1<{ id: string }>(
-    `INSERT INTO chat_message (conversation_id, role, blocks, tools, sort_order)
-     VALUES ($1, $2, $3::jsonb, $4::jsonb, $5) RETURNING id`,
-    [conversationId, role, JSON.stringify(blocks), JSON.stringify(tools), await nextSortOrder(conversationId)]
-  )
-  await exec('UPDATE conversation SET updated_at = now() WHERE id = $1', [conversationId])
-  return row!.id
+  const row = await upsert<{ id: string }>('chat_message', {
+    conversationId,
+    role,
+    blocks: JSON.stringify(blocks),
+    tools: JSON.stringify(tools),
+    sortOrder: await nextSortOrder(conversationId)
+  })
+  await upsert('conversation', { updatedAt: new Date() }, conversationId)
+  return row.id
 }
 
 /**
@@ -215,11 +217,10 @@ export async function startRun(
     )
     if (!existing) throw new Error('That conversation is not in this workspace.')
   } else {
-    const created = await q1<{ id: string }>(
-      'INSERT INTO conversation (workspace_id) VALUES ($1) RETURNING id',
-      [options.workspaceId]
-    )
-    conversationId = created!.id
+    const created = await upsert<{ id: string }>('conversation', {
+      workspaceId: options.workspaceId
+    })
+    conversationId = created.id
   }
 
   // Files are written to disk before the turn starts, so a failed request does not
@@ -231,12 +232,14 @@ export async function startRun(
       throw new Error(`${file.name} is not a kind of file the assistant can read.`)
     }
     const { path, bytes } = await storeAttachment(file.name, file.data)
-    const row = await q1<{ id: string }>(
-      `INSERT INTO chat_attachment (conversation_id, name, mime, bytes, path)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [conversationId, file.name, file.mime, bytes, path]
-    )
-    stored.push({ id: row!.id, name: file.name, mime: file.mime, path })
+    const row = await upsert<{ id: string }>('chat_attachment', {
+      conversationId,
+      name: file.name,
+      mime: file.mime,
+      bytes,
+      path
+    })
+    stored.push({ id: row.id, name: file.name, mime: file.mime, path })
   }
   for (const file of stored) {
     const block = await attachmentContent(file.name, file.mime, file.path)
@@ -248,10 +251,7 @@ export async function startRun(
 
   const messageId = await saveMessage(conversationId, 'user', [{ role: 'user', content }])
   if (stored.length) {
-    await exec(
-      `UPDATE chat_attachment SET message_id = $1 WHERE id = ANY($2::uuid[])`,
-      [messageId, stored.map((s) => s.id)]
-    )
+    for (const file of stored) await upsert('chat_attachment', { messageId }, file.id)
   }
 
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -558,7 +558,7 @@ async function nameConversation(client: OpenAI, ctx: LoopContext, run: Run): Pro
     })
     const title = (response.output_text ?? '').trim().replace(/^["'“”]|["'“”.]$/g, '').slice(0, 80)
     if (!title) return
-    await exec('UPDATE conversation SET title = $2 WHERE id = $1', [run.conversationId, title])
+    await upsert('conversation', { title }, run.conversationId)
     ctx.send({ runId: run.id, type: 'title', conversationId: run.conversationId, title })
   } catch {
     // A conversation with no name is a cosmetic problem; it must never fail the turn.

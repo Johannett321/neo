@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { userInfo } from 'node:os'
 import { promisify } from 'node:util'
 import { exec, q, q1 } from '../db/client'
+import { upsert } from '../ipc/util'
 
 /**
  * You are one person with one name and one photo, but workspaces are separate areas
@@ -44,19 +45,17 @@ export async function ensureMe(workspaceId: string): Promise<string> {
   )
 
   if (existing) {
-    await exec('UPDATE person SET name = $2, avatar_path = $3 WHERE id = $1', [
-      existing.id,
-      profile.name,
-      profile.avatarPath
-    ])
+    await upsert('person', { name: profile.name, avatarPath: profile.avatarPath }, existing.id)
     return existing.id
   }
 
-  const created = await q1<{ id: string }>(
-    `INSERT INTO person (workspace_id, name, avatar_path, avatar_color, is_me)
-     VALUES ($1, $2, $3, '#6366f1', true) RETURNING id`,
-    [workspaceId, profile.name, profile.avatarPath]
-  )
+  const created = await upsert<{ id: string }>('person', {
+    workspaceId,
+    name: profile.name,
+    avatarPath: profile.avatarPath,
+    avatarColor: '#6366f1',
+    isMe: true
+  })
   if (!created) throw new Error('Could not create your person record')
   return created.id
 }
@@ -73,15 +72,19 @@ export async function ensureMeEverywhere(): Promise<void> {
  * you afterwards, so it never fights a deliberate choice.
  */
 export async function ensureMeOnAllProjects(): Promise<void> {
-  await exec(
-    `INSERT INTO membership (person_id, project_id, role)
-     SELECT me.id, p.id, ''
-     FROM project p
-     JOIN person me ON me.workspace_id = p.workspace_id AND me.is_me
-     WHERE NOT EXISTS (
-       SELECT 1 FROM membership m WHERE m.project_id = p.id AND m.person_id = me.id
-     )`
+  // A row at a time: each membership is its own fact and needs its own stamp, so a
+  // set-based insert would land on other devices as one undifferentiated write.
+  const missing = await q<{ person_id: string; project_id: string }>(
+    `SELECT me.id AS person_id, p.id AS project_id
+       FROM project p
+       JOIN person me ON me.workspace_id = p.workspace_id AND me.is_me
+      WHERE NOT EXISTS (
+        SELECT 1 FROM membership m WHERE m.project_id = p.id AND m.person_id = me.id
+      )`
   )
+  for (const row of missing) {
+    await upsert('membership', { personId: row.person_id, projectId: row.project_id, role: '' })
+  }
 }
 
 /**

@@ -19,7 +19,7 @@ import { TOOLS } from '../src/main/lib/ai/tools'
 import { PANELS, clampPanelWidth } from '../src/shared/panels'
 import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
 import { apiOnly } from '../src/main/lib/ai/run'
-import { invokeChannel } from '../src/main/ipc/util'
+import { invokeChannel, removeWhere, upsert } from '../src/main/ipc/util'
 import { announceChange, onChange } from '../src/main/lib/changes'
 import { attentionReason } from '../src/main/lib/attention'
 import { deliveryDue } from '../src/main/lib/notify'
@@ -37,7 +37,12 @@ import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recor
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath } from '../src/main/lib/recording/systemAudio'
-import { addDays, exec, iconDir, q, today as todayDate } from '../src/main/db/client'
+import { addDays, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
+import {
+  adoptExistingRows, allBatches, deviceId, ingest, initOplog, pending, replayLog, SYNC_ORDER
+} from '../src/main/db/oplog'
+import { DEVICE_ONLY_COLUMNS, SCHEMA_VERSION } from '@shared/ops'
+import { randomUUID } from 'node:crypto'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -78,6 +83,25 @@ const at = (hours: number, minutes: number): Date => {
   return when
 }
 
+
+
+/** Where two snapshots first disagree, so a failure says what rather than that. */
+const firstDifference = (a: string, b: string): string => {
+  const left = a.split('\n')
+  const right = b.split('\n')
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    if (left[i] !== right[i]) {
+      const a2 = String(left[i]).split('|')
+      const b2 = String(right[i]).split('|')
+      const fields = a2
+        .map((f, j) => (f === b2[j] ? '' : `${f} -> ${b2[j] ?? '(gone)'}`))
+        .filter(Boolean)
+      return `${a2[0]} row ${i + 1}: ${fields.join('; ').slice(0, 300)}`
+    }
+  }
+  return ''
+}
+
 const ok = (label: string, cond: boolean, extra = ''): void => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? ` — ${extra}` : ''}`)
   if (!cond) process.exitCode = 1
@@ -85,6 +109,7 @@ const ok = (label: string, cond: boolean, extra = ''): void => {
 
 async function main(): Promise<void> {
   await initDb()
+  await initOplog()
   void ipcMain
   registerWorkspaceHandlers()
   registerProjectHandlers()
@@ -801,22 +826,24 @@ async function main(): Promise<void> {
       [recordingId, i, i * 5000, i * 5000 + 4000, `Speaker ${i + 1}`, line]
     )
   }
-  await exec(
-    `UPDATE recording SET transcript_state = 'done', transcript_model = 'whisper-1',
-            speaker_state = 'done', speakers = $2::jsonb, summary_state = 'done',
-            summary = $3, recap = $4::jsonb
-     WHERE id = $1`,
-    [
-      recordingId,
-      JSON.stringify({ 'Speaker 1': { name: '', personId: null }, 'Speaker 2': { name: '', personId: null } }),
-      'A short call about the release.',
-      JSON.stringify({
-        decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
-        commitments: [{ who: 'Ida', what: 'Write the release notes', due: '' }],
-        insights: ['Nobody has checked the migration yet.']
-      })
-    ]
-  )
+  // Written straight in, like sample data, so it is taken into the log the same way.
+  await adoptExistingRows()
+  await upsert('recording', {
+    transcriptState: 'done',
+    transcriptModel: 'whisper-1',
+    speakerState: 'done',
+    speakers: JSON.stringify({
+      'Speaker 1': { name: '', personId: null },
+      'Speaker 2': { name: '', personId: null }
+    }),
+    summaryState: 'done',
+    summary: 'A short call about the release.',
+    recap: JSON.stringify({
+      decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
+      commitments: [{ who: 'Ida', what: 'Write the release notes', due: '' }],
+      insights: ['Nobody has checked the migration yet.']
+    })
+  }, recordingId)
 
   const speakerNamed = await call('recording:nameSpeaker', {
     id: recordingId,
@@ -835,10 +862,8 @@ async function main(): Promise<void> {
    * commitment somebody made out loud. All of it through the ordinary channels, so
    * what arrives is indistinguishable from what you would have typed.
    */
-  await exec(`UPDATE recording SET suggested_title = 'Friday release call' WHERE id = $1`, [
-    recordingId
-  ])
-  await exec(`UPDATE meeting SET title = '' WHERE id = $1`, [recMeeting.id])
+  await upsert('recording', { suggestedTitle: 'Friday release call' }, recordingId)
+  await upsert('meeting', { title: '' }, recMeeting.id)
 
   ok('a recap that has not been folded into its meeting yet says so',
      (await call('recording:get', { meetingId: recMeeting.id })).recording.recapWrittenAt === null)
@@ -861,11 +886,8 @@ async function main(): Promise<void> {
      again.body === applied.body && again.todos.length === applied.todos.length)
 
   // A name you typed is never replaced by one a model came up with.
-  await exec(
-    `UPDATE recording SET recap_written_at = NULL, suggested_title = 'Something else' WHERE id = $1`,
-    [recordingId]
-  )
-  await exec(`UPDATE meeting SET title = 'The name I gave it' WHERE id = $1`, [recMeeting.id])
+  await upsert('recording', { recapWrittenAt: null, suggestedTitle: 'Something else' }, recordingId)
+  await upsert('meeting', { title: 'The name I gave it' }, recMeeting.id)
   const renamed = await call('recording:applyRecap', { id: recordingId })
   ok('a meeting you have named keeps the name you gave it', renamed.title === 'The name I gave it')
   ok('and a commitment already on the list is not added to it again',
@@ -878,19 +900,16 @@ async function main(): Promise<void> {
    * and finishes on its own — which is what carries a recap written by an older build,
    * or one whose meeting was busy at the time, over the line.
    */
-  await exec(
-    `UPDATE recording SET recap_written_at = NULL, recap_todos_at = NULL, recap = $2::jsonb
-     WHERE id = $1`,
-    [
-      recordingId,
-      JSON.stringify({
-        decisions: [],
-        commitments: [{ who: 'Tom', what: 'Book the migration window', due: '' }],
-        insights: []
-      })
-    ]
-  )
-  await exec(`UPDATE meeting SET body = '' WHERE id = $1`, [recMeeting.id])
+  await upsert('recording', {
+    recapWrittenAt: null,
+    recapTodosAt: null,
+    recap: JSON.stringify({
+      decisions: [],
+      commitments: [{ who: 'Tom', what: 'Book the migration window', due: '' }],
+      insights: []
+    })
+  }, recordingId)
+  await upsert('meeting', { body: '' }, recMeeting.id)
   kick()
 
   const folded = await until(async () => {
@@ -910,7 +929,7 @@ async function main(): Promise<void> {
    * of the recap. Clearing only the to-do marker is exactly that situation.
    */
   const bodyOnce = runnerMeeting.body
-  await exec(`UPDATE recording SET recap_todos_at = NULL WHERE id = $1`, [recordingId])
+  await upsert('recording', { recapTodosAt: null }, recordingId)
   await call('recording:applyRecap', { id: recordingId })
   const retried = (await call('project:get', { id: checkout.id, touch: false }))
     .meetings.find((m: any) => m.id === recMeeting.id)
@@ -929,10 +948,7 @@ async function main(): Promise<void> {
   // Put it back the way it was: what follows is about a finished recording, and a
   // test that leaves the world half-rewritten behind it is a test that fails the
   // next one for reasons that have nothing to do with the next one.
-  await exec(
-    `UPDATE recording SET summary_state = 'done', recap_todos_at = now() WHERE id = $1`,
-    [recordingId]
-  )
+  await upsert('recording', { summaryState: 'done', recapTodosAt: new Date() }, recordingId)
 
   ok('a meeting carries its recording, so a list can say what state it is in',
      (await call('project:get', { id: checkout.id, touch: false }))
@@ -1862,7 +1878,9 @@ async function main(): Promise<void> {
   // Something new arriving after the delivery is still told, because its kind has
   // not been claimed today. What cannot happen is the same kind arriving twice.
   await call('workspace:save', { id: quiet.id, notifyTaskDayAfter: false })
-  await exec('DELETE FROM notification WHERE workspace_id = $1 AND kind = $2', [quiet.id, 'task-day'])
+  // Through removeWhere so it leaves a tombstone: a bare delete here would be
+  // resurrected on replay and then collide with the claim made straight afterwards.
+  await removeWhere('notification', { workspaceId: quiet.id, kind: 'task-day' })
   await call('task:save', { projectId: rollout.id, title: 'One more', dueDate: now })
   const laterThatDay = await deliverNotifications(at(12, 0))
   ok('a kind whose day has not been claimed is still delivered',
@@ -2218,6 +2236,184 @@ async function main(): Promise<void> {
   ok('how much updating happens by itself is remembered',
      updateSettings.updates === 'notify' &&
      (await call('settings:save', { updates: 'nonsense' })).updates === 'automatic')
+
+  /* ------------------------------------------------------------------ *
+   * The operation log
+   *
+   * The gate for the whole of Stage 0. Everything above this point has been
+   * writing through the same handlers the app uses, so by now the log holds a
+   * complete account of a working session — which is exactly the claim being
+   * tested.
+   * ------------------------------------------------------------------ */
+
+  const unlogged: string[] = []
+  for (const table of SYNC_ORDER) {
+    const gap = await q1<{ n: number }>(
+      `SELECT count(*)::int AS n FROM ${table} t
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sync_row s WHERE s.table_name = $1 AND s.row_id = t.id::text
+        )`,
+      [table]
+    )
+    if ((gap?.n ?? 0) > 0) unlogged.push(`${table}:${gap?.n}`)
+  }
+  ok('every row in a synced table is accounted for in the log', unlogged.length === 0,
+     unlogged.join(', '))
+
+  ok('the log is not empty and every batch carries its schema version',
+     (await allBatches()).length > 0 &&
+     (await allBatches()).every((b) => b.schema === SCHEMA_VERSION && b.hlc.length > 20))
+
+  ok('a batch belongs to exactly one workspace',
+     (await allBatches()).filter((b) => b.origin === 'local' && b.ops.length > 0)
+       .every((b) => b.workspaceId !== null || b.ops.every((o) => o.table === 'workspace')))
+
+  ok('device-only columns never reach an op',
+     (await allBatches()).every((b) =>
+       b.ops.every((o) =>
+         o.table !== 'recording' ||
+         !Object.keys(o.fields ?? {}).some((f) =>
+           ['transcript_state', 'speaker_state', 'summary_state', 'next_attempt_at',
+            'capture_state', 'heartbeat_at'].includes(f)))))
+
+  ok('a device-local table produces no ops at all',
+     (await allBatches()).every((b) =>
+       b.ops.every((o) => !['recording_segment', 'summary_part', 'setting'].includes(o.table))))
+
+  // A delete has to leave something behind, or a device that still holds the row
+  // would hand it back the next time it synced.
+  const doomedProject = await call('project:save', { name: 'To be deleted', workspaceId: dayJob })
+  await call('task:save', { projectId: doomedProject.id, title: 'Goes with it' })
+  const doomedTask = (await q<{ id: string }>(
+    'SELECT id FROM task WHERE project_id = $1', [doomedProject.id]))[0]
+  await call('project:delete', { id: doomedProject.id })
+  const graveA = await q1<{ deleted_hlc: string }>(
+    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'project' AND row_id = $1`,
+    [doomedProject.id])
+  const graveB = await q1<{ deleted_hlc: string }>(
+    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'task' AND row_id = $1`,
+    [doomedTask.id])
+  ok('deleting a project tombstones it and everything the cascade takes with it',
+     Boolean(graveA?.deleted_hlc) && Boolean(graveB?.deleted_hlc))
+
+  /*
+   * The whole point of the tombstone. The other Mac edited the task before the delete
+   * reached it — so its stamp is older than the delete and newer than the task — and
+   * the row must stay gone.
+   */
+  const staleEdit = graveA?.deleted_hlc.replace(/^(\d+)/, (m) => String(Number(m) - 1).padStart(15, '0')) ?? ''
+  await ingest({
+    id: randomUUID(),
+    workspaceId: dayJob,
+    deviceId: 'another-mac',
+    actorId: null,
+    schema: SCHEMA_VERSION,
+    hlc: staleEdit,
+    ops: [{
+      table: 'task', rowId: doomedTask.id, kind: 'put',
+      fields: { project_id: doomedProject.id, title: 'Back from the dead' },
+      hlc: staleEdit
+    }]
+  })
+  ok('an op from an offline device cannot resurrect a deleted row',
+     (await q('SELECT id FROM task WHERE id = $1', [doomedTask.id])).length === 0)
+
+  /*
+   * Last-write-wins is per field and on the clock, not on arrival order.
+   *
+   * The stamps here are causally ordered — created, then edited on the other Mac,
+   * then edited again here — because that is the only order they can really occur
+   * in: the other Mac cannot have edited a project it had not yet received.
+   */
+  const contested = await call('project:save', { name: 'Contested', workspaceId: dayJob })
+  const remoteStamp = `${String(Date.now()).padStart(15, '0')}.00000.another-mac`
+  await ingest({
+    id: randomUUID(),
+    workspaceId: dayJob,
+    deviceId: 'another-mac',
+    actorId: null,
+    schema: SCHEMA_VERSION,
+    hlc: remoteStamp,
+    ops: [{
+      table: 'project', rowId: contested.id, kind: 'put',
+      fields: { name: 'Stale name', summary: 'But a summary nobody else set' },
+      hlc: remoteStamp
+    }]
+  })
+  await call('project:save', { id: contested.id, name: 'Contested again' })
+  const afterMerge = await q1<{ name: string; summary: string }>(
+    'SELECT name, summary FROM project WHERE id = $1', [contested.id])
+  ok('a remote op wins the field nobody else touched and loses the one edited since',
+     afterMerge?.name === 'Contested again' && afterMerge?.summary === 'But a summary nobody else set')
+
+  ok('a batch already seen is not applied twice', await (async () => {
+    const stamp = `${String(Date.now() + 1000).padStart(15, '0')}.00000.another-mac`
+    const batch = {
+      id: randomUUID(), workspaceId: dayJob, deviceId: 'another-mac', actorId: null,
+      schema: SCHEMA_VERSION, hlc: stamp,
+      ops: [{
+        table: 'project' as const, rowId: contested.id, kind: 'put' as const,
+        fields: { summary: 'Once' }, hlc: stamp
+      }]
+    }
+    await ingest(batch)
+    const second = await ingest(batch)
+    return second.applied === 0
+  })())
+
+  ok('what this device has written is offered to a transport in order', await (async () => {
+    const batches = await pending('0', 5000)
+    return batches.length > 0 &&
+      batches.every((b) => b.origin === 'local') &&
+      batches.every((b, i) => i === 0 || Number(b.seq) > Number(batches[i - 1].seq))
+  })())
+
+  ok('adoption is idempotent — a second pass finds nothing',
+     (await adoptExistingRows()).rows === 0)
+
+  ok('this machine has an identity that survives being asked twice',
+     deviceId().length === 36 && deviceId() === deviceId())
+
+  /*
+   * And the assertion the rest of it exists for. Throw the whole database away and
+   * rebuild it from what was written down: if that reproduces the state exactly,
+   * then the log is a complete account of the work and every device, restore and
+   * new phone that reads it gets the same answer.
+   */
+  const shapshot = async (): Promise<string> => {
+    const out: string[] = []
+    for (const table of SYNC_ORDER) {
+      const rows = await q<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY id`)
+      for (const row of rows) {
+        const fields = Object.keys(row).sort()
+          .filter((k) => !DEVICE_ONLY_COLUMNS.includes(k))
+          .map((k) => `${k}=${JSON.stringify(row[k] instanceof Date ? (row[k] as Date).toISOString() : row[k])}`)
+        out.push(`${table}|${fields.join('|')}`)
+      }
+    }
+    return out.join('\n')
+  }
+  const counts = async (): Promise<Record<string, number>> => {
+    const out: Record<string, number> = {}
+    for (const table of SYNC_ORDER) {
+      out[table] = (await q1<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))?.n ?? 0
+    }
+    return out
+  }
+  const countsBefore = await counts()
+  const stateBefore = await shapshot()
+  const replayed = await replayLog()
+  const stateAfter = await shapshot()
+  const countsAfter = await counts()
+  const missing = Object.keys(countsBefore)
+    .filter((t) => countsBefore[t] !== countsAfter[t])
+    .map((t) => `${t} ${countsBefore[t]}->${countsAfter[t]}`)
+  ok('replay restores every row', missing.length === 0, missing.join(', '))
+  ok('replaying the log into an empty database reproduces the state exactly',
+     stateBefore === stateAfter && stateBefore.length > 0,
+     stateBefore === stateAfter
+       ? `${replayed.batches} batches, ${replayed.ops} ops`
+       : firstDifference(stateBefore, stateAfter))
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

@@ -1,12 +1,12 @@
 import type { ContentFolder, ContentKind, Decision, JournalEntry, Link, Note } from '@shared/types'
-import { exec, q1, today } from '../db/client'
+import { q1, today } from '../db/client'
 import { mapContentFolder, mapDecision, mapJournal, mapLink, mapNote } from '../db/map'
 import { logActivity } from '../lib/activity'
 import {
   checkContentFolder, contentFolderBranch, isContentKind
 } from '../lib/folders'
 import { mirrorProject } from '../lib/markdown'
-import { handle, pick, upsert } from './util'
+import { handle, pick, remove, updateWhere, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerContentHandlers(): void {
@@ -31,7 +31,7 @@ export function registerContentHandlers(): void {
   })
 
   handle('note:delete', async ({ id }) => {
-    await exec('DELETE FROM note WHERE id = $1', [id])
+    await remove('note', id)
   })
 
   /*
@@ -132,10 +132,10 @@ export function registerContentHandlers(): void {
      * guarantees on every write — so the other statement matches nothing, and two
      * plain statements beat a table name pasted into the SQL.
      */
-    await exec('UPDATE note SET folder_id = $2 WHERE folder_id = $1', [id, folder.parent_id])
-    await exec('UPDATE meeting SET folder_id = $2 WHERE folder_id = $1', [id, folder.parent_id])
-    await exec('UPDATE content_folder SET parent_id = $2 WHERE parent_id = $1', [id, folder.parent_id])
-    await exec('DELETE FROM content_folder WHERE id = $1', [id])
+    await updateWhere('note', { folderId: id }, { folderId: folder.parent_id })
+    await updateWhere('meeting', { folderId: id }, { folderId: folder.parent_id })
+    await updateWhere('content_folder', { parentId: id }, { parentId: folder.parent_id })
+    await remove('content_folder', id)
     await mirrorProject(folder.project_id)
   })
 
@@ -152,7 +152,7 @@ export function registerContentHandlers(): void {
   })
 
   handle('decision:delete', async ({ id }) => {
-    await exec('DELETE FROM decision WHERE id = $1', [id])
+    await remove('decision', id)
   })
 
   handle('link:save', async (draft) => {
@@ -169,7 +169,7 @@ export function registerContentHandlers(): void {
   })
 
   handle('link:delete', async ({ id }) => {
-    await exec('DELETE FROM link WHERE id = $1', [id])
+    await remove('link', id)
   })
 
   handle('journal:save', async (draft) => {
@@ -183,6 +183,6 @@ export function registerContentHandlers(): void {
   })
 
   handle('journal:delete', async ({ id }) => {
-    await exec('DELETE FROM journal_entry WHERE id = $1', [id])
+    await remove('journal_entry', id)
   })
 }

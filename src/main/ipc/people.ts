@@ -1,11 +1,11 @@
 import type { Membership, Person } from '@shared/types'
-import { exec, q } from '../db/client'
+import { q, q1 } from '../db/client'
 import { mapCast, mapPerson, mapPersonProject } from '../db/map'
 import { logActivity } from '../lib/activity'
 import { deleteIcon, readIcon } from '../lib/icons'
 import { ensureMe, ensureMeEverywhere, readProfile, suggestedName, writeProfile } from '../lib/profile'
 import { mirrorProject } from '../lib/markdown'
-import { handle, pick, upsert } from './util'
+import { handle, pick, remove, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerPeopleHandlers(): void {
@@ -94,7 +94,7 @@ export function registerPeopleHandlers(): void {
   handle('person:delete', async ({ id }) => {
     const rows = await q<any>('SELECT avatar_path, is_me FROM person WHERE id = $1', [id])
     if (rows[0]?.is_me) throw new Error('You cannot delete yourself. Edit your profile in Settings instead.')
-    await exec('DELETE FROM person WHERE id = $1', [id])
+    await remove('person', id)
     if (rows[0]?.avatar_path) await deleteIcon(rows[0].avatar_path)
   })
 
@@ -155,11 +155,11 @@ export function registerPeopleHandlers(): void {
     const project = await q<any>('SELECT workspace_id FROM project WHERE id = $1', [projectId])
     if (!project[0]) throw new Error('Project not found')
     const mePersonId = await ensureMe(project[0].workspace_id)
-    await exec(
-      `INSERT INTO membership (person_id, project_id, role) VALUES ($1, $2, $3)
-       ON CONFLICT (person_id, project_id) DO UPDATE SET role = EXCLUDED.role`,
-      [mePersonId, projectId, role]
+    const mine = await q1<{ id: string }>(
+      'SELECT id FROM membership WHERE person_id = $1 AND project_id = $2',
+      [mePersonId, projectId]
     )
+    await upsert('membership', { personId: mePersonId, projectId, role }, mine?.id)
     const joined = await q<any>(
       `SELECT m.*, p.name, p.org, p.email, p.avatar_color, p.avatar_path, p.is_me, p.how_to_work_with
        FROM membership m JOIN person p ON p.id = m.person_id
@@ -178,6 +178,6 @@ export function registerPeopleHandlers(): void {
     if (rows[0]?.is_me) {
       throw new Error('You are always on your own projects. Clear your roles instead of removing yourself.')
     }
-    await exec('DELETE FROM membership WHERE id = $1', [id])
+    await remove('membership', id)
   })
 }

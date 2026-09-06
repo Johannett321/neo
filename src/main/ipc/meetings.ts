@@ -8,7 +8,7 @@ import { mirrorProject } from '../lib/markdown'
 import { describeEngineError, recapEngine, workspaceOfMeeting } from '../lib/recording/engine'
 import { pruneRecordings } from '../lib/recording/store'
 import { suggestTitle } from '../lib/recording/summarise'
-import { handle, pick, upsert } from './util'
+import { handle, pick, remove, upsert } from './util'
 
 /**
  * A meeting is a note that knows when it happened, who was in the room, and what
@@ -57,13 +57,22 @@ export function registerMeetingHandlers(): void {
     const row = await upsert<any>('meeting', fields, draft.id, 'updated_at = now()')
 
     if (draft.attendeeIds) {
-      await exec('DELETE FROM meeting_attendee WHERE meeting_id = $1', [row.id])
-      for (const personId of draft.attendeeIds) {
-        await exec(
-          `INSERT INTO meeting_attendee (meeting_id, person_id) VALUES ($1, $2)
-           ON CONFLICT DO NOTHING`,
-          [row.id, personId]
-        )
+      /*
+       * Diffed rather than replaced wholesale. The page saves itself while it is
+       * being written, and delete-everything-then-reinsert would put the same
+       * attendees into the log on every keystroke that autosaves.
+       */
+      const wanted = new Set(draft.attendeeIds)
+      const current = await q<{ id: string; person_id: string }>(
+        'SELECT id, person_id FROM meeting_attendee WHERE meeting_id = $1',
+        [row.id]
+      )
+      for (const attendee of current) {
+        if (!wanted.has(attendee.person_id)) await remove('meeting_attendee', attendee.id)
+      }
+      const have = new Set(current.map((a) => a.person_id))
+      for (const personId of wanted) {
+        if (!have.has(personId)) await upsert('meeting_attendee', { meetingId: row.id, personId })
       }
     }
 
@@ -146,7 +155,7 @@ export function registerMeetingHandlers(): void {
 
   handle('meeting:delete', async ({ id }) => {
     const row = await q1<any>('SELECT project_id FROM meeting WHERE id = $1', [id])
-    await exec('DELETE FROM meeting WHERE id = $1', [id])
+    await remove('meeting', id)
     // The recording row goes with the meeting through the foreign key, but its audio
     // is a folder on disk that no cascade knows about — and it is the largest thing
     // this app writes. Sweep it now rather than at the next launch.
@@ -187,7 +196,7 @@ export function registerMeetingHandlers(): void {
   handle('meetingTodo:delete', async ({ id }) => {
     const { projectId } = await ownerOf(id)
     // The card, if there is one, stays: it is work now, and it is on the board.
-    await exec('DELETE FROM meeting_todo WHERE id = $1', [id])
+    await remove('meeting_todo', id)
     await mirrorProject(projectId)
   })
 
@@ -209,20 +218,16 @@ export function registerMeetingHandlers(): void {
 
     // The card carries where it came from, because "why is this on the board" is the
     // question you will ask about it in three weeks.
-    const task = await q1<any>(
-      `INSERT INTO task (project_id, title, details, column_id, status, completed_at, sort_order)
-       VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = 'done' THEN now() ELSE NULL END, $6)
-       RETURNING *`,
-      [
-        projectId,
-        todo.text,
-        `From ${meeting?.title || 'a meeting'} on ${meeting?.occurred_on}.`,
-        column,
-        todo.done ? 'done' : 'open',
-        max?.n ?? 0
-      ]
-    )
-    await exec('UPDATE meeting_todo SET task_id = $2 WHERE id = $1', [id, task.id])
+    const task = await upsert<any>('task', {
+      projectId,
+      title: todo.text,
+      details: `From ${meeting?.title || 'a meeting'} on ${meeting?.occurred_on}.`,
+      columnId: column,
+      status: todo.done ? 'done' : 'open',
+      completedAt: todo.done ? new Date() : null,
+      sortOrder: max?.n ?? 0
+    })
+    await upsert('meeting_todo', { taskId: task.id }, id)
     await logActivity(projectId, 'task_created', `Added: ${task.title}`)
     await mirrorProject(projectId)
     return meetingById(meetingId)

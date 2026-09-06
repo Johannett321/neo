@@ -13,7 +13,7 @@ import { appendChunk, deleteAudio, openSegmentFile, segmentBytes, segmentFile } 
 import {
   startSystemAudio, stopSystemAudio, systemAudioAvailable, testSystemAudio
 } from '../lib/recording/systemAudio'
-import { handle, invokeChannel } from './util'
+import { handle, invokeChannel, remove, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -91,10 +91,7 @@ export function registerRecordingHandlers(): void {
       return view(existing.id)
     }
 
-    const row = await q1<any>(
-      'INSERT INTO recording (meeting_id) VALUES ($1) RETURNING *',
-      [meetingId]
-    )
+    const row = await upsert<any>('recording', { meetingId })
     await logActivity(
       meeting.project_id,
       'meeting',
@@ -110,14 +107,20 @@ export function registerRecordingHandlers(): void {
     if (row.audio_deleted_at) throw new Error('This recording’s audio has been deleted.')
     // Everything captured before the interruption stays exactly where it is; the new
     // sound arrives as further segments after it.
-    await exec(
-      `UPDATE recording SET capture_state = 'recording', heartbeat_at = now(), stopped_at = NULL,
-              transcript_state = 'pending', transcript_error = '',
-              speaker_state = 'pending', summary_state = 'pending',
-              next_attempt_at = NULL, updated_at = now()
-       WHERE id = $1`,
-      [id]
-    )
+    // The pipeline columns here are device-only and are filtered out of the op; only
+    // `stopped_at` travels, which is the one fact about the recording rather than
+    // about this machine's runner.
+    await upsert('recording', {
+      captureState: 'recording',
+      heartbeatAt: new Date(),
+      stoppedAt: null,
+      transcriptState: 'pending',
+      transcriptError: '',
+      speakerState: 'pending',
+      summaryState: 'pending',
+      nextAttemptAt: null,
+      updatedAt: new Date()
+    }, id)
     return view(id)
   })
 
@@ -179,11 +182,15 @@ export function registerRecordingHandlers(): void {
   })
 
   handle('recording:heartbeat', async ({ id, durationMs }) => {
-    await exec(
-      `UPDATE recording SET heartbeat_at = now(), duration_ms = GREATEST(duration_ms, $2)
-       WHERE id = $1 AND capture_state = 'recording'`,
-      [id, Math.max(0, Math.round(durationMs))]
+    const live = await q1<{ duration_ms: string }>(
+      `SELECT duration_ms FROM recording WHERE id = $1 AND capture_state = 'recording'`,
+      [id]
     )
+    if (!live) return
+    await upsert('recording', {
+      heartbeatAt: new Date(),
+      durationMs: Math.max(Number(live.duration_ms ?? 0), Math.max(0, Math.round(durationMs)))
+    }, id)
   })
 
   handle('recording:stop', async ({ id, durationMs }) => {
@@ -205,12 +212,12 @@ export function registerRecordingHandlers(): void {
       ])
     }
 
-    await exec(
-      `UPDATE recording SET capture_state = 'stopped', stopped_at = now(),
-              duration_ms = GREATEST(duration_ms, $2), updated_at = now()
-       WHERE id = $1`,
-      [id, Math.max(0, Math.round(durationMs))]
-    )
+    await upsert('recording', {
+      captureState: 'stopped',
+      stoppedAt: new Date(),
+      durationMs: Math.max(Number(row.duration_ms ?? 0), Math.max(0, Math.round(durationMs))),
+      updatedAt: new Date()
+    }, id)
     await recomputeTimeline(id)
 
     const { meetingId, projectId } = await meetingOf(id)
@@ -313,10 +320,7 @@ export function registerRecordingHandlers(): void {
     }
     await deleteAudio(id)
     await exec(`UPDATE recording_segment SET path = '', bytes = 0 WHERE recording_id = $1`, [id])
-    await exec(
-      `UPDATE recording SET audio_deleted_at = now(), bytes = 0, updated_at = now() WHERE id = $1`,
-      [id]
-    )
+    await upsert('recording', { audioDeletedAt: new Date(), bytes: 0, updatedAt: new Date() }, id)
     await announce(id)
     return view(id)
   })
@@ -325,7 +329,7 @@ export function registerRecordingHandlers(): void {
     await requireIdle(id)
     const { projectId } = await meetingOf(id)
     await deleteAudio(id)
-    await exec('DELETE FROM recording WHERE id = $1', [id])
+    await remove('recording', id)
     await mirrorProject(projectId)
   })
 
@@ -337,10 +341,7 @@ export function registerRecordingHandlers(): void {
     // A name is put on the label, never on the lines: the transcript keeps saying
     // "Speaker 2" underneath, so renaming is one write and is always reversible.
     speakers[label] = { name: name.trim().slice(0, 80), personId: personId ?? null }
-    await exec(`UPDATE recording SET speakers = $2::jsonb, updated_at = now() WHERE id = $1`, [
-      id,
-      JSON.stringify(speakers)
-    ])
+    await upsert('recording', { speakers: JSON.stringify(speakers), updatedAt: new Date() }, id)
     return view(id)
   })
 
@@ -397,10 +398,7 @@ export function registerRecordingHandlers(): void {
         // was never named, which is most of them when the recording is the point.
         ...(meeting.title?.trim() ? {} : { title: row.suggested_title || '' })
       })
-      await exec(
-        `UPDATE recording SET recap_written_at = now(), updated_at = now() WHERE id = $1`,
-        [id]
-      )
+      await upsert('recording', { recapWrittenAt: new Date(), updatedAt: new Date() }, id)
     }
 
     // Somebody saying they will do something is the one part of a recap that is
@@ -415,10 +413,7 @@ export function registerRecordingHandlers(): void {
         existing.add(text.toLowerCase())
         await invokeChannel('meetingTodo:save', { meetingId: meeting.id, text })
       }
-      await exec(
-        `UPDATE recording SET recap_todos_at = now(), updated_at = now() WHERE id = $1`,
-        [id]
-      )
+      await upsert('recording', { recapTodosAt: new Date(), updatedAt: new Date() }, id)
     }
 
     await announce(id)

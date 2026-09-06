@@ -97,6 +97,78 @@ mode. `routes/` are screens, `components/` the shared pieces, `lib/` the app-wid
 
 Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer only.
 
+### The operation log
+
+`src/shared/ops.ts` is this boundary's contract, the way `api.ts` is IPC's and
+`mcp.ts` is the socket's. **Every write in the application is an operation**, and
+`db/apply.ts` is the only thing that touches a domain table. A click, an assistant
+tool call, a task created from Claude Desktop and a batch arriving from another
+device all converge there — that equivalence is the whole correctness argument, and
+it is the same move `invokeChannel()` already makes so the assistant's tools are the
+app's own channels rather than a second set of writes beside them.
+
+Handlers did not change. `upsert()` still takes what it always took; it now goes via
+`putLocal()`, which puts the row down *and* records what it did. `remove()` replaces
+every bare `DELETE FROM`, `updateWhere()` / `removeWhere()` replace the bulk
+statements, and `reorder()` writes a row at a time — a position only means anything
+among its neighbours, so each new number needs its own stamp.
+
+`handle()` wraps every channel in `withBatch()`, so one call is one batch however
+many rows it moves. That is what turns *every mutation logs activity* from a
+convention each handler has to remember into something structural: the activity row
+rides inside the batch and cannot arrive without the change it describes.
+
+**Ordering is a hybrid logical clock (`db/hlc.ts`), never wall time.** Two Macs
+disagree about the time and one of them has been asleep. Last-write-wins is resolved
+**per field**, and the stamps live in `sync_row` — one table beside the schema rather
+than a jsonb column on all twenty-five, so nothing above changes shape and a row's
+stamps disappear with it. That table holds the tombstones too.
+
+**A cascade is deterministic, so only the parent delete becomes an op** — every device
+performs the same cascade itself. The tombstones still cover everything it takes, read
+out of `pg_constraint` rather than from a hand-written copy of the foreign keys that
+would drift. Without them a task created on the phone would resurrect a project a Mac
+deleted while the phone was offline.
+
+**An insert records the row as it was written, an update only what it changed.** A
+column with a volatile default (`started_at`, `now()` inside a CASE) is resolved by
+whichever database runs the statement, so an op that left it out would give the row
+the day of the *replay*. Taking those off the RETURNING row makes this correct by
+construction rather than by remembering to list them.
+
+`applyRun()` retries ops whose parent has not arrived yet, in passes, until nothing
+more lands. Streams deliver out of order and an adopted row carries the oldest stamp
+there is even when what it references was written later; `PM_TRACE_DROPS=1` names
+whatever is left.
+
+**What does not sync is part of the design.** `TABLES` in `ops.ts` carries it:
+`recording_segment`, `summary_part` and `setting` produce no ops at all, and the
+recording pipeline's own columns — states, attempts, errors, `next_attempt_at` —
+are `deviceOnly`, because syncing them means two Macs transcribing the same segment
+and both paying for it. Results are content and do sync. `transcript_cue.segment_id`
+is `deviceOnly` for a sharper reason: it points at a device table, so on any other
+machine that row does not exist and never will.
+
+**`adoptExistingRows()` is the upgrade.** An install that predates the log has years
+of work in it and not one operation describing any of it; without this, replay would
+produce an empty database and the first sync would offer another device nothing. It
+runs once at startup, stamps everything with a genesis stamp older than any real
+edit, and finds nothing on every launch after. It is also how `sample.ts` works —
+that is a fixture rather than something somebody did, so it is written with plain SQL
+and taken into the log afterwards.
+
+**The gate is one assertion**, in both `verify.ts` and `upgrade.ts`: *replaying the
+log into an empty database reproduces the state exactly.* If that holds, the log is a
+complete account of the work and every device, restore and new phone reading it gets
+the same answer. It is what found the join table with no id, the notification sweep
+that deleted without a tombstone, and four columns whose defaults were evaluated in
+the wrong database. Do not weaken it; when it fails, something is genuinely lost.
+
+Writing before `initOplog()` throws. `index.ts` brings the log up immediately after
+`initDb()` and before any housekeeping, and anything else that opens the database has
+to do the same — a batch from a device with no identity looks fine and orders wrongly
+the moment a second machine appears.
+
 ### Conventions that matter
 
 - **Workspace isolation is a hard boundary.** Every scoped channel takes an explicit

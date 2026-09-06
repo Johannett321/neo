@@ -1,7 +1,7 @@
 import { BrowserWindow, Notification } from 'electron'
 import type { OpenTarget } from '@shared/types'
-import { exec, q, q1, today } from '../db/client'
-import { invokeChannel } from '../ipc/util'
+import { q, q1, today } from '../db/client'
+import { invokeChannel, noteWrite, remove } from '../ipc/util'
 import { deliveryDue } from './notify'
 
 /**
@@ -145,6 +145,8 @@ export async function deliverNotifications(now: Date = new Date()): Promise<numb
         [workspace.id, item.kind, on, item.title, item.body]
       )
       if (!claimed) continue
+      // The claim above has to be one statement; the op is taken from the row it wrote.
+      await noteWrite('notification', claimed.id)
 
       const result = await showNotification({
         title: item.title,
@@ -161,7 +163,15 @@ export async function deliverNotifications(now: Date = new Date()): Promise<numb
 /** Old records of what was said. Kept a month, so "did it tell me?" stays answerable. */
 async function sweep(now: Date): Promise<void> {
   const cutoff = today(new Date(now.getTime() - KEEP_DAYS * 86_400_000))
-  await exec('DELETE FROM notification WHERE on_date < $1', [cutoff])
+  /*
+   * Through `remove()` so each row leaves a tombstone, and one row at a time because
+   * of it. A bare DELETE here was fine while this table was only ever local; with a
+   * log behind it, a row deleted without a trace comes back on the next replay — and
+   * then collides with a later claim for the same workspace, kind and day, because
+   * that pair is exactly what the unique index forbids.
+   */
+  const stale = await q<{ id: string }>('SELECT id FROM notification WHERE on_date < $1', [cutoff])
+  for (const row of stale) await remove('notification', row.id)
 }
 
 /** A pass, with anything that goes wrong logged rather than thrown at the app. */

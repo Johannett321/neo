@@ -2,7 +2,7 @@ import type {
   Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus, ReentryBrief
 } from '@shared/types'
-import { daysSince, exec, q, q1 } from '../db/client'
+import { daysSince, q, q1 } from '../db/client'
 import {
   mapActivity, mapCast, mapCollapsible, mapCollapsibleView, mapColumn, mapDecision, mapFolder,
   mapFolderView, mapJournal, mapLink, mapNote, mapProject
@@ -15,7 +15,7 @@ import { ensureColumns } from '../lib/board'
 import { ensureMe } from '../lib/profile'
 import { contentFolderTree, MAX_FOLDER_DEPTH } from '../lib/folders'
 import { mirrorProject } from '../lib/markdown'
-import { handle, pick, reorder, upsert } from './util'
+import { handle, pick, remove, reorder, updateWhere, upsert } from './util'
 
 /**
  * Re-opening a project within half an hour is the same visit, so the brief does not
@@ -177,17 +177,18 @@ export function registerProjectHandlers(): void {
     }
 
     if (touch) {
-      await exec(
-        `UPDATE project
-         SET previous_opened_at = CASE
-               WHEN last_opened_at IS NULL THEN previous_opened_at
-               WHEN last_opened_at < now() - ($2 || ' minutes')::interval THEN last_opened_at
-               ELSE previous_opened_at
-             END,
-             last_opened_at = now()
-         WHERE id = $1`,
-        [id, String(SAME_VISIT_MINUTES)]
-      )
+      /*
+       * Rolled here rather than in a CASE inside the statement. The decision is the
+       * same one `midVisit` above has already made, and it has to be made *before*
+       * the write so that the value travels in the op: `now()` evaluated by whichever
+       * database replays this would put the visit on the day of the replay.
+       */
+      await upsert('project', {
+        previousOpenedAt: midVisit || !project.lastOpenedAt
+          ? project.previousOpenedAt ?? null
+          : project.lastOpenedAt,
+        lastOpenedAt: new Date()
+      }, id)
     }
 
     await ensureColumns(id)
@@ -299,11 +300,11 @@ export function registerProjectHandlers(): void {
       // You are on your own projects by default, so your roles are there to edit.
       await ensureColumns(project.id)
       const mePersonId = await ensureMe(project.workspaceId)
-      await exec(
-        `INSERT INTO membership (person_id, project_id, role) VALUES ($1, $2, '')
-         ON CONFLICT DO NOTHING`,
+      const already = await q1<{ id: string }>(
+        'SELECT id FROM membership WHERE person_id = $1 AND project_id = $2',
         [mePersonId, project.id]
       )
+      if (!already) await upsert('membership', { personId: mePersonId, projectId: project.id, role: '' })
       await logActivity(project.id, 'project_created', `Project created: ${project.name}`)
     }
     if (statusWas && statusWas !== project.status) {
@@ -314,10 +315,7 @@ export function registerProjectHandlers(): void {
   })
 
   handle('project:setArchived', async ({ id, archived }) => {
-    const row = await q1<any>(
-      `UPDATE project SET archived_at = ${archived ? 'now()' : 'NULL'} WHERE id = $1 RETURNING *`,
-      [id]
-    )
+    const row = await upsert<any>('project', { archivedAt: archived ? new Date() : null }, id)
     if (!row) throw new Error('Project not found')
     const project = mapProject(row, await readIcon(row.icon_path ?? ''))
     await logActivity(project.id, 'state_updated', archived ? 'Archived' : 'Restored from the archive')
@@ -337,7 +335,7 @@ export function registerProjectHandlers(): void {
 
   handle('project:delete', async ({ id }) => {
     const row = await q1<any>('SELECT icon_path FROM project WHERE id = $1', [id])
-    await exec('DELETE FROM project WHERE id = $1', [id])
+    await remove('project', id)
     if (row?.icon_path) await deleteIcon(row.icon_path)
     // Its meetings went with it, and so did their recordings — but not the audio,
     // which is on disk and knows nothing about foreign keys.
@@ -445,22 +443,17 @@ export function registerProjectHandlers(): void {
      * undoing the filing — never losing a project or a whole branch of them. That is
      * also why nothing asks before it runs: there is nothing to warn about.
      */
-    const moved = await q<{ id: string }>(
-      'UPDATE project SET folder_id = $2 WHERE folder_id = $1 RETURNING id',
-      [id, folder.parent_id]
-    )
-    await exec('UPDATE project_folder SET parent_id = $2 WHERE parent_id = $1', [id, folder.parent_id])
+    const movedIds = await updateWhere('project', { folderId: id }, { folderId: folder.parent_id })
+    const moved = movedIds.map((projectId) => ({ id: projectId }))
+    await updateWhere('project_folder', { parentId: id }, { parentId: folder.parent_id })
     /*
      * The bands drawn on its page come up with the cards that are in them. They have to
      * travel together: a collapsible only ever holds projects filed at the level it is
      * drawn at, and lifting one side of that without the other would leave a card
      * grouped on a page it is no longer on.
      */
-    await exec(
-      'UPDATE project_collapsible SET folder_id = $2 WHERE folder_id = $1',
-      [id, folder.parent_id]
-    )
-    await exec('DELETE FROM project_folder WHERE id = $1', [id])
+    await updateWhere('project_collapsible', { folderId: id }, { folderId: folder.parent_id })
+    await remove('project_folder', id)
     // Where a project is filed is part of the path it is mirrored to.
     for (const project of moved) await mirrorProject(project.id)
   })
@@ -542,8 +535,8 @@ export function registerProjectHandlers(): void {
      * bargain a folder makes. Nothing to confirm and nothing to mirror: the projects
      * themselves have not moved anywhere on disk.
      */
-    await exec('UPDATE project SET collapsible_id = NULL WHERE collapsible_id = $1', [id])
-    await exec('DELETE FROM project_collapsible WHERE id = $1', [id])
+    await updateWhere('project', { collapsibleId: id }, { collapsibleId: null })
+    await remove('project_collapsible', id)
   })
 
   handle('column:save', async (draft) => {
@@ -565,7 +558,7 @@ export function registerProjectHandlers(): void {
         (await q1<{ project_id: string }>('SELECT project_id FROM board_column WHERE id = $1', [draft.id]))
           ?.project_id
       if (projectId) {
-        await exec('UPDATE board_column SET is_done = false WHERE project_id = $1', [projectId])
+        await updateWhere('board_column', { projectId, isDone: true }, { isDone: false })
       }
     }
     const row = await upsert<any>('board_column', fields, draft.id)
@@ -581,8 +574,8 @@ export function registerProjectHandlers(): void {
     )
     if (remaining.length === 0) throw new Error('A board needs at least one column.')
     // Cards are never deleted with their column; they fall back to the first one.
-    await exec('UPDATE task SET column_id = $2 WHERE column_id = $1', [id, remaining[0].id])
-    await exec('DELETE FROM board_column WHERE id = $1', [id])
+    await updateWhere('task', { columnId: id }, { columnId: remaining[0].id })
+    await remove('board_column', id)
   })
 
   handle('column:reorder', async ({ ids }) => {
