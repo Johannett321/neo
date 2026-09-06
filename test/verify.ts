@@ -41,7 +41,7 @@ import { addDays, exec, iconDir, q, q1, today as todayDate } from '../src/main/d
 import {
   adoptExistingRows, allBatches, deviceId, ingest, initOplog, pending, replayLog, SYNC_ORDER
 } from '../src/main/db/oplog'
-import { DEVICE_ONLY_COLUMNS, SCHEMA_VERSION } from '@shared/ops'
+import { DEVICE_ONLY_COLUMNS, DEVICE_TABLES, SCHEMA_VERSION } from '@shared/ops'
 import { randomUUID } from 'node:crypto'
 import {
   blobKey, newMasterKey, open, passphraseComplaint, seal, unwrapMasterKey, workspaceKey, wrapMasterKey
@@ -2281,7 +2281,8 @@ async function main(): Promise<void> {
 
   ok('a device-local table produces no ops at all',
      (await allBatches()).every((b) =>
-       b.ops.every((o) => !['recording_segment', 'summary_part', 'setting'].includes(o.table))))
+       b.ops.every((o) => !(DEVICE_TABLES as readonly string[]).includes(o.table))),
+     `device tables: ${DEVICE_TABLES.join(', ')}`)
 
   // A delete has to leave something behind, or a device that still holds the row
   // would hand it back the next time it synced.

@@ -73,18 +73,19 @@ export async function announce(recordingId: string): Promise<void> {
  * everything after it into the right place instead of leaving a growing skew.
  */
 export async function recomputeTimeline(recordingId: string): Promise<void> {
-  await exec(
-    `UPDATE recording_segment s SET offset_ms = x.off
-     FROM (
-       SELECT id,
-              COALESCE(SUM(duration_ms) OVER (
-                ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-              ), 0) AS off
-       FROM recording_segment WHERE recording_id = $1
-     ) x
-     WHERE s.id = x.id AND s.offset_ms IS DISTINCT FROM x.off`,
+  // Where a segment starts is a fact about the recording, not about this machine, so
+  // it travels — which means a row at a time rather than the one statement this was.
+  // A recording is a handful of five-minute segments, not a table scan.
+  const offsets = await q<{ id: string; off: string }>(
+    `SELECT id, COALESCE(SUM(duration_ms) OVER (
+              ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS off,
+            offset_ms
+       FROM recording_segment WHERE recording_id = $1`,
     [recordingId]
   )
+  for (const row of offsets) {
+    await upsert('recording_segment', { offsetMs: Number(row.off) }, row.id)
+  }
   // The segment offsets above are this machine's bookkeeping. The two totals below
   // are facts about the recording, so they go through the log like anything else.
   const totals = await q1<{ duration: string; bytes: string }>(

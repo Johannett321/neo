@@ -63,7 +63,7 @@ export type SyncedTable =
   | 'board_column' | 'person' | 'membership' | 'task' | 'content_folder' | 'note'
   | 'meeting' | 'meeting_attendee' | 'meeting_todo' | 'decision' | 'link'
   | 'journal_entry' | 'activity' | 'notification' | 'conversation' | 'chat_message'
-  | 'chat_attachment' | 'recording' | 'transcript_cue'
+  | 'chat_attachment' | 'recording' | 'recording_segment' | 'transcript_cue'
 
 interface TableMeta {
   /**
@@ -129,7 +129,22 @@ export const TABLES: Record<SyncedTable, TableMeta> = {
    * The words, their times and their speaker are the content; which file on which
    * disk they were read out of is not.
    */
-  transcript_cue:      { owner: { column: 'recording_id', table: 'recording' }, deviceOnly: ['segment_id'] }
+  /*
+   * The segments sync so that the audio can. Which file a line of transcript came
+   * out of, and how long each piece is, are facts about the recording; the runner's
+   * own state — whether *this* machine has transcribed it yet, and how many times it
+   * has tried — is not, and stays here.
+   *
+   * `path` travels because it is a uuid filename assigned once and never changed, so
+   * it is the same name on every device: that is what lets both of them derive the
+   * same object key for the same file without asking each other.
+   */
+  recording_segment:   {
+    owner: { column: 'recording_id', table: 'recording' },
+    deviceOnly: ['state', 'error', 'attempts']
+  },
+
+  transcript_cue:      { owner: { column: 'recording_id', table: 'recording' } }
 }
 
 export const isSynced = (table: string): table is SyncedTable => table in TABLES
@@ -137,18 +152,14 @@ export const isSynced = (table: string): table is SyncedTable => table in TABLES
 /**
  * Tables that deliberately produce no ops at all.
  *
- * `recording_segment` holds a filename inside this machine's recordings folder and
- * a runner's per-segment state. The audio itself becomes a content-addressed blob in
- * Stage 3; the row describing where it sits on *this* disk never syncs.
- *
- * `summary_part` is the same kind of thing one level up: the slices a summary is
- * built from, with their own state, error and attempt count. What comes *out* of it
+ * `summary_part` is the slices a summary is
+ * * built from, with their own state, error and attempt count. What comes *out* of it
  * — `recording.summary` and `recording.recap` — is content and does sync. Sync the
  * scaffolding too and two Macs would both summarise the same slice.
  *
  * `setting` is split by key instead — see below.
  */
-export const DEVICE_TABLES = ['recording_segment', 'summary_part', 'setting'] as const
+export const DEVICE_TABLES = ['summary_part', 'setting'] as const
 
 /**
  * The only settings that mean the same thing on every machine.

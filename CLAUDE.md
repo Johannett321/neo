@@ -229,6 +229,35 @@ The engine starts **after** `adoptExistingRows()`, never before. A device that p
 its log before taking its own existing rows into it would hand the other Mac an
 account of a working life that begins today.
 
+**Files move separately, and after the rows.** `lib/sync/blobs.ts` is a *reconciler,
+not a queue*: it asks what the rows refer to, uploads what is here and not yet handed
+over, and fetches what is referred to and missing. Nothing to enqueue, nothing to
+drain, nothing lost by crashing half way — the recording pipeline's shape, for the
+same reason. Rows first in both directions, because a file is only worth moving
+because something refers to it and the reference is in the log.
+
+The object key is `HMAC(workspace key, the name the file already has)`. The design
+called for hashing the content; it is not needed, and that is worth knowing rather
+than rediscovering — Neo names every stored file with a uuid when it saves it and
+never changes it, and the column holding that name syncs, so both machines already
+call the same file by the same name without reading a byte. `blob_sync` records only
+what has been *uploaded*: a download needs no row, because the file is either on this
+disk or it is not.
+
+`recording_segment` had to move from device-local to synced for audio to work at all
+— without its rows the other Mac does not know a segment exists. Its `path`, `bytes`
+and offsets travel; `state`, `error` and `attempts` stay, so only the machine that
+recorded it transcribes it. `workspace.sync_recordings` is the per-workspace switch,
+on by default, and off means the bytes are never uploaded rather than uploaded and
+ignored.
+
+Two failures are ordinary rather than faults, and are counted instead of thrown:
+**over quota** (it will still be over next time, so one large recording must not stop
+every icon behind it) and **not there yet** (the other device has not uploaded it, and
+rows move in one pass and bytes in another). `forgetIcon()` exists because the icon
+cache remembers absence, and an avatar that arrives but only appears after a restart
+looks exactly like one that never arrived.
+
 `npm run verify:sync` is the assertion this exists for: two data folders, one
 account, a real server, and the second one has never seen any of it. It cannot run in
 one process — a device is a data folder and `initDb()` opens one — so it runs twice

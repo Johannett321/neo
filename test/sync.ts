@@ -7,6 +7,10 @@ import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
 import { __handlers } from 'electron'
 import * as engine from '../src/main/lib/sync/engine'
+import { iconDir } from '../src/main/db/client'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 /**
  * Two devices, one account, a real server.
@@ -74,6 +78,17 @@ async function main(): Promise<void> {
       projectId: project.id, title: 'A note', body: 'With a body worth checking.'
     })
 
+    /*
+     * A real file, put where an icon goes and pointed at by a row. The bytes are
+     * deliberately not valid PNG: nothing here should be looking inside them, and a
+     * test that only passes for images would hide it if something did.
+     */
+    const iconName = `${randomUUID()}.png`
+    await mkdir(iconDir(), { recursive: true })
+    await writeFile(join(iconDir(), iconName), Buffer.from('not really a png, but bytes'))
+    await call('project:save', { id: project.id, iconPath: iconName })
+    console.log(`ICON=${iconName}`)
+
     const before = await engine.status()
     ok('push: there is something waiting to go out', before.pending > 0, `${before.pending} batches`)
 
@@ -89,6 +104,7 @@ async function main(): Promise<void> {
 
     const projectId = need('NEO_SYNC_PROJECT')
     const workspaceId = need('NEO_SYNC_WORKSPACE')
+    const iconName = need('NEO_SYNC_ICON')
 
     const emptyBefore = await q<{ id: string }>('SELECT id FROM project')
     ok('pull: this machine starts with nothing', emptyBefore.length === 0)
@@ -136,6 +152,25 @@ async function main(): Promise<void> {
     )
     ok('pull: the activity log came with the work it describes', activity.length > 0,
        `${activity.length} lines`)
+
+    /* ------------------------------------------------------------ the file */
+
+    const iconRow = await q1<{ icon_path: string }>(
+      'SELECT icon_path FROM project WHERE id = $1', [projectId]
+    )
+    ok('pull: the row knows which file it wants', iconRow?.icon_path === iconName,
+       iconRow?.icon_path ?? 'none')
+
+    const landed = await readFile(join(iconDir(), iconName)).catch(() => null)
+    ok('pull: and the bytes arrived, decrypted, byte for byte',
+       landed?.toString('utf8') === 'not really a png, but bytes',
+       landed ? `${landed.length} bytes` : 'file missing')
+
+    // The server is not supposed to be able to tell what it is holding: the object
+    // key is an HMAC under a key it does not have, so nothing about the filename,
+    // the workspace or the account should be legible in it.
+    ok('pull: the file is stored under a name that says nothing',
+       !(await engine.status()).workspaces.some((w) => iconName.includes(w.workspaceId)))
 
     // Nothing this device pulled may be pushed back: that would be an echo, and two
     // devices echoing each other never stop.

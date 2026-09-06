@@ -84,6 +84,48 @@ export class Relay {
     })
   }
 
+  /* ---------------------------------------------------------------- files */
+
+  blobUpload(workspaceId: string, key: string, sizeBytes: number): Promise<{
+    uploadUrl: string
+  }> {
+    return this.call(`/v1/workspaces/${workspaceId}/blobs/${key}/upload`, {
+      method: 'POST',
+      // Always the same type: what goes up is ciphertext, and saying more than that
+      // would tell the bucket what kind of file it is holding.
+      body: JSON.stringify({ sizeBytes, contentType: 'application/octet-stream' })
+    })
+  }
+
+  blobDownload(workspaceId: string, key: string): Promise<{ downloadUrl: string }> {
+    return this.call(`/v1/workspaces/${workspaceId}/blobs/${key}/download`)
+  }
+
+  /**
+   * Straight to object storage, never through the sync server.
+   *
+   * An hour of meeting audio proxied through that process would tie up a connection
+   * for minutes and put the one thing it is not allowed to read into its heap.
+   */
+  async putBytes(url: string, bytes: Buffer): Promise<void> {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(bytes)
+    })
+    if (!response.ok) {
+      throw new RelayError(response.status, `The file could not be uploaded (${response.status}).`)
+    }
+  }
+
+  async getBytes(url: string): Promise<Buffer> {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new RelayError(response.status, `The file could not be fetched (${response.status}).`)
+    }
+    return Buffer.from(await response.arrayBuffer())
+  }
+
   push(workspaceId: string, batchId: string, ciphertext: string): Promise<{ seq: number }> {
     return this.call(`/v1/workspaces/${workspaceId}/ops`, {
       method: 'POST',

@@ -482,6 +482,26 @@ CREATE TABLE IF NOT EXISTS sync_state (
   synced_at    timestamptz
 );
 
+-- Which files this device has handed over, and which it has fetched.
+--
+-- The rows that *refer* to a file already sync — an icon_path is a uuid filename
+-- assigned once and never changed, so both machines call the same file by the same
+-- name. That is what lets each of them derive the same object key without asking the
+-- other. This table only records what has actually moved.
+--
+-- Downloads need no row: a file is either on this disk or it is not, and that is the
+-- whole of the state. Only the upload side needs remembering, because a file that is
+-- present locally says nothing about whether the server has it.
+CREATE TABLE IF NOT EXISTS blob_sync (
+  -- icon | attachment | segment. Decides which folder the bytes live in.
+  kind         text NOT NULL,
+  ref          text NOT NULL,
+  workspace_id uuid NOT NULL,
+  bytes        bigint NOT NULL DEFAULT 0,
+  uploaded_at  timestamptz,
+  PRIMARY KEY (kind, ref)
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
@@ -521,6 +541,11 @@ CREATE INDEX IF NOT EXISTS idx_sync_row_dead     ON sync_row (table_name, row_id
 export const MIGRATIONS: string[] = [
   // 1. Columns first. Nothing below may reference a column added further down.
   `ALTER TABLE meeting_attendee ADD COLUMN IF NOT EXISTS id uuid NOT NULL DEFAULT gen_random_uuid()`,
+  // Audio is the only thing here measured in gigabytes, and the only thing that is
+  // other people's voices. It syncs by default — a recording that exists on one Mac
+  // is exactly the backup problem this is meant to solve — and this is the switch
+  // that says otherwise, per workspace, beside the rest of the recording settings.
+  `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS sync_recordings boolean NOT NULL DEFAULT true`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE workspace ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
   // The assistant's key is per workspace, because the workspace is the boundary it

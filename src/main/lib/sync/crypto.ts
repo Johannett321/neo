@@ -58,19 +58,33 @@ export interface WrappedKey {
  * random nonce is safe here because a key is used for a bounded number of messages:
  * every batch under a workspace key, which is thousands, not billions.
  */
-export function seal(key: Buffer, plaintext: Buffer | string): string {
+export function sealBytes(key: Buffer, plaintext: Buffer | string): Buffer {
   const nonce = randomBytes(NONCE_BYTES)
   const cipher = createCipheriv('aes-256-gcm', key, nonce)
   const body = Buffer.concat([
     cipher.update(typeof plaintext === 'string' ? Buffer.from(plaintext, 'utf8') : plaintext),
     cipher.final()
   ])
-  return Buffer.concat([nonce, body, cipher.getAuthTag()]).toString('base64')
+  return Buffer.concat([nonce, body, cipher.getAuthTag()])
+}
+
+export function seal(key: Buffer, plaintext: Buffer | string): string {
+  return sealBytes(key, plaintext).toString('base64')
 }
 
 /** Throws on anything that has been altered — there is no partial success here. */
 export function open(key: Buffer, sealed: string): Buffer {
-  const raw = Buffer.from(sealed, 'base64')
+  return openBytes(key, Buffer.from(sealed, 'base64'))
+}
+
+/**
+ * The same, for a file.
+ *
+ * Bytes rather than base64 because a recording is measured in megabytes and base64
+ * would put a third again on the wire and in the bucket, for nothing — a presigned
+ * PUT takes bytes perfectly well.
+ */
+export function openBytes(key: Buffer, raw: Buffer): Buffer {
   if (raw.length < NONCE_BYTES + 16) throw new Error('That is too short to be sealed data.')
 
   const nonce = raw.subarray(0, NONCE_BYTES)
@@ -81,6 +95,9 @@ export function open(key: Buffer, sealed: string): Buffer {
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(body), decipher.final()])
 }
+
+/** What sealing adds: a nonce in front and a tag behind. */
+export const SEAL_OVERHEAD = NONCE_BYTES + 16
 
 /* ------------------------------------------------------------------ *
  * Keys
@@ -139,16 +156,22 @@ export function workspaceKey(masterKey: Buffer, workspaceId: string): Buffer {
 }
 
 /**
- * What a file is stored under: an HMAC of its content hash, keyed to the workspace.
+ * What a file is stored under: an HMAC of the name it already has here.
  *
- * The name is derived from the plaintext hash so two devices agree on it without
- * asking each other, and keyed so the server cannot recognise a file it has seen in
+ * The design called for addressing by a hash of the content. It is not needed, and
+ * that is worth writing down rather than rediscovering. Neo names every stored file
+ * with a uuid at the moment it is saved and never changes it, and the column holding
+ * that name *syncs* — so both machines already call the same file by the same name
+ * without having to read a byte of it. Hashing would only add dedup between two
+ * identical files saved under different names, which does not happen here.
+ *
+ * Keyed to the workspace, so the server cannot recognise a file it has seen in
  * somebody else's workspace, or tell that two accounts hold the same document.
  */
-export function blobKey(masterKey: Buffer, workspaceId: string, contentHash: string): string {
+export function blobKey(masterKey: Buffer, workspaceId: string, name: string): string {
   return Buffer.from(
     hkdfSync('sha256', workspaceKey(masterKey, workspaceId),
-      Buffer.from('neo-sync-blob'), Buffer.from(contentHash), 16)
+      Buffer.from('neo-sync-blob'), Buffer.from(name), 16)
   ).toString('hex')
 }
 

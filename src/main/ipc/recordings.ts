@@ -13,7 +13,7 @@ import { appendChunk, deleteAudio, openSegmentFile, segmentBytes, segmentFile } 
 import {
   startSystemAudio, stopSystemAudio, systemAudioAvailable, testSystemAudio
 } from '../lib/recording/systemAudio'
-import { handle, invokeChannel, remove, upsert } from './util'
+import { handle, invokeChannel, remove, updateWhere, upsert } from './util'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -138,11 +138,10 @@ export function registerRecordingHandlers(): void {
     // The file exists before the row does, so a row can never name a file that is not
     // there — the other way round leaves at worst an empty file nobody refers to.
     await openSegmentFile(id, file)
-    const segment = await q1<{ id: string }>(
-      `INSERT INTO recording_segment (recording_id, ord, path) VALUES ($1, $2, $3) RETURNING id`,
-      [id, ord, file]
-    )
-    return { segmentId: segment!.id, ord }
+    const segment = await upsert<{ id: string }>('recording_segment', {
+      recordingId: id, ord, path: file
+    })
+    return { segmentId: segment.id, ord }
   })
 
   handle('recording:appendChunk', async ({ segmentId, data }) => {
@@ -159,14 +158,14 @@ export function registerRecordingHandlers(): void {
     // segment that is interrupted never gets an end — and a recording whose last five
     // minutes had no length would put every later segment in the wrong place on the
     // timeline. The wall clock is only an estimate; closing the segment corrects it.
-    await exec(
-      `UPDATE recording_segment
-       SET bytes = $2,
-           duration_ms = GREATEST(duration_ms,
-             EXTRACT(EPOCH FROM (now() - created_at)) * 1000 - $3)
-       WHERE id = $1`,
-      [segmentId, bytes, CHUNK_MS]
-    )
+    // Computed here rather than in the statement: `now()` is evaluated by whichever
+    // database runs it, so a replay would measure the segment against the day of the
+    // replay instead of the afternoon it was recorded.
+    const elapsed = Date.now() - new Date(String(row.created_at)).getTime() - CHUNK_MS
+    await upsert('recording_segment', {
+      bytes,
+      durationMs: Math.max(Number(row.duration_ms ?? 0), Math.max(0, Math.round(elapsed)))
+    }, segmentId)
     return { bytes }
   })
 
@@ -174,9 +173,10 @@ export function registerRecordingHandlers(): void {
     const row = await q1<any>('SELECT * FROM recording_segment WHERE id = $1', [segmentId])
     if (!row || row.closed) return
     const bytes = row.path ? await segmentBytes(row.recording_id, row.path) : 0
-    await exec(
-      `UPDATE recording_segment SET closed = true, bytes = $2, duration_ms = $3 WHERE id = $1`,
-      [segmentId, bytes, Math.max(0, Math.round(durationMs))]
+    await upsert(
+      'recording_segment',
+      { closed: true, bytes, durationMs: Math.max(0, Math.round(durationMs)) },
+      segmentId
     )
     await recomputeTimeline(row.recording_id)
   })
@@ -206,10 +206,7 @@ export function registerRecordingHandlers(): void {
     )
     for (const segment of open) {
       const bytes = segment.path ? await segmentBytes(id, segment.path) : 0
-      await exec(`UPDATE recording_segment SET closed = true, bytes = $2 WHERE id = $1`, [
-        segment.id,
-        bytes
-      ])
+      await upsert('recording_segment', { closed: true, bytes }, segment.id)
     }
 
     await upsert('recording', {
@@ -319,7 +316,9 @@ export function registerRecordingHandlers(): void {
       )
     }
     await deleteAudio(id)
-    await exec(`UPDATE recording_segment SET path = '', bytes = 0 WHERE recording_id = $1`, [id])
+    // The audio has gone; the rows stay so the transcript still knows what it came
+    // from. Through updateWhere so the other Mac learns the bytes are not coming.
+    await updateWhere('recording_segment', { recordingId: id }, { path: '', bytes: 0 })
     await upsert('recording', { audioDeletedAt: new Date(), bytes: 0, updatedAt: new Date() }, id)
     await announce(id)
     return view(id)

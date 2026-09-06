@@ -39,6 +39,10 @@ export interface SyncStatus {
   pending: number
   /** Whether the live stream is attached, rather than only polling. */
   live: boolean
+  /** Files another device has not handed over yet. Ordinary, not a fault. */
+  filesWaiting: number
+  /** Files this device could not send because the account is out of space. */
+  filesOverQuota: number
   workspaces: { workspaceId: string; name: string; remoteSeq: number }[]
 }
 

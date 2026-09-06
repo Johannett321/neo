@@ -36,9 +36,10 @@ export NEO_SYNC_URL="$URL" NEO_SYNC_TOKEN="$TOKEN" NEO_SYNC_ACCOUNT="$ACCOUNT" \
 
 echo "--- device one: writes and pushes ---"
 PUSHED=$(PM_TEST_DIR="$ONE" node out/sync.mjs push)
-echo "$PUSHED" | grep -v '^WORKSPACE=\|^PROJECT='
+echo "$PUSHED" | grep -v '^WORKSPACE=\|^PROJECT=\|^ICON='
 export NEO_SYNC_WORKSPACE=$(echo "$PUSHED" | sed -n 's/^WORKSPACE=//p')
 export NEO_SYNC_PROJECT=$(echo "$PUSHED" | sed -n 's/^PROJECT=//p')
+export NEO_SYNC_ICON=$(echo "$PUSHED" | sed -n 's/^ICON=//p')
 
 echo
 echo "--- device two: has never seen any of it ---"

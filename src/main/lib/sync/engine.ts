@@ -4,6 +4,7 @@ import { POLL_INTERVAL_MS } from '@shared/sync'
 import { q, q1, exec } from '../../db/client'
 import { ingest, pending, pendingCount } from '../../db/oplog'
 import { announceChange } from '../changes'
+import { pullBlobs, pushBlobs } from './blobs'
 import { Relay, RelayError, batchToWire, wireToBatch } from './relay'
 import { newMasterKey, open, seal, unwrapMasterKey, workspaceKey, wrapMasterKey } from './crypto'
 
@@ -61,6 +62,7 @@ const streams = new Map<string, AbortController>()
 let phase: SyncStatus['phase'] = 'off'
 let lastError = ''
 let lastSyncedAt = ''
+let storage = { uploaded: 0, overQuota: 0, waiting: 0 }
 
 /* ------------------------------------------------------------------ *
  * Connecting
@@ -183,10 +185,21 @@ export async function syncNow(): Promise<void> {
   try {
     await push(client)
     const moved = await pullAll(client)
+
+    /*
+     * Files after rows, in both directions, and that order is the whole of it. A
+     * file is only worth moving because something refers to it, and the reference
+     * is in the log — so the rows have to land first or this would be fetching
+     * against a list it has not been told about yet.
+     */
+    const sent = await pushBlobs(client, master)
+    const got = await pullBlobs(client, master)
+    storage = { uploaded: sent.uploaded, overQuota: sent.skipped, waiting: got.missing }
+
     lastSyncedAt = new Date().toISOString()
     lastError = ''
     phase = 'idle'
-    if (moved > 0) announceChange()
+    if (moved > 0 || got.fetched > 0) announceChange()
   } catch (error) {
     phase = 'error'
     lastError = error instanceof Error ? error.message : String(error)
@@ -335,7 +348,8 @@ export async function status(): Promise<SyncStatus> {
   if (!serverUrl) {
     return {
       phase: 'off', serverUrl: '', accountHandle: '', deviceName: '', error: '',
-      lastSyncedAt: '', pending: 0, live: false, workspaces: []
+      lastSyncedAt: '', pending: 0, live: false, filesWaiting: 0, filesOverQuota: 0,
+      workspaces: []
     }
   }
 
@@ -354,6 +368,8 @@ export async function status(): Promise<SyncStatus> {
     lastSyncedAt,
     pending: await pendingCount((await setting(KEYS.pushed)) || '0'),
     live: streams.size > 0 && !stopping,
+    filesWaiting: storage.waiting,
+    filesOverQuota: storage.overQuota,
     workspaces: workspaces.map((w) => ({
       workspaceId: w.id, name: w.name, remoteSeq: Number(w.remote_seq)
     }))
