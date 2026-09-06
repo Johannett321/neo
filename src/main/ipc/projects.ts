@@ -13,6 +13,7 @@ import { deleteIcon, readIcon } from '../lib/icons'
 import { pruneRecordings } from '../lib/recording/store'
 import { ensureColumns } from '../lib/board'
 import { ensureMe } from '../lib/profile'
+import { contentFolderTree, MAX_FOLDER_DEPTH } from '../lib/folders'
 import { mirrorProject } from '../lib/markdown'
 import { handle, pick, reorder, upsert } from './util'
 
@@ -21,17 +22,6 @@ import { handle, pick, reorder, upsert } from './util'
  * evaporate the moment you click into it. Only a genuine return rolls the clock.
  */
 const SAME_VISIT_MINUTES = 30
-
-/**
- * How far down the folder tree anything will walk.
- *
- * Not a rule about how you are allowed to file — nobody nests twenty deep — but a
- * floor under every recursive query here. A parent pointing at its own descendant is
- * impossible through `folder:save`, and a database that has been through a repair is
- * still allowed to be wrong; a walk that meets a loop must stop rather than hang the
- * process that owns the window.
- */
-const MAX_FOLDER_DEPTH = 20
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
@@ -201,7 +191,9 @@ export function registerProjectHandlers(): void {
     }
 
     await ensureColumns(id)
-    const [columns, tasks, cast, links, notes, meetings, decisions, journal, activity] = await Promise.all([
+    const [
+      columns, tasks, cast, links, notes, meetings, decisions, journal, activity, contentFolders
+    ] = await Promise.all([
       q<any>('SELECT * FROM board_column WHERE project_id = $1 ORDER BY sort_order, created_at', [id]),
       taskViews('t.project_id = $1', [id]),
       q<any>(
@@ -216,7 +208,8 @@ export function registerProjectHandlers(): void {
       meetingViews('m.project_id = $1', [id]),
       q<any>('SELECT * FROM decision WHERE project_id = $1 ORDER BY decided_on DESC, created_at DESC', [id]),
       q<any>('SELECT * FROM journal_entry WHERE project_id = $1 ORDER BY occurred_on DESC, created_at DESC', [id]),
-      q<any>('SELECT * FROM activity WHERE project_id = $1 ORDER BY created_at DESC LIMIT 40', [id])
+      q<any>('SELECT * FROM activity WHERE project_id = $1 ORDER BY created_at DESC LIMIT 40', [id]),
+      contentFolderTree(id)
     ])
 
     const detail: ProjectDetail = {
@@ -228,6 +221,10 @@ export function registerProjectHandlers(): void {
       links: links.map(mapLink),
       notes: notes.map(mapNote),
       meetings,
+      // One walk of the tree, split by the list each folder belongs to — the two never
+      // see each other, so neither screen has to remember to filter.
+      noteFolders: contentFolders.filter((f) => f.kind === 'note'),
+      meetingFolders: contentFolders.filter((f) => f.kind === 'meeting'),
       decisions: decisions.map(mapDecision),
       journal: journal.map(mapJournal),
       activity: activity.map(mapActivity)

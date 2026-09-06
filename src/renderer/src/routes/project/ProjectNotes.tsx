@@ -4,8 +4,8 @@ import { CastPanel } from '@/components/project/CastPanel'
 import { useProject } from './ProjectLayout'
 
 export function ProjectNotes(): React.JSX.Element {
-  const { project, notes } = useProject()
-  return <NotesTab projectId={project.id} notes={notes} />
+  const { project, notes, noteFolders } = useProject()
+  return <NotesTab projectId={project.id} notes={notes} folders={noteFolders} />
 }
 
 export function ProjectDecisions(): React.JSX.Element {

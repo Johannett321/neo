@@ -1,6 +1,4 @@
 import { useState } from 'react'
-import type { ProjectFolderView } from '@shared/types'
-import { useApiMutation } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { Icon } from './Icon'
 import { Field, Modal } from './primitives'
@@ -8,20 +6,38 @@ import { Field, Modal } from './primitives'
 /**
  * Choosing a folder: the one dialog that answers "where does this go?".
  *
- * It lives apart from the folder headings on the projects page because a project's
- * own right-click menu asks the same question, from a card that may be on any screen.
- * One picker, so the answer looks the same wherever it is asked.
+ * It lives apart from the folders drawn on any one page because several right-click
+ * menus ask the same question — a project's, a folder's, a note's, a meeting's — from
+ * screens that have nothing else in common. One picker, so the answer looks the same
+ * wherever it is asked, and so it looks the same whether what is being filed is a
+ * project card or a page of writing.
+ *
+ * Everything here is written against the least a folder can be. The two folder trees in
+ * the app count different things — projects in one, notes or meetings in the other —
+ * and that difference lives at the call site, as a number, rather than here.
  */
+
+/** The least a folder has to be to be pickable, and what the row shows beside it. */
+export interface Pickable {
+  id: string
+  name: string
+  /** How many levels down it sits, for the indent. Top-level folders are 0. */
+  depth: number
+  /** What is filed directly in it, if the caller wants that shown. */
+  count?: number
+}
 
 /** The rows a folder picker shows: the top level, then every folder, indented. */
 function FolderChoice({
   folders,
   value,
+  rootLabel,
   exclude,
   onChange
 }: {
-  folders: ProjectFolderView[]
+  folders: Pickable[]
   value: string | null
+  rootLabel: string
   exclude?: Set<string>
   onChange: (id: string | null) => void
 }): React.JSX.Element {
@@ -46,17 +62,17 @@ function FolderChoice({
 
   return (
     <div className="scroll-area hairline max-h-64 rounded-box border p-1">
-      {row(null, 'Not in a folder', 0)}
+      {row(null, rootLabel, 0)}
       {folders
         .filter((f) => !exclude?.has(f.id))
-        .map((f) => row(f.id, f.name, f.depth + 1, f.projectCount))}
+        .map((f) => row(f.id, f.name, f.depth + 1, f.count))}
     </div>
   )
 }
 
 /**
- * Where does this go? One dialog, used by a project's menu and a folder's alike —
- * the only difference is that a folder cannot be moved into its own branch.
+ * Where does this go? One dialog, used by every menu that asks — the only difference
+ * between them is that a folder cannot be moved into its own branch.
  */
 export function MoveToFolderModal({
   open,
@@ -64,15 +80,18 @@ export function MoveToFolderModal({
   folders,
   title,
   description,
+  rootLabel = 'Not in a folder',
   current,
   exclude,
   onMove
 }: {
   open: boolean
   onClose: () => void
-  folders: ProjectFolderView[]
+  folders: Pickable[]
   title: string
   description: string
+  /** What the top level is called here. The default suits everything so far. */
+  rootLabel?: string
   current: string | null
   exclude?: Set<string>
   onMove: (folderId: string | null) => void
@@ -103,32 +122,45 @@ export function MoveToFolderModal({
         </>
       }
     >
-      <FolderChoice folders={folders} value={chosen} exclude={exclude} onChange={setChosen} />
+      <FolderChoice
+        folders={folders}
+        value={chosen}
+        rootLabel={rootLabel}
+        exclude={exclude}
+        onChange={setChosen}
+      />
     </Modal>
   )
 }
 
-/** Creating one. The only thing a folder has is a name and somewhere to sit. */
+/**
+ * Creating one. The only thing a folder has is a name and somewhere to sit, so this is
+ * the whole dialog — and the write itself belongs to the caller, since the two folder
+ * trees are two channels and the dialog has no business knowing which it is filling.
+ */
 export function NewFolderModal({
   open,
   onClose,
-  workspaceId,
   folders,
-  parentId
+  parentId,
+  description = 'Somewhere to file things. It holds nothing else, and nothing in the app reads it back.',
+  rootLabel = 'Not in a folder',
+  onCreate
 }: {
   open: boolean
   onClose: () => void
-  workspaceId: string
-  folders: ProjectFolderView[]
+  folders: Pickable[]
   parentId: string | null
+  description?: string
+  rootLabel?: string
+  onCreate: (name: string, parentId: string | null) => Promise<unknown>
 }): React.JSX.Element {
-  const save = useApiMutation('folder:save')
   const [name, setName] = useState('')
   const [parent, setParent] = useState<string | null>(parentId)
 
   const submit = async (): Promise<void> => {
     if (!name.trim()) return
-    await save.mutateAsync({ workspaceId, name: name.trim(), parentId: parent })
+    await onCreate(name.trim(), parent)
     setName('')
     onClose()
   }
@@ -138,7 +170,7 @@ export function NewFolderModal({
       open={open}
       onClose={onClose}
       title="New folder"
-      description="Somewhere to file projects. It holds nothing else, and nothing in the app reads it back."
+      description={description}
       width="max-w-md"
       onSubmit={() => void submit()}
       isDirty={name.trim().length > 0}
@@ -164,7 +196,12 @@ export function NewFolderModal({
         </Field>
         {folders.length > 0 && (
           <Field label="Inside" hint={`${plural(folders.length, 'folder')} so far.`}>
-            <FolderChoice folders={folders} value={parent} onChange={setParent} />
+            <FolderChoice
+              folders={folders}
+              value={parent}
+              rootLabel={rootLabel}
+              onChange={setParent}
+            />
           </Field>
         )}
       </div>

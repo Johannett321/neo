@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useApi, useApiMutation } from '@/lib/api'
 import { differs, relativeFromIso } from '@/lib/format'
 import { Icon } from '@/components/Icon'
@@ -26,6 +26,13 @@ import { ConfirmButton, EmptyState, Kbd } from '@/components/primitives'
 export function NoteWriter(): React.JSX.Element {
   const { id: projectId = '', noteId = '' } = useParams()
   const { data } = useApi('project:get', { id: projectId })
+  /*
+   * The folder the list was open in when this page was asked for. It does two jobs and
+   * only two: a note started in a folder is filed there, and the way back leads to the
+   * folder you came from rather than to the top of the list.
+   */
+  const [params] = useSearchParams()
+  const startIn = params.get('in')
   const navigate = useNavigate()
   const save = useApiMutation('note:save')
   const remove = useApiMutation('note:delete')
@@ -71,13 +78,24 @@ export function NoteWriter(): React.JSX.Element {
     if (!differs(next, saved.current)) return
     // An untouched blank page is not a note; it is a page you opened and left.
     if (!next.title && !next.body.trim() && !idRef.current) return
-    const result = await save.mutateAsync({ id: idRef.current ?? undefined, projectId, ...next })
+    const result = await save.mutateAsync({
+      id: idRef.current ?? undefined,
+      projectId,
+      // Only ever on the way in. Where a note is filed is the list's business after
+      // that, and re-sending it on every autosave would undo a move made elsewhere.
+      ...(idRef.current ? {} : { folderId: startIn }),
+      ...next
+    })
     if (deleted.current) return
     saved.current = next
     idRef.current = result.id
     setSavedAt(result.updatedAt)
-    if (noteId === 'new') navigate(`/projects/${projectId}/notes/${result.id}`, { replace: true })
-  }, [navigate, noteId, projectId, save])
+    if (noteId === 'new') {
+      navigate(`/projects/${projectId}/notes/${result.id}${startIn ? `?in=${startIn}` : ''}`, {
+        replace: true
+      })
+    }
+  }, [navigate, noteId, projectId, save, startIn])
 
   // Held in a ref so the unmount flush below runs the current one, not the first one.
   const flushRef = useRef(flush)
@@ -105,7 +123,10 @@ export function NoteWriter(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const back = `/projects/${projectId}/notes`
+  // Back to the folder this note is actually in, so leaving lands you where it sits
+  // rather than at the top of a list you then have to walk down again.
+  const filedIn = note?.folderId ?? startIn
+  const back = `/projects/${projectId}/notes${filedIn ? `?in=${filedIn}` : ''}`
   const words = body.trim() ? body.trim().split(/\s+/).length : 0
 
   if (!data) return <div className="h-full" />

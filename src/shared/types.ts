@@ -450,11 +450,57 @@ export interface TaskView extends Task {
   daysUntilDue: number | null
 }
 
+/**
+ * The two lists inside a project that are long enough to want filing: the notes and
+ * the meetings. One word for both because they are the same shape of thing — a page
+ * of Markdown with a name on it — and because it is what lets one folder table, one
+ * set of handlers and one set of screens serve both rather than two of each that
+ * drift apart.
+ */
+export type ContentKind = 'note' | 'meeting'
+
+/**
+ * Somewhere to file notes, or somewhere to file meetings. It is the project-scoped
+ * twin of `ProjectFolder`, and it is filing and only filing for the same reason: no
+ * dates, no state, no work of its own, and nothing in the app derives anything from
+ * it. A folder that has gone stale costs you a note in the wrong place, never a wrong
+ * answer — which is the whole licence for the user maintaining it by hand.
+ *
+ * `kind` is what keeps the two trees apart. A note is never filed in a folder made for
+ * meetings, and the two lists never see each other's folders; one table holds both
+ * because everything about them is the same but the word on the screen.
+ */
+export interface ContentFolder {
+  id: string
+  projectId: string
+  /** Which list this folder belongs to. The two trees never touch. */
+  kind: ContentKind
+  /** Null at the top level of its list. */
+  parentId: string | null
+  name: string
+  sortOrder: number
+  createdAt: string
+}
+
+/** A content folder with its place in the tree worked out — what a list view needs. */
+export interface ContentFolderView extends ContentFolder {
+  /** Names from the top down, this folder last: `["Steering", "2024"]`. */
+  path: string[]
+  /** How many levels down it sits. Top-level folders are 0. */
+  depth: number
+  /** Notes or meetings filed directly in it — not counting its subfolders'. */
+  itemCount: number
+  /** Folders filed directly in it. */
+  folderCount: number
+}
+
 export interface Note {
   id: string
   projectId: string
   title: string
   body: string
+  /** The folder it is filed in, or null for the notes sitting loose at the top. */
+  folderId: string | null
   isPinned: boolean
   createdAt: string
   updatedAt: string
@@ -467,6 +513,8 @@ export interface Meeting {
   occurredOn: string
   /** Markdown, written on a page rather than typed into a box. Same as a note. */
   body: string
+  /** The folder it is filed in, or null for the meetings sitting loose at the top. */
+  folderId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -664,6 +712,14 @@ export interface ProjectDetail {
   links: Link[]
   notes: Note[]
   meetings: MeetingView[]
+  /*
+   * The two folder trees, fetched with everything else rather than through a list
+   * channel of their own: a project's folders are as much part of opening a project as
+   * its notes are, and there are tens of them, not thousands. Depth-first, in the
+   * order the pages draw them, each already carrying its path.
+   */
+  noteFolders: ContentFolderView[]
+  meetingFolders: ContentFolderView[]
   decisions: Decision[]
   journal: JournalEntry[]
   activity: Activity[]

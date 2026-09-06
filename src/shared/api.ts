@@ -1,6 +1,6 @@
 import type {
-  Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
-  JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
+  Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, ContentFolder, Conversation,
+  Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
@@ -161,6 +161,29 @@ export interface ApiMap {
 
   'note:save': { in: Draft<Note>; out: Note }
   'note:delete': { in: { id: string }; out: void }
+
+  /*
+   * ------------------------------------------------- filing notes and meetings
+   *
+   * The project-scoped twin of `folder:*`, serving both lists through one `kind`.
+   * There is no `contentFolder:list`: a project's folders come back with the project
+   * itself, on `ProjectDetail`, because that is the one call every screen that draws
+   * them has already made.
+   */
+
+  /**
+   * Create or rename one, or move it under another. Moving a folder inside its own
+   * branch is refused rather than silently ignored — it would strand everything below
+   * it — and so is moving one between projects or between the two lists, which would
+   * leave what is filed in it on a page that can no longer draw it.
+   */
+  'contentFolder:save': { in: Draft<ContentFolder>; out: ContentFolder }
+  /**
+   * Delete the folder itself and nothing else. Its subfolders and whatever is filed in
+   * it move up to where it was, so unfiling is never a way to lose a note or a
+   * meeting. There is nothing to confirm because there is nothing to lose.
+   */
+  'contentFolder:delete': { in: { id: string }; out: void }
 
   'meeting:save': { in: Draft<Meeting> & { attendeeIds?: string[] }; out: MeetingView }
   /**

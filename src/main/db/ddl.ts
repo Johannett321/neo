@@ -139,6 +139,24 @@ CREATE TABLE IF NOT EXISTS task (
   updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
+-- Somewhere to file notes, and somewhere to file meetings. The project-scoped twin of
+-- project_folder, and filing in exactly the same sense: no dates, no state, no work of
+-- its own, and nothing derived reads it. The kind column keeps the two trees apart:
+-- one table, because everything about them is identical but the word on the screen.
+--
+-- Deleting one is handled in the handler, which lifts what is inside it up a level
+-- first; the cascade here is only the backstop for a project going away, and it can
+-- afford to be one because a note loses its folder rather than its life.
+CREATE TABLE IF NOT EXISTS content_folder (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  kind       text NOT NULL,
+  parent_id  uuid REFERENCES content_folder(id) ON DELETE CASCADE,
+  name       text NOT NULL,
+  sort_order integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS note (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -524,6 +542,11 @@ export const MIGRATIONS: string[] = [
   // "Escalation path" was one more thing to mark by hand, on every person on every
   // project, and it never earned it — who to push on is what the role already says.
   `ALTER TABLE membership DROP COLUMN IF EXISTS is_escalation`,
+  // Filing notes and meetings, added long after both. SET NULL rather than CASCADE, for
+  // the reason a project's folder is: losing the filing must never be a way to lose the
+  // writing. The table itself is in the DDL above and therefore already exists here.
+  `ALTER TABLE note ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES content_folder(id) ON DELETE SET NULL`,
+  `ALTER TABLE meeting ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES content_folder(id) ON DELETE SET NULL`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS avatar_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS is_me boolean NOT NULL DEFAULT false`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES workspace(id) ON DELETE CASCADE`,
@@ -629,6 +652,9 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_folder_parent ON project_folder (workspace_id, parent_id)`,
   `CREATE INDEX IF NOT EXISTS idx_project_collapsible ON project (collapsible_id)`,
   `CREATE INDEX IF NOT EXISTS idx_collapsible_level ON project_collapsible (workspace_id, folder_id, sort_order)`,
+  `CREATE INDEX IF NOT EXISTS idx_note_folder ON note (folder_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_meeting_folder ON meeting (folder_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_content_folder_level ON content_folder (project_id, kind, parent_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`,
   // Said once, and once only. Not merely a lookup: the insert that claims a day is

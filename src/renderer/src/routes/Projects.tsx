@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import type { ProjectFolderView } from '@shared/types'
 import { useApi, useApiMutation } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace'
-import { branchIds, childrenOf, crumbsOf, recallFolder, rememberFolder } from '@/lib/folders'
+import {
+  branchIds, childrenOf, crumbsOf, recallFolder, rememberFolder, type Dragged
+} from '@/lib/folders'
 import { differs, plural } from '@/lib/format'
 import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
@@ -12,8 +14,9 @@ import { EmptyState, Field, Modal, PageHeader } from '@/components/primitives'
 import { IconPicker } from '@/components/IconPicker'
 import { ProjectCard } from '@/components/ProjectCard'
 import { MoveToFolderModal, NewFolderModal } from '@/components/FolderPicker'
+import { FolderTrail } from '@/components/FolderTrail'
 import { CollapsibleSection, LooseArea } from '@/components/ProjectCollapsibles'
-import { FolderBreadcrumbs, FolderCard, type Dragged } from '@/components/ProjectFolders'
+import { FolderCard } from '@/components/ProjectFolders'
 import { ProjectGrid } from '@/components/ProjectGrid'
 
 export function ProjectsPage(): React.JSX.Element {
@@ -104,10 +107,18 @@ export function ProjectsPage(): React.JSX.Element {
   // arriving from somewhere unexpected from vanishing off the screen entirely.
   const loose = visible.filter((p) => !p.collapsibleId || !banded.has(p.collapsibleId))
   const carried =
-    dragged?.kind === 'project' ? (visible.find((p) => p.id === dragged.id) ?? null) : null
+    dragged?.kind === 'item' ? (visible.find((p) => p.id === dragged.id) ?? null) : null
+
+  /** The folder tree as the pickers want it: a name, an indent, and what is in it. */
+  const pickable = folders.map((f) => ({
+    id: f.id,
+    name: f.name,
+    depth: f.depth,
+    count: f.projectCount
+  }))
 
   const moveHere = (item: Dragged, folderId: string | null): void => {
-    if (item.kind === 'project') saveProject.mutate({ id: item.id, folderId })
+    if (item.kind === 'item') saveProject.mutate({ id: item.id, folderId })
     else if (item.id !== folderId) saveFolder.mutate({ id: item.id, parentId: folderId })
     setDragged(null)
   }
@@ -171,10 +182,11 @@ export function ProjectsPage(): React.JSX.Element {
                 {/* Only ever drawn once you are inside something. With no folders there is
                     no trail, and the page is exactly what it has always been. */}
                 {crumbs.length > 0 ? (
-                  <FolderBreadcrumbs
+                  <FolderTrail
                     crumbs={crumbs}
                     folders={folders}
                     dragged={dragged}
+                    rootLabel="All projects"
                     onOpen={open}
                     onMoveHere={moveHere}
                   />
@@ -333,9 +345,12 @@ export function ProjectsPage(): React.JSX.Element {
           key={newFolderIn ?? 'root'}
           open
           onClose={() => setNewFolderIn(undefined)}
-          workspaceId={workspace.id}
-          folders={folders}
+          folders={pickable}
           parentId={newFolderIn}
+          description="Somewhere to file projects. It holds nothing else, and nothing in the app reads it back."
+          onCreate={(name, parentId) =>
+            saveFolder.mutateAsync({ workspaceId: workspace.id, name, parentId })
+          }
         />
       )}
 
@@ -344,7 +359,7 @@ export function ProjectsPage(): React.JSX.Element {
           key={movingFolder.id}
           open
           onClose={() => setMovingFolder(null)}
-          folders={folders}
+          folders={pickable}
           title={`Move ${movingFolder.name}`}
           description="Everything filed inside it comes along."
           current={movingFolder.parentId}

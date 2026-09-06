@@ -231,7 +231,12 @@ export function ProjectCard({ project }: { project: ProjectSummary }): React.JSX
         <MoveToFolderModal
           open
           onClose={() => setMoving(false)}
-          folders={folders}
+          folders={folders.map((f) => ({
+            id: f.id,
+            name: f.name,
+            depth: f.depth,
+            count: f.projectCount
+          }))}
           title={`Move ${project.name}`}
           description="Filing only. Nothing about the project itself changes."
           current={project.folderId}

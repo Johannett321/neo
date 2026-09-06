@@ -246,6 +246,21 @@ async function main(): Promise<void> {
      todos[1]?.text === 'Priya: error states' && todos.every((t) => t.task_id === null),
      todos.map((t) => t.text).join(' | '))
 
+  // Filing notes and meetings arrived long after both, in a table of its own that an
+  // old database has never seen and two columns on tables that predate it. Neither is
+  // backfilled and neither should be: everything an upgraded database holds is filed
+  // nowhere, which is exactly the list it drew before anyone had the option.
+  const filingTable = await q<{ table_name: string }>(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'content_folder'`)
+  ok('the folder table for notes and meetings is created on an old database',
+     filingTable.length === 1)
+  const filed = await q<{ folder_id: string | null }>(
+    'SELECT folder_id FROM note UNION ALL SELECT folder_id FROM meeting')
+  ok('notes and meetings gain a folder, unset so both lists draw exactly as they did',
+     filed.length === 1 && filed.every((r) => r.folder_id === null),
+     JSON.stringify(filed))
+
   const boards = await q<{ name: string; is_done: boolean }>(
     'SELECT name, is_done FROM board_column ORDER BY sort_order'
   )

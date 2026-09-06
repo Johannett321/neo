@@ -1,5 +1,6 @@
 import type {
-  Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
+  Activity, Attachment, BoardColumn, CastMember, ChatMessage, ContentFolder, ContentFolderView,
+  Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
   Project, ProjectCollapsible, ProjectCollapsibleView, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
   TaskView, TranscriptCue, Workspace, WorkspaceLink
@@ -110,6 +111,24 @@ export const mapFolderView = (r: Row): ProjectFolderView => ({
   folderCount: r.folder_count ?? 0
 })
 
+export const mapContentFolder = (r: Row): ContentFolder => ({
+  id: r.id,
+  projectId: r.project_id,
+  kind: r.kind,
+  parentId: r.parent_id ?? null,
+  name: r.name,
+  sortOrder: r.sort_order,
+  createdAt: iso(r.created_at)
+})
+
+export const mapContentFolderView = (r: Row): ContentFolderView => ({
+  ...mapContentFolder(r),
+  path: r.path ?? [r.name],
+  depth: r.depth ?? 0,
+  itemCount: r.item_count ?? 0,
+  folderCount: r.folder_count ?? 0
+})
+
 export const mapCollapsible = (r: Row): ProjectCollapsible => ({
   id: r.id,
   workspaceId: r.workspace_id,
@@ -217,6 +236,7 @@ export const mapNote = (r: Row): Note => ({
   projectId: r.project_id,
   title: r.title,
   body: r.body,
+  folderId: r.folder_id ?? null,
   isPinned: r.is_pinned,
   createdAt: iso(r.created_at),
   updatedAt: iso(r.updated_at)
@@ -311,6 +331,7 @@ export const mapMeeting = (r: Row): MeetingView => {
     title: r.title,
     occurredOn: r.occurred_on,
     body: r.body,
+    folderId: r.folder_id ?? null,
     attendees: r.attendees ?? [],
     todos,
     // Attached by `meetingViews`, which fetches recordings as rows rather than as

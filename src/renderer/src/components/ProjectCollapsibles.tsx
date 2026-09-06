@@ -5,7 +5,7 @@ import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
 import { plural } from '@/lib/format'
 import { Icon } from './Icon'
-import type { Dragged } from './ProjectFolders'
+import type { Dragged } from '@/lib/folders'
 import { ProjectGrid } from './ProjectGrid'
 
 /**

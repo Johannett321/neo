@@ -3,6 +3,7 @@ import { exec, q, q1, today } from '../db/client'
 import { meetingViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
 import { doneColumnId, firstColumnId } from '../lib/board'
+import { checkContentFolder } from '../lib/folders'
 import { mirrorProject } from '../lib/markdown'
 import { describeEngineError, recapEngine, workspaceOfMeeting } from '../lib/recording/engine'
 import { pruneRecordings } from '../lib/recording/store'
@@ -38,8 +39,20 @@ async function ownerOf(todoId: string): Promise<{ meetingId: string; projectId: 
 
 export function registerMeetingHandlers(): void {
   handle('meeting:save', async (draft) => {
-    const fields = pick(draft as Partial<Meeting>, ['projectId', 'title', 'occurredOn', 'body'])
+    const fields = pick(draft as Partial<Meeting>, [
+      'projectId', 'title', 'occurredOn', 'body', 'folderId'
+    ])
     if (!draft.id && !fields.occurredOn) fields.occurredOn = today()
+
+    // Filing is fenced the same way a note's is, and by the same code: the folder has
+    // to belong to this project and to the meetings list rather than the notes one.
+    if (fields.folderId !== undefined) {
+      const current = draft.id
+        ? await q1<any>('SELECT project_id FROM meeting WHERE id = $1', [draft.id])
+        : null
+      const projectId = String((fields.projectId as string | undefined) ?? current?.project_id ?? '')
+      await checkContentFolder(fields.folderId, projectId, 'meeting')
+    }
 
     const row = await upsert<any>('meeting', fields, draft.id, 'updated_at = now()')
 

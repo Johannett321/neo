@@ -571,6 +571,116 @@ async function main(): Promise<void> {
      detached.todos[3].taskId === null &&
      (await call('task:list', { projectId: checkout.id })).some((t: any) => t.id === card.taskId))
 
+  /* -------------------------------------------- filing notes and meetings */
+
+  /*
+   * The project-scoped twin of the folders on the projects page. Everything true of
+   * those is asserted again here, because it is a second tree and a second set of
+   * writes: filing is reversible, deleting a folder is undoing the filing and nothing
+   * else, and the two lists are separate trees that never see each other.
+   */
+
+  const filingProject = await call('project:save', {
+    workspaceId: dayJob, name: 'Filing', status: 'active'
+  })
+  const emptyLists = await call('project:get', { id: filingProject.id })
+  ok('a project starts with no folders in either list',
+     emptyLists.noteFolders.length === 0 && emptyLists.meetingFolders.length === 0)
+
+  const research = await call('contentFolder:save', {
+    projectId: filingProject.id, kind: 'note', name: 'Research'
+  })
+  const interviews = await call('contentFolder:save', {
+    projectId: filingProject.id, kind: 'note', name: 'Interviews', parentId: research.id
+  })
+  const steering = await call('contentFolder:save', {
+    projectId: filingProject.id, kind: 'meeting', name: 'Steering'
+  })
+
+  const trees = await call('project:get', { id: filingProject.id })
+  ok('a note folder can hold another note folder',
+     trees.noteFolders.length === 2 &&
+     trees.noteFolders[0].id === research.id && trees.noteFolders[0].depth === 0 &&
+     trees.noteFolders[1].id === interviews.id && trees.noteFolders[1].depth === 1,
+     trees.noteFolders.map((f: any) => f.path.join('/')).join(', '))
+  ok('and it comes back knowing where it sits',
+     trees.noteFolders[1].path.join('/') === 'Research/Interviews')
+  ok('the two lists are separate trees that never see each other',
+     trees.meetingFolders.length === 1 && trees.meetingFolders[0].id === steering.id)
+  ok('a folder needs a name',
+     await threw(() => call('contentFolder:save',
+                            { projectId: filingProject.id, kind: 'note', name: '  ' }),
+                 'needs a name'))
+
+  const filedNote = await call('note:save', {
+    projectId: filingProject.id, title: 'An interview', body: '', folderId: interviews.id
+  })
+  ok('a note can be filed in a folder', filedNote.folderId === interviews.id)
+  ok('and the folder counts what is filed in it',
+     (await call('project:get', { id: filingProject.id })).noteFolders
+       .find((f: any) => f.id === interviews.id).itemCount === 1)
+
+  const filedMeeting = await call('meeting:save', {
+    projectId: filingProject.id, title: 'Steering #1', folderId: steering.id
+  })
+  ok('a meeting files the same way', filedMeeting.folderId === steering.id)
+
+  // The two boundaries. A folder in another project would file the note somewhere no
+  // screen can draw it; a folder of the other kind would file it on a page that never
+  // draws notes at all.
+  ok('a note cannot be filed in a meeting\u2019s folder',
+     await threw(() => call('note:save', { id: filedNote.id, folderId: steering.id }),
+                 'do not share folders'))
+  ok('nor a meeting in a note\u2019s folder',
+     await threw(() => call('meeting:save', { id: filedMeeting.id, folderId: research.id }),
+                 'do not share folders'))
+  const foreignFolder = await call('contentFolder:save', {
+    projectId: checkout.id, kind: 'note', name: 'Somewhere else'
+  })
+  ok('and neither can be filed in another project\u2019s folder',
+     await threw(() => call('note:save', { id: filedNote.id, folderId: foreignFolder.id }),
+                 'another project'))
+  await call('contentFolder:delete', { id: foreignFolder.id })
+
+  ok('a folder cannot be moved inside itself',
+     await threw(() => call('contentFolder:save', { id: research.id, parentId: interviews.id }),
+                 'inside itself'))
+  ok('nor inside itself directly',
+     await threw(() => call('contentFolder:save', { id: research.id, parentId: research.id }),
+                 'inside itself'))
+  ok('nor into the other list, which would strand what is in it',
+     await threw(() => call('contentFolder:save', { id: interviews.id, parentId: steering.id }),
+                 'do not share folders'))
+  ok('and it stays in the list it was made in',
+     await threw(() => call('contentFolder:save', { id: interviews.id, kind: 'meeting' }),
+                 'stays in the list'))
+  ok('and in the project it was made in',
+     await threw(() => call('contentFolder:save', { id: interviews.id, projectId: checkout.id }),
+                 'stays in the project'))
+
+  // Deleting a folder is undoing the filing and nothing else: what was inside comes up
+  // a level. A folder that could take a note with it would be a second way to lose
+  // one, hidden behind a word that sounds like tidying up.
+  await call('contentFolder:delete', { id: interviews.id })
+  const lifted3 = await call('project:get', { id: filingProject.id })
+  ok('deleting a folder lifts what is filed in it up a level rather than taking it',
+     lifted3.notes.length === 1 &&
+     lifted3.notes[0].id === filedNote.id &&
+     lifted3.notes[0].folderId === research.id,
+     JSON.stringify(lifted3.notes.map((n: any) => n.folderId)))
+  ok('and its subfolders come up with them',
+     lifted3.noteFolders.length === 1 && lifted3.noteFolders[0].id === research.id)
+
+  await call('contentFolder:delete', { id: research.id })
+  const unfiled = await call('project:get', { id: filingProject.id })
+  ok('deleting the last folder leaves the note at the top of the list, filed nowhere',
+     unfiled.noteFolders.length === 0 && unfiled.notes[0].folderId === null)
+  ok('and the note itself is untouched', unfiled.notes[0].title === 'An interview')
+
+  ok('filing can always be undone by hand too',
+     (await call('meeting:save', { id: filedMeeting.id, folderId: null })).folderId === null)
+  await call('project:delete', { id: filingProject.id })
+
   /* ------------------------------------------------------------------ recording
    *
    * The pipeline itself is not exercised here — it calls out to a transcription

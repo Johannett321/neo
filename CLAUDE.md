@@ -168,6 +168,26 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   Back walks up. That model is chosen for the person with no folders at all: with none,
   the page must be exactly the grid of project cards it was before the feature existed.
   Do not add chrome that only makes sense once folders are in use.
+  **The breadcrumb trail is the way back *out*.** Every crumb above the open folder is a
+  drop target, and the root always is, so unfiling is the same gesture aimed one level
+  up rather than a second mechanism. It only works if it can be seen, so while anything
+  is in the air each crumb that would accept it draws the same dashed outline a folder
+  does — `components/FolderTrail.tsx`, shared by every page that files.
+- **Notes and meetings file the same way, one level down.** `content_folder` is the
+  project-scoped twin of `project_folder`: same rules, same words on screen, and a
+  `kind` of `note` or `meeting` because the two lists are separate trees that must never
+  see each other — a folder showing in both would be a place where half of what you
+  filed is invisible. One table and one pair of handlers (`contentFolder:save` /
+  `contentFolder:delete`, in `ipc/content.ts`, with the fencing in `lib/folders.ts`
+  because `meeting:save` needs it too) rather than two of each that drift.
+  There is deliberately **no `contentFolder:list`**: the trees come back on
+  `ProjectDetail`, which is the one call every screen that draws them has already made.
+  The renderer's half is `components/ContentFolders.tsx` — `useFiling()` holds where you
+  are and what is in the air, and both lists compose the same pieces, so a note row and a
+  meeting row differ only in what they draw. `lib/folders.ts` in the renderer is written
+  against the least a folder can be, so the walking is shared with the projects page.
+  A folder's name is part of the mirror path (`notes/Research/Interviews/…`), so anything
+  that renames or moves one calls `mirrorProject()`.
 - **A collapsible is filing that stays on the page.** `project_collapsible` (workspace
   scoped, its `folder_id` naming the level it is drawn at) is a named band under the
   loose cards, and `project.collapsible_id` points into it. It is a second concept rather

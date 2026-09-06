@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import type { ProjectSummary } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
+import type { Dragged } from '@/lib/folders'
 import { EASE } from '@/lib/motion'
 import { ProjectCard } from './ProjectCard'
-import type { Dragged } from './ProjectFolders'
 
 /**
  * The grid of project cards, and the one place they can be put in an order.
@@ -153,7 +153,7 @@ export function ProjectGrid({
     setCarried(id)
     setElsewhere(false)
     show(ids.slice())
-    onDragged({ kind: 'project', id })
+    onDragged({ kind: 'item', id })
   }
 
   /**

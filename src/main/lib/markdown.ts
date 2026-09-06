@@ -32,6 +32,30 @@ const safeDir = (s: string): string => s.replace(/[/\\:*?"<>|]/g, '-').trim() ||
 const rmTree = (path: string): Promise<void> =>
   rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
 
+/**
+ * Where each of a project's content folders sits, as directory names from the top
+ * down. Filing is filing on disk too: a note in "Steering / 2024" is written to
+ * `notes/Steering/2024/`, exactly as a project in a folder is written under its own.
+ *
+ * One walk for both lists — a folder's kind never changes down a branch, so a
+ * meeting's folder and a note's can share the map without ever meeting.
+ */
+async function folderPaths(projectId: string): Promise<Map<string, string[]>> {
+  const rows = await q<any>(
+    `WITH RECURSIVE tree AS (
+       SELECT f.id, ARRAY[f.name] AS path, 0 AS depth
+       FROM content_folder f WHERE f.project_id = $1 AND f.parent_id IS NULL
+       UNION ALL
+       SELECT f.id, tree.path || f.name, tree.depth + 1
+       FROM content_folder f JOIN tree ON f.parent_id = tree.id
+       WHERE tree.depth < 20
+     )
+     SELECT id, path FROM tree`,
+    [projectId]
+  )
+  return new Map(rows.map((r) => [r.id as string, (r.path as string[]).map(safeDir)]))
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function writeProjectFiles(root: string, project: any): Promise<number> {
   // Folders are filing, so the mirror files it the same way: the folder a project is
@@ -59,6 +83,8 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
   }
   await mkdir(dir, { recursive: true })
   let files = 0
+
+  const filedIn = await folderPaths(project.id)
 
   const [links, cast, notes, decisions, journal, tasks, meetings] = await Promise.all([
     q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order', [project.id]),
@@ -137,10 +163,11 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
   files++
 
   if (notes.length) {
-    await mkdir(join(dir, 'notes'), { recursive: true })
     for (const n of notes) {
+      const into = join(dir, 'notes', ...(filedIn.get(n.folder_id) ?? []))
+      await mkdir(into, { recursive: true })
       const body = `# ${n.title || 'Untitled note'}\n\n_${new Date(n.created_at).toISOString().slice(0, 10)}_\n\n${n.body}\n`
-      await writeFile(join(dir, 'notes', `${slug(n.title || 'note')}-${String(n.id).slice(0, 8)}.md`), body, 'utf8')
+      await writeFile(join(into, `${slug(n.title || 'note')}-${String(n.id).slice(0, 8)}.md`), body, 'utf8')
       files++
     }
   }
@@ -166,8 +193,9 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
   }
 
   if (meetings.length) {
-    await mkdir(join(dir, 'meetings'), { recursive: true })
     for (const m of meetings) {
+      const into = join(dir, 'meetings', ...(filedIn.get(m.folder_id) ?? []))
+      await mkdir(into, { recursive: true })
       // A recorded meeting writes two files: the write-up and the transcript beside
       // it. The recap is not written separately — it was folded into the write-up
       // when it was produced, so it is already in `m.body`, and a second copy here
@@ -192,7 +220,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
         ''
       ].join('\n')
       const stem = `${m.occurred_on}-${slug(m.title || 'meeting')}`
-      await writeFile(join(dir, 'meetings', `${stem}.md`), body, 'utf8')
+      await writeFile(join(into, `${stem}.md`), body, 'utf8')
       files++
 
       if (recording) {
@@ -213,7 +241,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
               lines[lines.length - 1] = `${lines[lines.length - 1]} ${cue.text}`.trim()
             }
           }
-          await writeFile(join(dir, 'meetings', `${stem}-transcript.md`), lines.join('\n').trim() + '\n', 'utf8')
+          await writeFile(join(into, `${stem}-transcript.md`), lines.join('\n').trim() + '\n', 'utf8')
           files++
         }
       }

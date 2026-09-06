@@ -3,7 +3,7 @@ import type { ProjectFolderView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
-import { branchIds } from '@/lib/folders'
+import { branchIds, type Dragged } from '@/lib/folders'
 import { plural } from '@/lib/format'
 import { Icon } from './Icon'
 
@@ -17,12 +17,6 @@ import { Icon } from './Icon'
  * project cards it has always been. No headings, no chevrons, no empty scaffolding for
  * a feature you are not using.
  */
-
-/** What is currently being dragged. Projects and folders both move by dragging. */
-export interface Dragged {
-  kind: 'project' | 'folder'
-  id: string
-}
 
 /**
  * One folder, as a card.
@@ -61,7 +55,7 @@ export function FolderCard({
   // the rows there with nothing on earth able to draw them again.
   const accepts =
     dragged !== null &&
-    (dragged.kind === 'project' || !branchIds(folders, dragged.id).has(folder.id))
+    (dragged.kind === 'item' || !branchIds(folders, dragged.id).has(folder.id))
 
   const rename = (name: string): void => {
     setRenaming(false)
@@ -151,69 +145,5 @@ export function FolderCard({
       </span>
       <Icon name="chevronRight" size={14} className="shrink-0 text-base-content/25" />
     </button>
-  )
-}
-
-/**
- * The way back out, and only drawn when there is one: at the top level there are no
- * crumbs, so someone who never makes a folder never sees this line at all.
- *
- * Every crumb above the one you are in is also a drop target, which is how something
- * gets back *out* of a folder — the same gesture that put it in, aimed one level up.
- */
-export function FolderBreadcrumbs({
-  crumbs,
-  folders,
-  dragged,
-  onOpen,
-  onMoveHere
-}: {
-  crumbs: ProjectFolderView[]
-  folders: ProjectFolderView[]
-  dragged: Dragged | null
-  onOpen: (folderId: string | null) => void
-  onMoveHere: (dragged: Dragged, folderId: string | null) => void
-}): React.JSX.Element {
-  const [over, setOver] = useState<string | null | undefined>(undefined)
-
-  // Dropping something into the folder it is already open in is not a move, so the
-  // last crumb takes nothing; everything above it does.
-  const above = crumbs.slice(0, -1).map((c) => c.id)
-  const accepts = (id: string | null): boolean => {
-    if (!dragged) return false
-    if (id !== null && !above.includes(id)) return false
-    return dragged.kind === 'project' || id === null || !branchIds(folders, dragged.id).has(id)
-  }
-
-  const crumb = (id: string | null, label: string, last: boolean): React.JSX.Element => (
-    <span key={id ?? 'root'} className="flex min-w-0 items-center gap-1">
-      <button
-        className={`truncate rounded px-1 py-0.5 transition ${
-          over === id ? 'bg-primary/15 text-base-content' : ''
-        } ${last ? 'text-base-content/70' : 'hover:bg-base-content/5 hover:text-base-content'}`}
-        onClick={() => onOpen(id)}
-        onDragOver={(e) => {
-          if (!accepts(id)) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'move'
-          setOver(id)
-        }}
-        onDragLeave={() => setOver(undefined)}
-        onDrop={() => {
-          setOver(undefined)
-          if (dragged && accepts(id)) onMoveHere(dragged, id)
-        }}
-      >
-        {label}
-      </button>
-      {!last && <Icon name="chevronRight" size={11} className="shrink-0 opacity-30" />}
-    </span>
-  )
-
-  return (
-    <span className="flex min-w-0 items-center gap-1">
-      {crumb(null, 'All projects', crumbs.length === 0)}
-      {crumbs.map((folder, index) => crumb(folder.id, folder.name, index === crumbs.length - 1))}
-    </span>
   )
 }

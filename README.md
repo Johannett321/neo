@@ -251,8 +251,10 @@ folders in folders. They work the way folders work everywhere else: a folder is 
 the same grid, clicking it opens it, and inside it you see what is filed there and nothing
 else. Breadcrumbs appear once you are inside one and are the way back up. Drag a project
 card onto a folder to file it, drag it onto a breadcrumb to move it back out, and drag a
-folder onto another to move it and everything in it. Both have a *Move to…* in their
-right-click menu, for when a drag is the wrong gesture.
+folder onto another to move it and everything in it. While something is in the air every
+crumb that would take it draws itself as a dashed outline, so **the way back out is
+visible at the moment you need it** rather than something you have to know. Both have a
+*Move to…* in their right-click menu, for when a drag is the wrong gesture.
 
 The cards can also be **put in an order**: drag one onto another and it takes that place,
 with everything between sliding along to make room and an outline showing where it will
@@ -515,6 +517,9 @@ meeting it came from. The item then says where it went and which column it is si
 in, and from that moment the card is the one that knows whether it is finished: tick it
 on the board and it ticks on the meeting, and the two can never drift apart.
 
+Meetings can be filed in folders once there are enough of them to lose one — see
+[Filing notes and meetings](#filing-notes-and-meetings).
+
 ### Recording a meeting
 Press **Record** in the meeting's rail and Neo captures the room, writes out what was
 said, and pulls the decisions, the commitments and the things worth knowing out of it.
@@ -674,6 +679,34 @@ losing an afternoon's writing to a stray click is not a trade worth making. Repe
 saves of the same note within half an hour collapse into a single line in the activity
 log, so the thing that makes the re-entry brief readable is not drowned by the thing
 that makes the writing safe.
+
+### Filing notes and meetings
+A project that has been running a year has more notes than fit on a screen and more
+meetings than you can tell apart by their titles, so both lists take **folders**, and
+folders in folders. They are the same folders the projects page has, drawn for a list
+instead of a grid: a folder is a row among the rows, clicking it shows what is filed
+inside it and nothing else, and breadcrumbs appear once you are inside one.
+
+Drag a note onto a folder to file it — the row you picked up fades and shrinks under the
+pointer, and the folder you are over lights up, so at every moment it is clear what will
+happen when you let go. Drag it onto a breadcrumb to take it back out, one level or all
+the way; while anything is being dragged, every crumb that would accept it outlines
+itself. Folders move the same way, taking everything inside them along. Both have a
+*Move to…* in their right-click menu for when a drag is the wrong gesture, and
+right-clicking the empty part of the list opens *New*, with *Note* and *Folder* under it.
+
+Notes and meetings keep **separate trees**. A folder made in the notes list never appears
+in the meetings list and cannot be filed into from it, because a folder that showed up in
+both would be a place where half of what you filed was invisible.
+
+Everything else is what a folder is everywhere in this app: filing and nothing more. It
+holds no dates and no state, nothing in Today or search or the weekly review reads it, and
+**deleting one never deletes what is in it** — the notes and any folders inside come up a
+level and only the folder goes. A note started while a folder is open is filed there, and
+leaving it takes you back to the folder it is in rather than to the top of the list. On
+disk the folders are real directories, so a note filed in *Research / Interviews* is
+mirrored to `…/Checkout/notes/Research/Interviews/`. And with no folders at all, both
+pages are exactly the lists they were before any of this existed.
 
 ### Confirmations
 Anything destructive opens a dialog that says what is about to happen and what it will

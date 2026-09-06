@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { CastMember, MeetingTodo, MeetingView } from '@shared/types'
 import { call, useApi, useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
@@ -30,6 +30,13 @@ import { RecordingPane } from '@/components/meeting/RecordingPane'
 export function MeetingWriter(): React.JSX.Element {
   const { id: projectId = '', meetingId = '' } = useParams()
   const { data } = useApi('project:get', { id: projectId })
+  /*
+   * The folder the list was open in when this page was asked for. It does two jobs and
+   * only two: a meeting logged in a folder is filed there, and the way back leads to
+   * the folder you came from rather than to the top of the list.
+   */
+  const [params] = useSearchParams()
+  const startIn = params.get('in')
   const navigate = useNavigate()
   const save = useApiMutation('meeting:save')
   const remove = useApiMutation('meeting:delete')
@@ -158,6 +165,10 @@ export function MeetingWriter(): React.JSX.Element {
       const result = await save.mutateAsync({
         id: idRef.current ?? undefined,
         projectId,
+        // Only ever on the way in. Where a meeting is filed is the list's business
+        // after that, and re-sending it on every autosave would undo a move made
+        // elsewhere.
+        ...(idRef.current ? {} : { folderId: startIn }),
         title: next.title,
         body: next.body,
         occurredOn: next.occurredOn,
@@ -171,7 +182,10 @@ export function MeetingWriter(): React.JSX.Element {
       // Pressing Back inside the save delay saves the meeting and leaves you on the
       // list, rather than bouncing you into the editor a moment after you left it.
       if (alive.current && meetingId === 'new') {
-        navigate(`/projects/${projectId}/meetings/${result.id}`, { replace: true })
+        navigate(
+          `/projects/${projectId}/meetings/${result.id}${startIn ? `?in=${startIn}` : ''}`,
+          { replace: true }
+        )
       }
       return result.id
     },
@@ -251,7 +265,10 @@ export function MeetingWriter(): React.JSX.Element {
     }
   }, [ensureSaved, naming, toast])
 
-  const back = `/projects/${projectId}/meetings`
+  // Back to the folder this meeting is actually in, so leaving lands you where it sits
+  // rather than at the top of a list you then have to walk down again.
+  const filedIn = meeting?.folderId ?? startIn
+  const back = `/projects/${projectId}/meetings${filedIn ? `?in=${filedIn}` : ''}`
 
   if (!data) return <div className="h-full" />
   if (missing) {
