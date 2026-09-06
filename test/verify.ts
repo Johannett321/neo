@@ -40,7 +40,8 @@ import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath } from '../src/main/lib/recording/systemAudio'
 import { addDays, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
 import {
-  adoptExistingRows, allBatches, deviceId, ingest, initOplog, pending, replayLog, SYNC_ORDER
+  adoptExistingRows, allBatches, deviceId, ingest, initOplog, onLocalWrite, pending, replayLog,
+  SYNC_ORDER
 } from '../src/main/db/oplog'
 import { DEVICE_ONLY_COLUMNS, DEVICE_TABLES, SCHEMA_VERSION } from '@shared/ops'
 import { randomUUID } from 'node:crypto'
@@ -2506,6 +2507,55 @@ async function main(): Promise<void> {
   ok('syncing is off, and says so, until a server is named',
      (await call('sync:status')).phase === 'off' &&
      (await call('sync:status')).serverUrl === '')
+
+  /* ------------------------------------------------------------------ *
+   * What makes syncing feel immediate
+   * ------------------------------------------------------------------ */
+
+  /*
+   * The log tells whoever is listening that this device wrote something, and that is
+   * the whole mechanism behind a change reaching the other Mac in about a second
+   * rather than on the next minute's poll. It is a listener rather than a call so the
+   * log still knows nothing about a network: with nothing attached — Local — this
+   * fires into an empty set and costs nothing.
+   */
+  let woke = 0
+  const stopListening = onLocalWrite(() => { woke += 1 })
+
+  await call('task:save', { projectId: contested.id, title: 'Written while somebody is listening' })
+  ok('the log says when this device has written, so a push does not wait for the poll',
+     woke > 0, `${woke} signals`)
+
+  // The other direction must not: a device that pushed everything it received would
+  // echo, and two devices echoing each other never stop.
+  const quietSoFar = woke
+  const fromAway = (await allBatches()).slice(-1)[0].hlc.replace(
+    /^(\d+)/, (m) => String(Number(m) + 1000).padStart(15, '0'))
+  await ingest({
+    id: randomUUID(),
+    workspaceId: dayJob,
+    deviceId: 'another-mac',
+    actorId: null,
+    schema: SCHEMA_VERSION,
+    hlc: fromAway,
+    ops: [{
+      table: 'task', rowId: randomUUID(), kind: 'put',
+      fields: { project_id: contested.id, title: 'Written on the other Mac' },
+      hlc: fromAway
+    }]
+  })
+  ok('and stays quiet about what arrived from somewhere else, which would be an echo',
+     woke === quietSoFar, `${woke - quietSoFar} signals`)
+
+  stopListening()
+  await call('task:save', { projectId: contested.id, title: 'Written after nobody is listening' })
+  ok('a listener that has gone stops being called', woke === quietSoFar)
+
+  // A server that does not charge for anything, and a machine that has never been
+  // asked for a passphrase: the pane has to be able to draw both without guessing.
+  const off = await call('sync:status')
+  ok('with nothing connected there is no plan to speak of and no passphrase yet set',
+     off.billing.billed === false && off.billing.mayWrite && off.firstDevice)
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

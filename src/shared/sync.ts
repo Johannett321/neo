@@ -26,6 +26,34 @@ export type SyncPhase =
   | 'syncing'
   | 'error'
 
+/**
+ * What the app is told about money, and all of it comes from the sync server's own
+ * columns rather than from Stripe — so a status line never waits on a third party.
+ *
+ * `billed: false` is a server that does not take payments: anybody's own copy. Then
+ * there is no plan, no trial and nothing to buy, and the pane says none of it.
+ */
+export interface SyncBilling {
+  billed: boolean
+  /** trial | active | past_due | canceled, or 'self' on a server that never charges. */
+  plan: string
+  /** Reading is never refused. This is whether new work can be *sent*. */
+  mayWrite: boolean
+  trialEndsAt: string
+  renewsAt: string
+  /** Subscribed, but stopping at the end of the period rather than renewing. */
+  endingAt: boolean
+  /** Whether Stripe already knows this account, which is what decides the button. */
+  hasCustomer: boolean
+  monthly: string
+  yearly: string
+}
+
+export const NO_BILLING: SyncBilling = {
+  billed: false, plan: 'self', mayWrite: true, trialEndsAt: '', renewsAt: '',
+  endingAt: false, hasCustomer: false, monthly: '', yearly: ''
+}
+
 export interface SyncStatus {
   phase: SyncPhase
   serverUrl: string
@@ -46,6 +74,14 @@ export interface SyncStatus {
   /** File storage, in bytes. Zero quota means the server has not said yet. */
   usedBytes: number
   quotaBytes: number
+  /**
+   * Whether this machine is the one setting the passphrase rather than typing an
+   * existing one. Answered by asking the server whether the account has any wrapped
+   * key material — the only honest way to know, and not the same question as "does
+   * this Mac have workspaces on it", which is what it used to guess from.
+   */
+  firstDevice: boolean
+  billing: SyncBilling
   workspaces: { workspaceId: string; name: string; remoteSeq: number }[]
 }
 

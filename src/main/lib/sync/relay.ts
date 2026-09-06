@@ -1,4 +1,5 @@
 import type { Batch } from '@shared/ops'
+import type { SyncBilling } from '@shared/sync'
 
 /**
  * The sync server, as this process sees it.
@@ -68,9 +69,33 @@ export class Relay {
     handle: string
     quotaBytes: number
     usedBytes: number
+    billing?: Partial<SyncBilling>
     workspaces: { workspaceId: string; head: number; batches: number }[]
   }> {
     return this.call('/v1/account')
+  }
+
+  /* --------------------------------------------------------------- money */
+
+  /**
+   * The prices, which are the one thing here the server has to ask Stripe for. Kept
+   * off `/v1/account` for that reason: this is read when somebody opens the settings
+   * pane, and that is a moment where waiting is allowed.
+   */
+  billing(): Promise<Partial<SyncBilling>> {
+    return this.call('/v1/billing')
+  }
+
+  /** A link, opened in the real browser. No card details ever come near this app. */
+  checkout(interval: 'monthly' | 'yearly'): Promise<{ url: string }> {
+    return this.call('/v1/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ interval })
+    })
+  }
+
+  portal(): Promise<{ url: string }> {
+    return this.call('/v1/billing/portal', { method: 'POST' })
   }
 
   keyMaterial(): Promise<{ keyMaterial: Record<string, string> }> {
@@ -141,20 +166,32 @@ export class Relay {
   }
 
   /**
-   * The live stream, as an async iterator over sequence numbers.
+   * The live stream: one connection for this device, for as long as the app is open.
    *
-   * The event says only that the stream has moved and how far — a client that hears
-   * it reads from its own cursor. That keeps the live path and the catch-up path the
-   * same code, so a dropped connection is not a special case, only a slower one.
+   * An event names a workspace and how far it has moved — never a batch. A client
+   * that hears one reads from its own cursor, so the live path and the catch-up path
+   * are the same code and a dropped connection is only a slower one.
+   *
+   * One connection rather than one per workspace, and that is not only tidiness: a
+   * workspace made on the *other* Mac cannot be subscribed to before it is known
+   * about, so per-workspace streams left exactly the case that matters most — a new
+   * workspace — waiting on the minute poll.
    */
-  async *stream(workspaceId: string, signal: AbortSignal): AsyncGenerator<number> {
-    const response = await fetch(this.url(`/v1/workspaces/${workspaceId}/stream`), {
+  async *stream(
+    signal: AbortSignal,
+    /** Called once the connection is actually up, which is not when the first event
+     *  arrives — that may be hours away, and the status line should not say the
+     *  stream is down for all of them. */
+    onOpen: () => void = () => {}
+  ): AsyncGenerator<{ workspaceId: string; seq: number }> {
+    const response = await fetch(this.url('/v1/stream'), {
       headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' },
       signal
     })
     if (!response.ok || !response.body) {
       throw new RelayError(response.status, 'The live stream could not be opened.')
     }
+    onOpen()
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -173,8 +210,13 @@ export class Relay {
         const data = event.split('\n').find((line) => line.startsWith('data:'))
         if (data) {
           try {
-            const parsed = JSON.parse(data.slice(5).trim()) as { seq?: number }
-            if (typeof parsed.seq === 'number') yield parsed.seq
+            const parsed = JSON.parse(data.slice(5).trim()) as {
+              workspaceId?: string
+              seq?: number
+            }
+            if (parsed.workspaceId && typeof parsed.seq === 'number') {
+              yield { workspaceId: parsed.workspaceId, seq: parsed.seq }
+            }
           } catch {
             // A malformed event is not worth ending a connection over: the next
             // poll reads from the cursor and catches up regardless.

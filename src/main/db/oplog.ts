@@ -94,6 +94,25 @@ export async function collect(write: LocalWrite): Promise<void> {
 }
 
 /**
+ * "This device just wrote something."
+ *
+ * The log does not know there is a network, and this is how it stays that way: a
+ * listener rather than a call. With nothing attached — Local — the set is empty and
+ * `commit()` ends where it always did. With the sync engine attached it is what turns
+ * a change on this Mac into a push in under a second instead of on the next minute's
+ * poll, which is most of what "near instant" actually means.
+ */
+type WriteListener = () => void
+const writeListeners = new Set<WriteListener>()
+
+export function onLocalWrite(listener: WriteListener): () => void {
+  writeListeners.add(listener)
+  return () => {
+    writeListeners.delete(listener)
+  }
+}
+
+/**
  * Ops are grouped by workspace on the way out, one batch each.
  *
  * A batch is what gets encrypted under a workspace key and appended to that
@@ -131,6 +150,17 @@ async function commit(pending: Pending): Promise<void> {
         JSON.stringify(ops)
       ]
     )
+  }
+
+  // After the rows are down, never before: a listener that pushed what it was told
+  // about would be reading a batch that is not there yet.
+  for (const listener of [...writeListeners]) {
+    try {
+      listener()
+    } catch {
+      // A transport that throws on being nudged must not fail the write that
+      // nudged it. The work is recorded; getting it off the machine can wait.
+    }
   }
 }
 

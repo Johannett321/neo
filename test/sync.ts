@@ -36,6 +36,16 @@ const ok = (label: string, cond: boolean, extra = ''): void => {
   if (!cond) process.exitCode = 1
 }
 
+/** Poll for something that is true a moment from now rather than immediately. */
+async function until(condition: () => Promise<boolean>, ms = 8_000): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (await condition()) return true
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  return false
+}
+
 const need = (name: string): string => {
   const value = process.env[name]
   if (!value) throw new Error(`${name} is not set`)
@@ -180,6 +190,26 @@ async function main(): Promise<void> {
     ok('pull: what arrived is recorded as having come from elsewhere',
        (echo[0]?.n ?? 0) > 0, `${echo[0]?.n} remote batches`)
     ok('pull: and is not queued to be sent back', (await engine.status()).pending === 0)
+
+    /* ------------------------------------------------------------ live */
+
+    /*
+     * The reason a change on the other Mac appears in about a second rather than on
+     * the next minute's poll. One connection per device, held open, carrying the
+     * workspace an event is about — so this asserts the whole path from `start()` to
+     * a socket the server is willing to keep.
+     *
+     * The poll underneath it is what makes syncing *work*; this is what makes it feel
+     * like one app on two machines, and it is exactly the part that fails silently.
+     */
+    await engine.start()
+    const listening = await until(() => engine.status().then((s) => s.live))
+    ok('pull: the live stream attaches, so a change elsewhere does not wait for the poll',
+       listening)
+
+    const money = (await engine.status()).billing
+    ok('pull: and the server said what this account is allowed to do',
+       money.mayWrite, JSON.stringify(money))
   }
 
   await engine.stop()
