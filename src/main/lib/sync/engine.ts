@@ -63,6 +63,7 @@ let phase: SyncStatus['phase'] = 'off'
 let lastError = ''
 let lastSyncedAt = ''
 let storage = { uploaded: 0, overQuota: 0, waiting: 0 }
+let space = { used: 0, quota: 0 }
 
 /* ------------------------------------------------------------------ *
  * Connecting
@@ -236,6 +237,7 @@ async function push(client: Relay): Promise<void> {
 
 async function pullAll(client: Relay): Promise<number> {
   const account = await client.account()
+  space = { used: account.usedBytes, quota: account.quotaBytes }
   let applied = 0
   for (const workspace of account.workspaces) {
     applied += await pull(client, workspace.workspaceId)
@@ -349,7 +351,7 @@ export async function status(): Promise<SyncStatus> {
     return {
       phase: 'off', serverUrl: '', accountHandle: '', deviceName: '', error: '',
       lastSyncedAt: '', pending: 0, live: false, filesWaiting: 0, filesOverQuota: 0,
-      workspaces: []
+      usedBytes: 0, quotaBytes: 0, workspaces: []
     }
   }
 
@@ -370,6 +372,8 @@ export async function status(): Promise<SyncStatus> {
     live: streams.size > 0 && !stopping,
     filesWaiting: storage.waiting,
     filesOverQuota: storage.overQuota,
+    usedBytes: space.used,
+    quotaBytes: space.quota,
     workspaces: workspaces.map((w) => ({
       workspaceId: w.id, name: w.name, remoteSeq: Number(w.remote_seq)
     }))

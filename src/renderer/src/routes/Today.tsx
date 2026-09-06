@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon'
 import { TaskDialog } from '@/components/TaskDialog'
 import { TaskList } from '@/components/TaskRow'
 import { Pending } from '@/components/PageTransition'
+import { SyncNudge } from '@/components/SyncNudge'
 import { TodayHero } from '@/components/today/TodayHero'
 import { NewProjectModal } from './Projects'
 
@@ -51,6 +52,8 @@ export function TodayPage(): React.JSX.Element {
         today={data.today}
         stats={unstarted ? undefined : data.stats}
       />
+
+      <SyncNudge />
 
       {unstarted ? (
         /*

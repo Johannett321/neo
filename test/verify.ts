@@ -11,6 +11,7 @@ import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
+import { registerSyncHandlers } from '../src/main/ipc/sync'
 import { registerWeatherHandlers } from '../src/main/ipc/weather'
 import { registerUpdateHandlers } from '../src/main/ipc/updates'
 import { registerChatHandlers } from '../src/main/ipc/chat'
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
   registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerSyncHandlers()
   registerWeatherHandlers()
   registerUpdateHandlers()
   registerMcpHandlers()
@@ -2479,6 +2481,31 @@ async function main(): Promise<void> {
 
   ok('a passphrase too short to be worth anything is refused',
      passphraseComplaint('short') !== null && passphraseComplaint('a passphrase worth typing') === null)
+
+  /* ------------------------------------------------------------------ *
+   * The one time syncing is mentioned
+   * ------------------------------------------------------------------ */
+
+  // Not in onboarding, and not to somebody who has barely started: the offer only
+  // makes sense once there is work that would be worth losing.
+  ok('a fresh install is not nudged about syncing',
+     (await call('sync:nudge')).show === false)
+
+  await exec(`UPDATE workspace SET created_at = now() - interval '30 days'`)
+  ok('one that has been in use, with work in it, is',
+     (await call('sync:nudge')).show === true)
+
+  await call('sync:dismissNudge')
+  ok('and having answered once, it is never asked again',
+     (await call('sync:nudge')).show === false)
+
+  ok('the answer survives a restart, because it is written down rather than remembered',
+     (await q<{ value: string }>(
+       `SELECT value FROM setting WHERE key = 'syncNudgeShownAt'`)).length === 1)
+
+  ok('syncing is off, and says so, until a server is named',
+     (await call('sync:status')).phase === 'off' &&
+     (await call('sync:status')).serverUrl === '')
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

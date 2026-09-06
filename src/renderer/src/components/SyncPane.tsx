@@ -190,7 +190,21 @@ export function SyncPane(): React.JSX.Element {
           label="Last synced"
           value={status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleTimeString() : 'Not yet'}
         />
+        {status.quotaBytes > 0 ? (
+          <Row
+            label="Files"
+            value={`${size(status.usedBytes)} of ${size(status.quotaBytes)}`}
+          />
+        ) : null}
       </div>
+
+      {status.filesOverQuota > 0 ? (
+        <p className="text-sm text-warning">
+          {status.filesOverQuota} file{status.filesOverQuota === 1 ? '' : 's'} could not
+          be sent — this account is out of space. Everything written stays here and keeps
+          syncing; only the files are waiting.
+        </p>
+      ) : null}
 
       {status.workspaces.length > 0 ? (
         <div className="flex flex-col gap-1">
@@ -249,6 +263,19 @@ function Line({ status }: { status: SyncStatus }): React.JSX.Element {
       <span className={status.phase === 'error' ? 'text-error' : ''}>{words}</span>
     </div>
   )
+}
+
+/** Bytes, said the way a person would say them. */
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
 function Row({ label, value }: { label: string; value: string }): React.JSX.Element {

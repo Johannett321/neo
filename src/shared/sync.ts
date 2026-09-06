@@ -43,6 +43,9 @@ export interface SyncStatus {
   filesWaiting: number
   /** Files this device could not send because the account is out of space. */
   filesOverQuota: number
+  /** File storage, in bytes. Zero quota means the server has not said yet. */
+  usedBytes: number
+  quotaBytes: number
   workspaces: { workspaceId: string; name: string; remoteSeq: number }[]
 }
 
@@ -54,7 +57,18 @@ export interface SyncConnect {
   deviceName: string
 }
 
-export const DEFAULT_SYNC_SERVER = 'https://sync.neo.svartdal.com'
+export const DEFAULT_SYNC_SERVER = 'https://neo-sync-production.up.railway.app'
+
+/**
+ * When Neo mentions syncing to somebody who has never been offered it.
+ *
+ * Not in onboarding: asking somebody to value syncing before they have made a
+ * workspace is asking them to price something they have not used. And a real signal
+ * rather than a timer — a fortnight of use *and* enough work to be worth losing —
+ * because "you have had this a while" is not a reason to want a second copy of it.
+ */
+export const NUDGE_AFTER_DAYS = 14
+export const NUDGE_AFTER_PROJECTS = 3
 
 /** Long enough that a flaky network is not a spinner, short enough to feel live. */
 export const POLL_INTERVAL_MS = 60_000
