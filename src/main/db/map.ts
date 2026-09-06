@@ -1,7 +1,7 @@
 import type {
   Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
-  Project, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
+  Project, ProjectCollapsible, ProjectCollapsibleView, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
   TaskView, TranscriptCue, Workspace
 } from '@shared/types'
 import { EMPTY_RECAP } from '@shared/types'
@@ -46,6 +46,7 @@ export const mapProject = (r: Row, icon: string | null = null): Project => ({
   deadline: r.deadline ?? null,
   status: r.status as ProjectStatus,
   folderId: r.folder_id ?? null,
+  collapsibleId: r.collapsible_id ?? null,
   isPinned: r.is_pinned,
   lastOpenedAt: isoOrNull(r.last_opened_at),
   previousOpenedAt: isoOrNull(r.previous_opened_at),
@@ -69,6 +70,21 @@ export const mapFolderView = (r: Row): ProjectFolderView => ({
   depth: r.depth ?? 0,
   projectCount: r.project_count ?? 0,
   folderCount: r.folder_count ?? 0
+})
+
+export const mapCollapsible = (r: Row): ProjectCollapsible => ({
+  id: r.id,
+  workspaceId: r.workspace_id,
+  folderId: r.folder_id ?? null,
+  name: r.name,
+  sortOrder: r.sort_order,
+  isCollapsed: r.is_collapsed,
+  createdAt: iso(r.created_at)
+})
+
+export const mapCollapsibleView = (r: Row): ProjectCollapsibleView => ({
+  ...mapCollapsible(r),
+  projectCount: r.project_count ?? 0
 })
 
 export const mapColumn = (r: Row): BoardColumn => ({

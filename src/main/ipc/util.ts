@@ -100,10 +100,17 @@ export async function upsert<R>(
   return row
 }
 
-/** Apply an explicit ordering to a set of rows in one statement. */
+/**
+ * Apply an explicit ordering to a set of rows in one statement.
+ *
+ * Numbered from one rather than zero, everywhere, so that zero is left free to mean
+ * "nobody has ever said where this goes". Project cards read it that way — an
+ * unplaced one falls back to the order the page always used — and nothing else cares
+ * which integer it got, only that its neighbours got the ones either side.
+ */
 export async function reorder(table: string, ids: string[]): Promise<void> {
   if (ids.length === 0) return
-  const values = ids.map((_, i) => `($${i + 1}::uuid, ${i})`).join(', ')
+  const values = ids.map((_, i) => `($${i + 1}::uuid, ${i + 1})`).join(', ')
   await q1(
     `UPDATE ${table} SET sort_order = v.ord
      FROM (VALUES ${values}) AS v(id, ord)

@@ -1,7 +1,8 @@
 import type {
   Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
-  PersonProject, Project, ProjectDetail, ProjectFolder, ProjectFolderView, ProjectStatus,
+  PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
+  ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
   SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, Workspace
 } from './types'
@@ -50,6 +51,12 @@ export interface ApiMap {
   'project:save': { in: Draft<Project>; out: Project }
   'project:setArchived': { in: { id: string; archived: boolean }; out: Project }
   'project:delete': { in: { id: string }; out: void }
+  /**
+   * Arrange the cards. The ids are one folder's worth of projects in the order they
+   * are to be drawn — the whole visible set, not the one that moved, because a
+   * position only means anything relative to its neighbours.
+   */
+  'project:reorder': { in: { ids: string[] }; out: void }
 
   /**
    * Every folder in the workspace, depth-first in the order they are shown, each
@@ -72,6 +79,25 @@ export interface ApiMap {
   'folder:delete': { in: { id: string }; out: void }
   /** Order the folders that share a parent. */
   'folder:reorder': { in: { ids: string[] }; out: void }
+
+  /**
+   * Every collapsible in the workspace, each carrying the level it is drawn at and how
+   * many projects are in it. Flat and unnested on purpose: a collapsible holds project
+   * cards and never another collapsible — a band you have to open to find another band
+   * is a folder, and folders are already here.
+   */
+  'collapsible:list': { in: Scope; out: ProjectCollapsibleView[] }
+  /**
+   * Create one, rename it, or fold it shut. The level it sits at is fixed when it is
+   * made: every project in it is at that level too, so moving the band would strand
+   * its cards on a page it is no longer drawn on.
+   */
+  'collapsible:save': { in: Draft<ProjectCollapsible>; out: ProjectCollapsible }
+  /**
+   * Delete the band and nothing else. Its projects come back up to the loose cards
+   * above it, so ungrouping is never a way to lose work.
+   */
+  'collapsible:delete': { in: { id: string }; out: void }
 
 
   'task:list': { in: TaskFilter | void; out: import('./types').TaskView[] }

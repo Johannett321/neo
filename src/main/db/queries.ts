@@ -77,10 +77,23 @@ async function toSummary(r: any): Promise<ProjectSummary> {
   }
 }
 
+/**
+ * The order a grid of projects is drawn in.
+ *
+ * `sort_order` comes first and pinning second, which looks the wrong way round until
+ * you drag a card: a hand-placed order that a pin could override would mean cards that
+ * snap back to where they were the moment you let go of them. Zero is "never placed",
+ * so a workspace nobody has arranged sorts entirely on the two clauses behind it —
+ * pinned first, then whatever has moved most recently — exactly as it always did.
+ * Dragging one card in a folder numbers all of them, and from then on that folder is
+ * in the order you put it in.
+ */
+const PROJECT_ORDER = 'p.sort_order, p.is_pinned DESC, p.last_activity_at DESC'
+
 export async function projectSummaries(
   where = '',
   params: unknown[] = [],
-  orderBy = 'p.is_pinned DESC, p.last_activity_at DESC'
+  orderBy = PROJECT_ORDER
 ): Promise<ProjectSummary[]> {
   const sql = `${PROJECT_SELECT} ${where ? `WHERE ${where}` : ''} ORDER BY ${orderBy}`
   const rows = await q<any>(sql, [today(), ...params])

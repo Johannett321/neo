@@ -196,6 +196,13 @@ async function main(): Promise<void> {
   ok('worklanes are dropped on upgrade', laneRelics.length === 0, laneRelics.map((r) => r.name).join(', '))
   ok('and their items survive it', tasks.length === 2, tasks.map((t) => t.title).join(', '))
 
+  // Arranging the cards by hand arrived long after the grid, and deliberately without a
+  // backfill: zero is "never placed", so an upgraded database draws in exactly the
+  // order it drew in before anyone had the option.
+  const places = await q<{ sort_order: number }>('SELECT sort_order FROM project')
+  ok('projects gain a place in the grid, unset so nothing about the order changes',
+     places.length === 1 && places[0]?.sort_order === 0, JSON.stringify(places))
+
   const colors = await q<{ color: string }>('SELECT color FROM project')
   ok('projects gain a colour column, empty so they inherit the workspace',
      colors.length === 1 && colors[0]?.color === '', JSON.stringify(colors))
@@ -367,6 +374,28 @@ async function main(): Promise<void> {
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM project WHERE id = $1', [oldProject.id]))[0]?.n === 1 &&
      (await q<{ folder_id: string | null }>('SELECT folder_id FROM project WHERE id = $1', [oldProject.id]))[0]
        ?.folder_id === null)
+
+  /*
+   * Collapsibles arrived after folders did, and land the same way round: the table in
+   * the DDL, the column that points at it in a migration below every ALTER it needs.
+   */
+  const [madeBand] = await q<{ id: string }>(
+    `INSERT INTO project_collapsible (workspace_id, name) VALUES ($1, 'Later') RETURNING id`,
+    [oldProject.workspace_id]
+  )
+  await q('UPDATE project SET collapsible_id = $2 WHERE id = $1', [oldProject.id, madeBand.id])
+  ok('a project that predates collapsibles can be put in one',
+     (await q<{ collapsible_id: string }>(
+       'SELECT collapsible_id FROM project WHERE id = $1', [oldProject.id]
+     ))[0]?.collapsible_id === madeBand.id)
+
+  // And losing the band must cost the grouping, never the project.
+  await q('DELETE FROM project_collapsible WHERE id = $1', [madeBand.id])
+  ok('and losing the collapsible ungroups the project instead of deleting it',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM project WHERE id = $1', [oldProject.id]))[0]?.n === 1 &&
+     (await q<{ collapsible_id: string | null }>(
+       'SELECT collapsible_id FROM project WHERE id = $1', [oldProject.id]
+     ))[0]?.collapsible_id === null)
 
   // An existing database has workspaces but no onboarding marker, which is exactly
   // the pair the renderer reads: it is the *absence of any workspace, ever* that says

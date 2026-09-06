@@ -1,10 +1,11 @@
 import type {
-  Project, ProjectDetail, ProjectFolder, ProjectFolderView, ProjectStatus, ReentryBrief
+  Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
+  ProjectFolderView, ProjectStatus, ReentryBrief
 } from '@shared/types'
 import { daysSince, exec, q, q1 } from '../db/client'
 import {
-  mapActivity, mapCast, mapColumn, mapDecision, mapFolder, mapFolderView, mapJournal, mapLink,
-  mapNote, mapProject
+  mapActivity, mapCast, mapCollapsible, mapCollapsibleView, mapColumn, mapDecision, mapFolder,
+  mapFolderView, mapJournal, mapLink, mapNote, mapProject
 } from '../db/map'
 import { meetingViews, projectSummaries, projectSummary, taskViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
@@ -85,6 +86,33 @@ async function checkFolder(folderId: unknown, workspaceId: string): Promise<void
   if (!folder) throw new Error('That folder no longer exists.')
   if (folder.workspace_id !== workspaceId) {
     throw new Error('A project cannot be filed in another workspace\u2019s folder.')
+  }
+}
+
+/**
+ * The collapsible a project is being put into, checked before it is written.
+ *
+ * Two things have to hold, and the second is the one that keeps grouping from arguing
+ * with filing: the band must be in this workspace, and it must be drawn at the same
+ * level the project is filed at. A card in a band on another folder's page would be
+ * both filed here and grouped there, and neither page could draw it honestly.
+ */
+async function checkCollapsible(
+  collapsibleId: unknown,
+  workspaceId: string,
+  folderId: string | null
+): Promise<void> {
+  if (collapsibleId === null || collapsibleId === undefined) return
+  const band = await q1<any>(
+    'SELECT workspace_id, folder_id FROM project_collapsible WHERE id = $1',
+    [collapsibleId]
+  )
+  if (!band) throw new Error('That collapsible no longer exists.')
+  if (band.workspace_id !== workspaceId) {
+    throw new Error('A project cannot be grouped in another workspace\u2019s collapsible.')
+  }
+  if ((band.folder_id ?? null) !== folderId) {
+    throw new Error('A collapsible only holds projects filed at the level it is drawn at.')
   }
 }
 
@@ -210,15 +238,47 @@ export function registerProjectHandlers(): void {
   handle('project:save', async (draft) => {
     const fields = pick(draft as Partial<Project>, [
       'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'folderId',
-      'isPinned', 'createdAt'
+      'collapsibleId', 'isPinned', 'createdAt'
     ])
     if (fields.createdAt !== undefined) fields.createdAt = startedOn(String(fields.createdAt))
 
-    if (fields.folderId !== undefined) {
-      const workspaceId =
-        (fields.workspaceId as string | undefined) ??
-        (await q1<any>('SELECT workspace_id FROM project WHERE id = $1', [draft.id]))?.workspace_id
-      await checkFolder(fields.folderId, String(workspaceId ?? ''))
+    if (fields.folderId !== undefined || fields.collapsibleId !== undefined) {
+      const current = draft.id
+        ? await q1<any>(
+            'SELECT workspace_id, folder_id, collapsible_id FROM project WHERE id = $1',
+            [draft.id]
+          )
+        : null
+      const workspaceId = String((fields.workspaceId as string | undefined) ?? current?.workspace_id ?? '')
+
+      if (fields.folderId !== undefined) {
+        await checkFolder(fields.folderId, workspaceId)
+        /*
+         * A card carries no place with it into a folder it has just been filed in. Its
+         * old number described where it sat among its old neighbours and means nothing
+         * beside its new ones, so it goes back to zero — unplaced, and therefore at the
+         * top of wherever it has landed, which is also where you are looking for it
+         * immediately after dropping it there.
+         *
+         * The band it was in goes the same way and for the same reason: a collapsible
+         * is drawn on one folder's page, and the card has just left that page. Unless
+         * the caller named one in the same breath, in which case it is answering the
+         * question itself.
+         */
+        if ((current?.folder_id ?? null) !== (fields.folderId ?? null)) {
+          fields.sortOrder = 0
+          if (fields.collapsibleId === undefined) fields.collapsibleId = null
+        }
+      }
+
+      if (fields.collapsibleId !== undefined) {
+        const folderId = ((fields.folderId !== undefined ? fields.folderId : current?.folder_id) ??
+          null) as string | null
+        await checkCollapsible(fields.collapsibleId, workspaceId, folderId)
+        // Moving between bands is filing too, so the same rule applies: the number
+        // described neighbours the card no longer has.
+        if ((current?.collapsible_id ?? null) !== (fields.collapsibleId ?? null)) fields.sortOrder = 0
+      }
     }
 
     // Read before the write, so the log only speaks when the state actually moved —
@@ -265,6 +325,17 @@ export function registerProjectHandlers(): void {
     const project = mapProject(row, await readIcon(row.icon_path ?? ''))
     await logActivity(project.id, 'state_updated', archived ? 'Archived' : 'Restored from the archive')
     return project
+  })
+
+  /*
+   * Arranging the cards writes nothing to the log and rewrites no mirror. Where a card
+   * sits in the grid is not a fact about the project — it is the same kind of thing as
+   * which folder it is filed in, and less than that: nothing derives from it, nothing
+   * on disk mentions it, and a re-entry brief that said "you moved this card left"
+   * would be the log describing the furniture.
+   */
+  handle('project:reorder', async ({ ids }) => {
+    await reorder('project', ids)
   })
 
   handle('project:delete', async ({ id }) => {
@@ -382,6 +453,16 @@ export function registerProjectHandlers(): void {
       [id, folder.parent_id]
     )
     await exec('UPDATE project_folder SET parent_id = $2 WHERE parent_id = $1', [id, folder.parent_id])
+    /*
+     * The bands drawn on its page come up with the cards that are in them. They have to
+     * travel together: a collapsible only ever holds projects filed at the level it is
+     * drawn at, and lifting one side of that without the other would leave a card
+     * grouped on a page it is no longer on.
+     */
+    await exec(
+      'UPDATE project_collapsible SET folder_id = $2 WHERE folder_id = $1',
+      [id, folder.parent_id]
+    )
     await exec('DELETE FROM project_folder WHERE id = $1', [id])
     // Where a project is filed is part of the path it is mirrored to.
     for (const project of moved) await mirrorProject(project.id)
@@ -389,6 +470,83 @@ export function registerProjectHandlers(): void {
 
   handle('folder:reorder', async ({ ids }) => {
     await reorder('project_folder', ids)
+  })
+
+  /*
+   * ------------------------------------------------------------- collapsibles
+   *
+   * Grouping in place: a named band of cards, below the loose ones, on the page they
+   * are already on. Filing without going anywhere, which is why none of this logs
+   * activity and none of it touches the Markdown mirror — where a card is drawn is not
+   * a fact about the project, exactly as its position in the grid is not.
+   */
+
+  handle('collapsible:list', async ({ workspaceId }) => {
+    const rows = await q<any>(
+      `SELECT c.*, COALESCE(n.project_count, 0) AS project_count
+       FROM project_collapsible c
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS project_count
+         FROM project p
+         WHERE p.collapsible_id = c.id AND p.archived_at IS NULL
+       ) n ON true
+       WHERE c.workspace_id = $1
+       ORDER BY c.sort_order, lower(c.name)`,
+      [workspaceId]
+    )
+    return rows.map(mapCollapsibleView) as ProjectCollapsibleView[]
+  })
+
+  handle('collapsible:save', async (draft) => {
+    const fields = pick(draft as Partial<ProjectCollapsible>, [
+      'workspaceId', 'folderId', 'name', 'sortOrder', 'isCollapsed'
+    ])
+    if (fields.name !== undefined) {
+      const name = String(fields.name).trim()
+      if (!name) throw new Error('A collapsible needs a name.')
+      fields.name = name
+    }
+
+    const existing = draft.id
+      ? await q1<any>('SELECT * FROM project_collapsible WHERE id = $1', [draft.id])
+      : null
+    if (draft.id && !existing) throw new Error('That collapsible no longer exists.')
+    const workspaceId = (fields.workspaceId as string | undefined) ?? existing?.workspace_id
+    if (!workspaceId) throw new Error('A collapsible belongs to a workspace.')
+    await checkFolder(fields.folderId, String(workspaceId))
+
+    /*
+     * The level is fixed when it is made. Every project in a band is filed at the level
+     * the band is drawn at, so moving the band alone would strand its cards; there is
+     * no gesture for it, and refusing here is what keeps that true rather than leaving
+     * a channel that quietly breaks the invariant everything else relies on.
+     */
+    if (existing && fields.folderId !== undefined &&
+        (existing.folder_id ?? null) !== (fields.folderId ?? null)) {
+      throw new Error('A collapsible stays on the page it was made on.')
+    }
+
+    // New ones go to the end of the level they are made in, under the bands already there.
+    if (!draft.id && fields.sortOrder === undefined) {
+      const max = await q1<{ n: number }>(
+        `SELECT COALESCE(max(sort_order), 0) + 1 AS n FROM project_collapsible
+         WHERE workspace_id = $1 AND folder_id IS NOT DISTINCT FROM $2`,
+        [workspaceId, fields.folderId ?? null]
+      )
+      fields.sortOrder = max?.n ?? 1
+    }
+
+    return mapCollapsible(await upsert<any>('project_collapsible', fields, draft.id))
+  })
+
+  handle('collapsible:delete', async ({ id }) => {
+    /*
+     * The band goes and the cards stay, back among the loose ones above it — the same
+     * bargain a folder makes. Nothing to confirm and nothing to mirror: the projects
+     * themselves have not moved anywhere on disk.
+     */
+    await exec('UPDATE project SET collapsible_id = NULL WHERE collapsible_id = $1', [id])
+    await exec('DELETE FROM project_collapsible WHERE id = $1', [id])
   })
 
   handle('column:save', async (draft) => {

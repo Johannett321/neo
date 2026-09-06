@@ -134,6 +134,31 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   Back walks up. That model is chosen for the person with no folders at all: with none,
   the page must be exactly the grid of project cards it was before the feature existed.
   Do not add chrome that only makes sense once folders are in use.
+- **A collapsible is filing that stays on the page.** `project_collapsible` (workspace
+  scoped, its `folder_id` naming the level it is drawn at) is a named band under the
+  loose cards, and `project.collapsible_id` points into it. It is a second concept rather
+  than a flag on a folder because the two answer different questions: a folder is
+  somewhere you *go* — clicking it replaces the page — and a collapsible is somewhere
+  things *are*, still on screen until you fold it shut. The two therefore compose: a
+  project is filed in a folder and grouped in a band on that folder's page. **A band and
+  the cards in it are always at the same level**, and that is the one invariant —
+  `checkCollapsible()` enforces it on every write, `project:save` clears
+  `collapsible_id` whenever `folder_id` changes, `folder:delete` lifts the bands along
+  with the cards in them, and `collapsible:save` refuses to move a band to another page
+  rather than stranding what is in it. Otherwise it is furniture, exactly like
+  `sort_order`: nothing derives from it, it logs no activity, and it never reaches the
+  Markdown mirror. With no band at this level the page draws precisely the grid it drew
+  before the feature existed — no rule, no heading, no drop strip.
+- **Arranging the cards is filing too.** `project.sort_order` is what a drag between two
+  project cards writes, through `project:reorder` — the whole visible set of one folder,
+  because a position only means anything among its neighbours. **Zero means "never placed
+  by hand"**, which is why `reorder()` numbers from one and why there is no backfill: an
+  untouched grid sorts on the clauses behind it and draws exactly as it always did.
+  `PROJECT_ORDER` in `db/queries.ts` therefore puts `sort_order` *before* `is_pinned` —
+  the other way round and a pinned card would snap back the moment you dropped it
+  somewhere else. Filing a project into a different folder resets it to zero, since its
+  old number described old neighbours. It logs no activity and rewrites no mirror: where
+  a card sits is not a fact about the project.
 - **Every mutation logs activity.** `logActivity()` inserts a row and bumps
   `last_activity_at`, which is what makes the re-entry brief possible. Handlers that
   change project content also call `mirrorProject()` to rewrite the Markdown mirror.
@@ -144,7 +169,11 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   and almost every write moves a derived number somewhere else.
 - **One right-click system.** `lib/contextMenu.tsx` — call sites describe items;
   positioning, edge-flipping, dismissal and the confirmation step for destructive actions
-  are handled centrally. Do not reimplement a confirm at a call site.
+  are handled centrally. Do not reimplement a confirm at a call site. An item carrying
+  `items` opens a submenu beside it, **one level deep and no further** — worth it when
+  several entries are obviously one question (*New*), and not worth it the moment you
+  have to hunt through a tree. The projects page hangs one off its own background, which
+  is why its wrapper has a floor under its height and the dialogs sit outside it.
 - **The introduction is shown once, and only to a new install.** `settings.onboardedAt`
   is written when the first-run flow finishes, and `Gate` in `App.tsx` shows
   `routes/Welcome.tsx` only when that is empty *and* there has never been a workspace,

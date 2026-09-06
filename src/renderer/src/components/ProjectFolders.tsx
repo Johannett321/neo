@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import type { ProjectFolderView, ProjectSummary } from '@shared/types'
+import type { ProjectFolderView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
 import { branchIds } from '@/lib/folders'
 import { plural } from '@/lib/format'
 import { Icon } from './Icon'
-import { ProjectCard } from './ProjectCard'
 
 /**
  * Folders on the projects page.
@@ -152,49 +151,6 @@ export function FolderCard({
       </span>
       <Icon name="chevronRight" size={14} className="shrink-0 text-base-content/25" />
     </button>
-  )
-}
-
-/**
- * A card you pick up.
- *
- * The card inside is a link with its own dragging turned off, so this wrapper is the
- * drag source and the browser's drag image is a picture of the card itself — the thing
- * you grabbed follows the pointer, rather than a ghost of a URL.
- *
- * The card is faded *on the next frame* rather than immediately, and that is not a
- * detail: the drag image is snapshotted at the end of this event, so styling the
- * element now would put the fade into the picture as well and leave a ghost you can
- * barely see. One frame later the snapshot has already been taken, and all that is
- * left is the gap the card came out of.
- */
-export function DraggableCard({
-  project,
-  onDragged
-}: {
-  project: ProjectSummary
-  onDragged: (dragged: Dragged | null) => void
-}): React.JSX.Element {
-  const [lifted, setLifted] = useState(false)
-
-  return (
-    <div
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move'
-        onDragged({ kind: 'project', id: project.id })
-        requestAnimationFrame(() => setLifted(true))
-      }}
-      onDragEnd={() => {
-        setLifted(false)
-        onDragged(null)
-      }}
-      className={`cursor-grab transition active:cursor-grabbing ${
-        lifted ? 'scale-[0.98] opacity-40' : ''
-      }`}
-    >
-      <ProjectCard project={project} />
-    </div>
   )
 }
 

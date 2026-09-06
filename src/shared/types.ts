@@ -92,6 +92,44 @@ export interface ProjectFolder {
   createdAt: string
 }
 
+/**
+ * A named band of project cards that folds away, on the page they are already on.
+ *
+ * The other half of grouping, and deliberately not a folder. A folder is somewhere you
+ * *go*: clicking it replaces the page with what is filed inside it. A collapsible is
+ * somewhere things *are*: it sits under the loose cards at the level you are looking
+ * at, named, with its projects still on the screen until you fold it shut. Which one
+ * you want depends on whether you still need to see the work — filing it away and
+ * putting it below the fold are different answers to different questions, so they are
+ * different things rather than one thing with a flag.
+ *
+ * It is furniture, like `Project.sortOrder` and for the same reason: nothing in the app
+ * reads it back, nothing derives from it, and it never reaches the Markdown mirror. A
+ * collapsible that has gone stale costs you a card in the wrong band.
+ *
+ * `folderId` is the level it lives at — null at the top, otherwise the folder it is
+ * drawn in — and it does not move once made. Every project in it is at that same level,
+ * which is what keeps the two ways of grouping from arguing: filing a card elsewhere
+ * takes it out of its band, because the band was somewhere else.
+ */
+export interface ProjectCollapsible {
+  id: string
+  workspaceId: string
+  /** Null at the top level; otherwise the folder whose page it is drawn on. */
+  folderId: string | null
+  name: string
+  sortOrder: number
+  /** Folded shut. Remembered, because the point of folding is that it stays folded. */
+  isCollapsed: boolean
+  createdAt: string
+}
+
+/** A collapsible with what is in it counted — what the header shows when it is shut. */
+export interface ProjectCollapsibleView extends ProjectCollapsible {
+  /** Projects in it, not counting archived ones. */
+  projectCount: number
+}
+
 /** A folder with its place in the tree worked out — what a list view needs. */
 export interface ProjectFolderView extends ProjectFolder {
   /** Names from the top down, this folder last: `["Clients", "Acme"]`. */
@@ -127,6 +165,13 @@ export interface Project {
    * because of it.
    */
   folderId: string | null
+  /**
+   * The collapsible band it is drawn in, or null for the loose cards above them all.
+   * Independent of `folderId`: a project is filed in a folder and grouped in a band on
+   * that folder's page. Filing it somewhere else clears this, since the band it was in
+   * belongs to the level it left.
+   */
+  collapsibleId: string | null
   isPinned: boolean
   lastOpenedAt: string | null
   previousOpenedAt: string | null

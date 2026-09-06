@@ -31,6 +31,20 @@ CREATE TABLE IF NOT EXISTS project_folder (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- A named band of cards on the page you are already on, which folds shut. The other
+-- half of grouping and deliberately not a folder: a folder is somewhere you go, a
+-- collapsible is somewhere things are. Its folder_id is the level it is drawn at, null
+-- at the top; it holds nothing but a name and never reaches the Markdown mirror.
+CREATE TABLE IF NOT EXISTS project_collapsible (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  folder_id    uuid REFERENCES project_folder(id) ON DELETE CASCADE,
+  name         text NOT NULL,
+  sort_order   integer NOT NULL DEFAULT 0,
+  is_collapsed boolean NOT NULL DEFAULT false,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS project (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id       uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
@@ -41,6 +55,15 @@ CREATE TABLE IF NOT EXISTS project (
   deadline           text,
   status             text NOT NULL DEFAULT 'active',
   folder_id          uuid REFERENCES project_folder(id) ON DELETE SET NULL,
+  -- Which band on that page it sits in, if any. SET NULL for the same reason folder_id
+  -- is: losing the grouping must never be a way to lose the project.
+  collapsible_id     uuid REFERENCES project_collapsible(id) ON DELETE SET NULL,
+  -- Where the card sits in the grid, once you have said. Zero is the whole of the
+  -- default and means "never placed by hand": a project at zero is ordered the way it
+  -- always was, by pin and then by what has happened lately, and only the ones you
+  -- have actually dragged carry a number. Every hand-set order therefore starts at 1
+  -- (see reorder() in ipc/util.ts), which keeps zero free to mean nothing at all.
+  sort_order         integer NOT NULL DEFAULT 0,
   is_pinned          boolean NOT NULL DEFAULT false,
   last_opened_at     timestamptz,
   previous_opened_at timestamptz,
@@ -402,6 +425,14 @@ export const MIGRATIONS: string[] = [
   // Filing, added later than the projects it files. SET NULL rather than CASCADE:
   // losing a folder must never be a way to lose a project.
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES project_folder(id) ON DELETE SET NULL`,
+  // Arranging the cards by hand, added long after the grid. It needs no backfill and
+  // deliberately has none: zero means "never placed", every project already has it,
+  // and a database that has just been upgraded therefore draws in exactly the order it
+  // drew in before — until the first card is dragged.
+  `ALTER TABLE project ADD COLUMN IF NOT EXISTS sort_order integer NOT NULL DEFAULT 0`,
+  // Grouping in place, added after the folders it sits beside. The table itself is in
+  // the DDL above and therefore already exists by the time this runs.
+  `ALTER TABLE project ADD COLUMN IF NOT EXISTS collapsible_id uuid REFERENCES project_collapsible(id) ON DELETE SET NULL`,
   // The where-we-are block is gone: a snapshot you have to keep rewriting by hand is
   // a status field wearing a different hat, and the log already keeps the history.
   // Dropping the columns is deliberate and irreversible — the text in them goes.
@@ -512,7 +543,10 @@ export const MIGRATIONS: string[] = [
   // 4. Indexes last, since they are the most likely to reference a migrated column.
   `CREATE INDEX IF NOT EXISTS idx_person_workspace ON person (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_project_folder ON project (folder_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_project_order ON project (workspace_id, folder_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_folder_parent ON project_folder (workspace_id, parent_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_project_collapsible ON project (collapsible_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_collapsible_level ON project_collapsible (workspace_id, folder_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`
 ]

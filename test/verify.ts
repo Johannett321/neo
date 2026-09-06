@@ -222,6 +222,135 @@ async function main(): Promise<void> {
      (await call('project:list', { workspaceId: dayJob })).some((p: any) => p.id === spare.id))
   await call('project:delete', { id: spare.id })
 
+  /* -------------------------------------------------------------- collapsibles */
+
+  /*
+   * The other half of grouping: a named band on the page you are already on, which
+   * folds shut rather than taking you somewhere. It is furniture, like the order of the
+   * cards — nothing derives from it and nothing reaches the mirror — but one thing has
+   * to hold or the two ways of grouping start disagreeing about where a card is: a band
+   * is drawn at one level and holds only projects filed at that level.
+   */
+  ok('a workspace starts with no collapsibles',
+     (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
+
+  const later = await call('collapsible:save', { workspaceId: dayJob, name: 'Later' })
+  ok('a collapsible needs a name',
+     await threw(() => call('collapsible:save', { workspaceId: dayJob, name: '  ' }), 'needs a name'))
+  ok('collapsibles are fenced to their workspace like everything else',
+     (await call('collapsible:list', { workspaceId: own })).length === 0)
+
+  const grouped = await call('project:save', { workspaceId: dayJob, name: 'In a band', status: 'active' })
+  const groupedNow = async (): Promise<any> =>
+    (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === grouped.id)
+  await call('project:save', { id: grouped.id, collapsibleId: later.id })
+  ok('a project can be put in a collapsible', (await groupedNow()).collapsibleId === later.id)
+  ok('and the band counts what is in it',
+     (await call('collapsible:list', { workspaceId: dayJob }))
+       .find((c: any) => c.id === later.id).projectCount === 1)
+  ok('folding one shut is remembered',
+     (await call('collapsible:save', { id: later.id, isCollapsed: true })).isCollapsed)
+
+  // The invariant the whole feature rests on, from both ends.
+  const deepBand = await call('collapsible:save', { workspaceId: dayJob, name: 'Deep', folderId: acme.id })
+  ok('a collapsible only holds projects filed at the level it is drawn at',
+     await threw(() => call('project:save', { id: grouped.id, collapsibleId: deepBand.id }),
+                 'level it is drawn at'))
+  ok('and it never moves to another page, which would strand the cards in it',
+     await threw(() => call('collapsible:save', { id: later.id, folderId: acme.id }),
+                 'stays on the page'))
+  const foreignBand = await call('collapsible:save', { workspaceId: own, name: 'Somewhere else' })
+  ok('a project cannot be grouped in another workspace\u2019s collapsible',
+     await threw(() => call('project:save', { id: grouped.id, collapsibleId: foreignBand.id }),
+                 'another workspace'))
+  await call('collapsible:delete', { id: foreignBand.id })
+
+  // Filing is the stronger statement of the two: a card that has left the page has
+  // left the band drawn on it, without anyone having to say so.
+  await call('project:save', { id: grouped.id, folderId: acme.id })
+  ok('filing a card into a folder takes it out of the band it was in',
+     (await groupedNow()).collapsibleId === null)
+  await call('project:save', { id: grouped.id, folderId: null, collapsibleId: later.id })
+  ok('and it can be put back', (await groupedNow()).collapsibleId === later.id)
+
+  await call('collapsible:delete', { id: later.id })
+  ok('deleting a collapsible leaves its projects behind, ungrouped',
+     (await groupedNow()) !== undefined && (await groupedNow()).collapsibleId === null)
+
+  /*
+   * A folder taking its bands with it as it goes up a level. The two have to travel
+   * together: lifting the cards and leaving the bands would leave a project grouped on
+   * a page it is no longer drawn on.
+   */
+  const shed = await call('folder:save', { workspaceId: dayJob, name: 'Shed' })
+  const shedBand = await call('collapsible:save', { workspaceId: dayJob, name: 'Odds', folderId: shed.id })
+  await call('project:save', { id: grouped.id, folderId: shed.id })
+  await call('project:save', { id: grouped.id, collapsibleId: shedBand.id })
+  await call('folder:delete', { id: shed.id })
+  const lifted2 = (await call('collapsible:list', { workspaceId: dayJob }))
+    .find((c: any) => c.id === shedBand.id)
+  ok('deleting a folder lifts the bands on its page along with the cards in them',
+     lifted2?.folderId === null && (await groupedNow()).collapsibleId === shedBand.id,
+     JSON.stringify(lifted2))
+
+  await call('project:delete', { id: grouped.id })
+  await call('collapsible:delete', { id: shedBand.id })
+  await call('collapsible:delete', { id: deepBand.id })
+  ok('and the workspace is back to no collapsibles at all',
+     (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
+
+  /*
+   * Arranging the cards by hand. Zero means nobody has said, so a workspace nobody
+   * has dragged anything in is ordered exactly as it always was; the first drop is
+   * what turns that into an order of its own, and it has to survive everything the
+   * page does around it.
+   */
+  const arrangeA = await call('project:save', { workspaceId: own, name: 'Arrange A', status: 'active' })
+  const arrangeB = await call('project:save', { workspaceId: own, name: 'Arrange B', status: 'active' })
+  const arrangeC = await call('project:save', { workspaceId: own, name: 'Arrange C', status: 'active' })
+  const arranged = async (): Promise<string[]> =>
+    (await call('project:list', { workspaceId: own }))
+      .filter((p: any) => p.name.startsWith('Arrange '))
+      .map((p: any) => p.name)
+  ok('projects start unplaced, newest activity first',
+     (await arranged()).join(' ') === 'Arrange C Arrange B Arrange A', (await arranged()).join(' '))
+
+  await call('project:reorder', { ids: [arrangeA.id, arrangeC.id, arrangeB.id] })
+  ok('and can be put in an order by hand',
+     (await arranged()).join(' ') === 'Arrange A Arrange C Arrange B', (await arranged()).join(' '))
+
+  // The point of the whole thing: a card stays where it was put even after the project
+  // it belongs to moves, which is what the old ordering could not do.
+  await call('task:save', { projectId: arrangeB.id, title: 'Something happening on B' })
+  ok('a hand-placed order is not undone by activity',
+     (await arranged()).join(' ') === 'Arrange A Arrange C Arrange B', (await arranged()).join(' '))
+
+  // Pinning still lifts a card, but only among the ones nobody has placed: a pin that
+  // could override a drop would mean cards that snap back the moment you let go.
+  await call('project:save', { id: arrangeB.id, isPinned: true })
+  ok('pinning does not override where a card was dropped',
+     (await arranged()).join(' ') === 'Arrange A Arrange C Arrange B', (await arranged()).join(' '))
+  await call('project:save', { id: arrangeB.id, isPinned: false })
+
+  // Zero is left free by every hand-set order, which is what lets a project made
+  // afterwards arrive at the top of an arrangement rather than the bottom of it.
+  const arrangeD = await call('project:save', { workspaceId: own, name: 'Arrange D', status: 'active' })
+  ok('a project made after an arrangement lands at the top of it',
+     (await arranged()).join(' ') === 'Arrange D Arrange A Arrange C Arrange B',
+     (await arranged()).join(' '))
+  await call('project:delete', { id: arrangeD.id })
+
+  // Filing a card somewhere else drops the place it had among its old neighbours: it
+  // means nothing beside the new ones, and the top is where you look for it next.
+  const shelf = await call('folder:save', { workspaceId: own, name: 'A shelf' })
+  await call('project:save', { id: arrangeB.id, folderId: shelf.id })
+  await call('project:save', { id: arrangeB.id, folderId: null })
+  ok('a card filed elsewhere and back comes back unplaced, at the top',
+     (await arranged()).join(' ') === 'Arrange B Arrange A Arrange C', (await arranged()).join(' '))
+
+  for (const p of [arrangeA, arrangeB, arrangeC]) await call('project:delete', { id: p.id })
+  await call('folder:delete', { id: shelf.id })
+
   const today = await call('dashboard:today', { workspaceId: dayJob })
   ok('today: overdue populated', today.overdue.length >= 3, `${today.overdue.length} overdue`)
   ok('today: due today populated', today.dueToday.length >= 1, `${today.dueToday.length} due today`)

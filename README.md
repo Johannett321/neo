@@ -202,9 +202,34 @@ card onto a folder to file it, drag it onto a breadcrumb to move it back out, an
 folder onto another to move it and everything in it. Both have a *Move to…* in their
 right-click menu, for when a drag is the wrong gesture.
 
+The cards can also be **put in an order**: drag one onto another and it takes that place,
+with everything between sliding along to make room and an outline showing where it will
+land. The order is kept per folder and is yours from then on — activity no longer
+reshuffles that folder underneath you, and a project you make afterwards arrives at the
+top of it. Until you drag something, nothing changes: an untouched grid is ordered the way
+it always was, pinned first and then by what has moved most recently, so this is a feature
+you opt into by using it rather than one you have to arrange before the page is any good.
+
+Some things you want grouped but not put away, and that is what a **collapsible** is: a
+named band that appears under every project that is in none of them, on the page you are
+already on. Drag a card into it to group it, drag one back above the first rule to take it
+out, and click the name to fold the whole band shut — the count stays visible so a folded
+band is never a place to lose things. Make one by right-clicking the page: *New* opens on
+*Project*, *Folder* and *Collapsible*, and a new collapsible arrives with its name
+selected and waiting to be typed over, the way a new folder does in a file browser.
+
+The difference between the two is worth keeping straight, because it is why there are two
+of them. **A folder is somewhere you go** — clicking it replaces the page with what is
+filed inside. **A collapsible is somewhere things are** — the cards stay in front of you
+until you decide otherwise. So they compose rather than compete: a project is filed in a
+folder and grouped in a band on that folder's page. Deleting a band deletes only the band,
+its projects coming back up to the cards above it, and folding one shut is remembered.
+
 The point of doing it that way is what happens when you **don't** use folders, which most
 people won't: with none, the page is the same grid of project cards it has always been.
-No headings, no chevrons, no breadcrumbs, no scaffolding for a feature you are not using.
+No headings, no chevrons, no breadcrumbs, no scaffolding for a feature you are not using —
+and the same holds for collapsibles, which draw no rule and no drop strip until you have
+made one.
 
 A folder is filing and nothing else: it holds no dates and no state, it never appears in
 Today, search or the weekly review, and nothing in the app reads it back and asks you to
