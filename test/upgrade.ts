@@ -116,6 +116,15 @@ CREATE TABLE meeting (
   actions text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- The join table as it was: a composite key and no id of its own. Present here so
+-- that anything added to it later is applied against a table that lacks the column,
+-- which is the arrangement that catches a DDL statement referencing one too early.
+CREATE TABLE meeting_attendee (
+  meeting_id uuid NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+  person_id  uuid NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  PRIMARY KEY (meeting_id, person_id)
+);
+
 CREATE TABLE setting (key text PRIMARY KEY, value text NOT NULL);
 `
 

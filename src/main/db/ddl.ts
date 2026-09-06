@@ -506,7 +506,6 @@ CREATE INDEX IF NOT EXISTS idx_summary_part      ON summary_part (recording_id, 
 CREATE INDEX IF NOT EXISTS idx_op_batch_pending  ON op_batch (origin, seq);
 CREATE INDEX IF NOT EXISTS idx_op_batch_ws       ON op_batch (workspace_id, seq);
 CREATE INDEX IF NOT EXISTS idx_sync_row_dead     ON sync_row (table_name, row_id) WHERE deleted_hlc IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_attendee_id ON meeting_attendee (id);
 
 `
 
@@ -716,6 +715,12 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE meeting DROP COLUMN IF EXISTS starts_at`,
 
   // 4. Indexes last, since they are the most likely to reference a migrated column.
+  //
+  // This one in particular. It belongs to the id added in group 1, and it spent one
+  // release in the DDL batch above — where PostgreSQL parses it, sees a column that
+  // the ALTER has not run yet, and refuses to open the database at all. That is the
+  // third time this exact mistake has been made in this file.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_attendee_id ON meeting_attendee (id)`,
   `CREATE INDEX IF NOT EXISTS idx_person_workspace ON person (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_project_folder ON project (folder_id)`,
   `CREATE INDEX IF NOT EXISTS idx_project_order ON project (workspace_id, folder_id, sort_order)`,
