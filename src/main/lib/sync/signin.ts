@@ -1,20 +1,34 @@
-import { BrowserWindow } from 'electron'
+import { shell } from 'electron'
+import { createServer } from 'node:http'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import type { AddressInfo } from 'node:net'
 
 /**
- * The passkey ceremony, in a window Neo owns but does not control the contents of.
+ * The passkey ceremony, in the user's own browser.
  *
- * Neo's own window is loaded from `file://`, so a WebAuthn ceremony against the sync
- * server's domain is impossible there — the origin would not match the relying party
- * id, and no amount of configuration changes that. So the server serves a page, this
- * opens it at the right origin, and exactly one thing comes back: a device token.
+ * Two things rule out doing this inside Neo, and the second is the one that matters.
  *
- * That is a deliberate line. A token is something the server issued itself, so
- * serving the code that obtains it gives nothing away. Key material never crosses
- * this boundary — the passphrase is typed in Neo's own window and the master key is
- * unwrapped in the main process, where a page the server wrote can never reach it.
+ * Neo's own window is loaded from `file://`, so a ceremony against the sync server's
+ * domain is impossible there — the origin will not match the relying party id. That
+ * much a `BrowserWindow` pointed at the server would fix, and Electron 44 can even
+ * service the request once `app.configureWebAuthn()` has been called.
+ *
+ * But it would service it with **Touch ID credentials bound to this Mac's Secure
+ * Enclave, which iCloud Keychain does not sync**. A passkey created that way exists
+ * on the machine that made it and nowhere else — so the second Mac could never sign
+ * in, which is the whole reason any of this is being built. (It also needs an Apple
+ * entitlement, which an ad-hoc signature cannot carry.)
+ *
+ * Safari and Chrome store passkeys in iCloud Keychain, where they belong to the
+ * person rather than to the laptop. So the ceremony happens there, and the token
+ * comes back to a server this process opens on the loopback interface for as long as
+ * it takes — the arrangement RFC 8252 recommends for exactly this, and the one
+ * `gh auth login` uses.
+ *
+ * A token is all that crosses back. Key material never does: the passphrase is typed
+ * in Neo's own window and the master key is unwrapped in this process, where a page
+ * the server wrote can never reach it.
  */
-
-const CALLBACK = 'neo-sync-callback://'
 
 export interface SignedIn {
   token: string
@@ -22,62 +36,76 @@ export interface SignedIn {
   handle: string
 }
 
+/** Long enough to find your phone and answer a prompt; short enough to give up. */
+const PATIENCE_MS = 3 * 60_000
+
+const DONE_PAGE = `<!doctype html>
+<meta charset="utf-8">
+<title>Connected</title>
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         font:15px/1.6 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+         background:#fff; color:#23262e; }
+  @media (prefers-color-scheme: dark) { body { background:#17191f; color:#e7e8ec } }
+  p { opacity:.7 }
+</style>
+<main style="text-align:center">
+  <h1 style="font-size:19px;margin:0 0 6px">Neo is connected</h1>
+  <p>You can close this tab and go back to the app.</p>
+</main>`
+
 export async function signInWithPasskey(serverUrl: string): Promise<SignedIn | null> {
   const base = serverUrl.replace(/\/+$/, '')
-
-  const window = new BrowserWindow({
-    width: 460,
-    height: 620,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    title: 'Connect Neo',
-    webPreferences: {
-      // Nothing of Neo's is reachable from this page. It gets a browser and no more.
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      partition: 'persist:neo-sync-signin'
-    }
-  })
+  const state = randomBytes(24).toString('base64url')
 
   return new Promise<SignedIn | null>((resolve) => {
     let settled = false
 
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+      if (url.pathname !== '/callback') {
+        response.writeHead(404).end()
+        return
+      }
+
+      /*
+       * The nonce is what stops anything else on this machine posting a token of its
+       * own choosing to a port it found open. Compared in constant time because it is
+       * compared against a secret.
+       */
+      const given = Buffer.from(url.searchParams.get('state') ?? '')
+      const wanted = Buffer.from(state)
+      const matches = given.length === wanted.length && timingSafeEqual(given, wanted)
+
+      const token = url.searchParams.get('token')
+      const accountId = url.searchParams.get('accountId')
+
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(DONE_PAGE)
+      finish(matches && token && accountId
+        ? { token, accountId, handle: url.searchParams.get('handle') ?? '' }
+        : null)
+    })
+
     const finish = (result: SignedIn | null): void => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
+      server.close()
       resolve(result)
-      if (!window.isDestroyed()) window.close()
     }
 
-    /*
-     * The scheme never resolves — it is a signal rather than a destination, which is
-     * why nothing is registered with the operating system and nothing lands in a
-     * history somewhere. Both handlers are needed: a form post that redirects
-     * arrives as a redirect, and a location assignment as a navigation.
-     */
-    const intercept = (event: Electron.Event, url: string): void => {
-      if (!url.startsWith(CALLBACK)) return
-      event.preventDefault()
-      try {
-        const parsed = new URL(url)
-        const token = parsed.searchParams.get('token')
-        const accountId = parsed.searchParams.get('accountId')
-        const handle = parsed.searchParams.get('handle') ?? ''
-        finish(token && accountId ? { token, accountId, handle } : null)
-      } catch {
-        finish(null)
-      }
-    }
+    const timer = setTimeout(() => finish(null), PATIENCE_MS)
 
-    window.webContents.on('will-navigate', intercept)
-    window.webContents.on('will-redirect', intercept)
+    server.on('error', () => finish(null))
 
-    // Closing the window is a decision, not a failure: it resolves null and the
-    // settings pane goes back to where it was rather than showing an error.
-    window.on('closed', () => finish(null))
-
-    void window.loadURL(`${base}/connect.html`).catch(() => finish(null))
+    // 127.0.0.1 rather than 0.0.0.0, and a port the operating system picks. Nothing
+    // off this machine can reach it, and nothing has to be reserved in advance.
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo
+      const target = new URL(`${base}/connect.html`)
+      target.searchParams.set('redirect', `http://127.0.0.1:${port}/callback`)
+      target.searchParams.set('state', state)
+      void shell.openExternal(target.toString()).catch(() => finish(null))
+    })
   })
 }
