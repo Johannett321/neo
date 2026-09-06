@@ -63,7 +63,18 @@ export function Sidebar(): React.JSX.Element {
         // A custom property rather than the background itself, because Liquid Glass
         // has to make this same colour translucent and an inline style is the one
         // thing a stylesheet cannot argue with. `.sidebar-surface` paints it.
-        ['--glass-tint' as string]: `color-mix(in oklch, ${tint} 30%, var(--color-base-200))`
+        //
+        // `oklab`, not `oklch`, and that is the whole difference between orange and
+        // pink. `oklch` is polar, so mixing interpolates the *hue angle*: base-200 is
+        // a barely-there blue at h=265, an orange sits at h≈41, and the short way
+        // round the wheel from one to the other runs up through 360 — so 30% of the
+        // way lands at h≈306, which is magenta. The chroma is right, the hue is a
+        // different colour entirely. `oklab` is rectangular; it scales the a/b of the
+        // hue towards a near-neutral instead of rotating it, which is what "a little
+        // of this colour" has always meant. Any mix of two real colours here wants
+        // oklab. Mixing with `transparent` is unaffected — there is no second hue to
+        // travel to — which is why the glass rules can stay as they are.
+        ['--glass-tint' as string]: `color-mix(in oklab, ${tint} 30%, var(--color-base-200))`
       } as React.CSSProperties}
     >
       <PanelResizeHandle
