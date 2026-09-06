@@ -41,7 +41,7 @@ import { addDays, exec, iconDir, q, today as todayDate } from '../src/main/db/cl
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { MARK } from '@shared/mark'
 import type { BridgeEndpoint } from '@shared/mcp'
 
@@ -1979,7 +1979,9 @@ async function main(): Promise<void> {
    */
   const where = await call('settings:get')
   ok('a new install keeps its data in a dotfolder at home',
-     where.dataDir.endsWith('/.neo') && where.markdownDir === join(where.dataDir, 'markdown'),
+     // `basename`, not a trailing '/.neo': Windows separates with a backslash, and
+     // the literal made this assertion unfailable there — it was simply always false.
+     basename(where.dataDir) === '.neo' && where.markdownDir === join(where.dataDir, 'markdown'),
      where.dataDir)
 
   /* ------------------------------------------------------------------ updating */
