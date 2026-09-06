@@ -41,7 +41,7 @@ import { addDays, exec, iconDir, q, today as todayDate } from '../src/main/db/cl
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { MARK } from '@shared/mark'
 import type { BridgeEndpoint } from '@shared/mcp'
 
@@ -1884,14 +1884,30 @@ async function main(): Promise<void> {
 
   /*
    * Connecting writes into a file Claude Desktop owns, so the real one is never the
-   * thing under test: HOME is moved somewhere disposable for the length of it.
+   * thing under test: the environment is moved somewhere disposable for the length
+   * of it.
+   *
+   * Every variable the three platforms consult has to move, not just HOME — Windows
+   * reads its home from USERPROFILE, and both it and Linux prefer APPDATA and
+   * XDG_CONFIG_HOME over the home directory anyway. Moving HOME alone left the two
+   * of them writing into the machine's own configuration and reading a macOS-shaped
+   * path back, so the assertions below held on one platform out of three and quietly
+   * failed on the other two.
    */
-  const realHome = process.env.HOME
+  const movedEnv = ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME'] as const
+  const realEnv = new Map(movedEnv.map((key) => [key, process.env[key]]))
   const fakeHome = mkdtempSync(join(tmpdir(), 'neo-claude-'))
   process.env.HOME = fakeHome
-  const claudeDir = join(fakeHome, 'Library', 'Application Support', 'Claude')
-  mkdirSync(claudeDir, { recursive: true })
-  const claudeConfig = join(claudeDir, 'claude_desktop_config.json')
+  process.env.USERPROFILE = fakeHome
+  process.env.APPDATA = join(fakeHome, 'AppData', 'Roaming')
+  process.env.XDG_CONFIG_HOME = join(fakeHome, '.config')
+
+  // Where that leaves the file is the app's own answer, never a second copy of the
+  // rule — asking it is also what proves the redirection took.
+  const claudeConfig = (await call('mcp:status')).configPath
+  ok('the file it would write is inside the disposable home, not the real one',
+     claudeConfig.startsWith(fakeHome))
+  mkdirSync(dirname(claudeConfig), { recursive: true })
 
   ok('with nothing in that file yet, Neo reports itself as not connected',
      (await call('mcp:status')).connected === false)
@@ -1932,7 +1948,10 @@ async function main(): Promise<void> {
      await threw(() => call('mcp:connect'), 'not valid JSON') &&
      readFileSync(claudeConfig, 'utf8') === '{ this is not json')
 
-  process.env.HOME = realHome
+  for (const [key, value] of realEnv) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
 
   await stopBridge()
   ok('closing the bridge takes the endpoint away, so the connector knows the app is shut',
