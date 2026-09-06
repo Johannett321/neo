@@ -17,6 +17,7 @@ import { PANELS, clampPanelWidth } from '../src/shared/panels'
 import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
 import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
+import { announceChange, onChange } from '../src/main/lib/changes'
 import { attentionReason } from '../src/main/lib/attention'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
@@ -1224,6 +1225,46 @@ async function main(): Promise<void> {
      Boolean(madeTask) && madeTask.columnId !== null && madeTask.dueDate === '2026-10-01')
   ok('and logs activity, because it went through the same channel',
      (await call('dashboard:activity', { workspaceId: dayJob })).length === activityBefore + 1)
+
+  /*
+   * A tool's write has nobody in the renderer waiting on it, so the screen is told
+   * separately or it shows yesterday's board until you navigate away and back. The
+   * signal comes from the database having actually changed, which is what a read has
+   * to be checked against: announcing on every tool call would refetch the whole app
+   * every time the assistant looked something up.
+   */
+  let announced = 0
+  const stopWatching = onChange(() => { announced += 1 })
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 200))
+  // The task made just above is still in the coalescing window; let it land first.
+  await settle()
+  announced = 0
+
+  await tool('list_projects').run({}, dayJobCtx)
+  await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
+  await settle()
+  ok('the assistant reading things does not make the screen refetch', announced === 0)
+
+  await tool('create_task').run(
+    { project: 'Checkout rewrite', title: 'Watched for', dueDate: '2026-10-02' }, dayJobCtx)
+  await settle()
+  ok('a task made by a tool tells the screen to catch up', announced === 1)
+
+  // Several writes close together are one refetch, not one each — a tool that saves a
+  // project, moves a card and logs activity must not make the app reload three times.
+  announced = 0
+  announceChange()
+  announceChange()
+  announceChange()
+  await settle()
+  ok('a burst of writes is folded into one refetch', announced === 1, String(announced))
+
+  announced = 0
+  await threw(() => tool('create_task').run({ project: 'Nowhere at all', title: 'x' }, dayJobCtx),
+              'No project in this workspace')
+  await settle()
+  ok('a tool that refused before writing anything says nothing either', announced === 0)
+  stopWatching()
 
   await tool('set_task_status').run({ id: made.id, status: 'done' }, dayJobCtx)
   const tickedCard = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)

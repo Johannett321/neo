@@ -30,6 +30,19 @@ const api = {
     }
   },
   /**
+   * A write that did not come from this window: the assistant's tools, or Claude
+   * Desktop through the bridge. Both go down the same channels a click does, but from
+   * inside the main process, so there is no mutation here to invalidate anything —
+   * this is how the screen finds out. Returns an unsubscribe function.
+   */
+  onData(callback: () => void): () => void {
+    const listener = (): void => callback()
+    ipcRenderer.on('data', listener)
+    return () => {
+      ipcRenderer.off('data', listener)
+    }
+  },
+  /**
    * A recording moving through the pipeline. It runs whether or not anything is on
    * screen, so the screen is told when something changed rather than polling for it.
    */

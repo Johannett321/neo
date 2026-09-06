@@ -55,6 +55,16 @@ than a second set of writes beside them, so a task it creates logs activity, bum
 project clock and lands in the Markdown mirror because it *is* that code path. Do not
 give a tool its own SQL — add the channel it needs and call it.
 
+`invokeChannel()` is also where the screen is told. A write made by a click resolves a
+mutation, and `useApiMutation` invalidates the cache on the way back; a write made by a
+tool has nobody in the renderer waiting on it, so without this the assistant's new task
+sat unseen until you navigated away and back. It asks the *database* whether anything
+changed — `writeCount()` in `db/client.ts`, which PGlite only moves for a statement that
+actually touched a row — rather than consulting a list of "the channels that write",
+because such a list would drift and because a read the assistant makes must not refetch
+the whole app. `lib/changes.ts` coalesces the announcements and sends one `data` message,
+and `useLiveData()` at the top of `App.tsx` empties the cache, exactly as a mutation does.
+
 **`src/mcp/`** is a fourth process, and one of two that are not Electron's: the MCP
 connector Claude Desktop runs. It is a proxy and nothing else. It never opens the
 database — PGlite has no lock, and Claude Desktop keeps its servers alive for hours, so a

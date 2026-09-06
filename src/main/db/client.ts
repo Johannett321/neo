@@ -234,8 +234,25 @@ export async function closeDb(): Promise<void> {
   releaseDataFolder()
 }
 
+/**
+ * How many rows this process has changed since it started.
+ *
+ * Nothing reads it for its value, only for whether it moved: `invokeChannel()` takes
+ * it before and after a call so the window can be told when the assistant or a
+ * connected client has actually *written* something, rather than after every read it
+ * happens to make. Asking the database is what keeps that honest — there is no list
+ * of "the channels that write" to fall out of date, and a tool that writes through
+ * three channels at once still only says so once.
+ *
+ * PGlite counts `affectedRows` for INSERT, UPDATE, DELETE, COPY and MERGE and nothing
+ * else, so a SELECT never moves this, and neither does an UPDATE that matched no row.
+ */
+let written = 0
+export const writeCount = (): number => written
+
 export async function q<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   const res = await db().query<T>(sql, params as never[])
+  if (res.affectedRows) written += res.affectedRows
   return res.rows
 }
 
@@ -245,7 +262,8 @@ export async function q1<T>(sql: string, params: unknown[] = []): Promise<T | nu
 }
 
 export async function exec(sql: string, params: unknown[] = []): Promise<void> {
-  await db().query(sql, params as never[])
+  // Through `q`, not straight at the driver, so a write here is counted like any other.
+  await q(sql, params)
 }
 
 /** timestamptz comes back as a Date; the renderer only ever deals in ISO strings. */

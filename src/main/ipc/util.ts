@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
-import { q1 } from '../db/client'
+import { q1, writeCount } from '../db/client'
+import { announceChange } from '../lib/changes'
 
 /**
  * Every registered handler, kept so the process can call its own channels.
@@ -25,6 +26,14 @@ export function handle<C extends Channel>(
  * one, exactly as they do from the renderer — the same tuple trick, for the same
  * reason: a workspace-scoped channel called with nothing would quietly return
  * everything.
+ *
+ * This is also the one place that knows a write happened with nobody in the renderer
+ * waiting on it. A click resolves a mutation and the mutation invalidates the cache;
+ * a tool call does not, so the window is told here instead — which is what makes a
+ * project the assistant creates, or a card Claude Desktop moves, appear on the screen
+ * while it is happening rather than the next time you navigate back to it. The
+ * database is asked whether anything actually changed rather than the channel name
+ * being consulted, so a read announces nothing and no list has to be kept up to date.
  */
 export async function invokeChannel<C extends Channel>(
   channel: C,
@@ -32,7 +41,14 @@ export async function invokeChannel<C extends Channel>(
 ): Promise<Output<C>> {
   const fn = registry.get(channel)
   if (!fn) throw new Error(`No handler registered for ${channel}`)
-  return (await fn(args[0])) as Output<C>
+  const before = writeCount()
+  try {
+    return (await fn(args[0])) as Output<C>
+  } finally {
+    // In `finally`, because a call that wrote and then threw still moved something,
+    // and a screen showing half of it is better than one showing none of it.
+    if (writeCount() !== before) announceChange()
+  }
 }
 
 const snake = (s: string): string => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import type { Channel, Input, Output } from '@shared/api'
 
@@ -42,6 +42,21 @@ export function useApiMutation<C extends Channel>(channel: C) {
       void client.invalidateQueries()
     }
   })
+}
+
+/**
+ * Refetch when something was written that this window did not write.
+ *
+ * The assistant and the Claude Desktop connector call the app's own channels from
+ * inside the main process, so no mutation resolves here and nothing invalidates the
+ * cache — which is why a task either of them created used to sit unseen until you
+ * navigated away and back. Main says a write landed and the whole cache goes, exactly
+ * as `useApiMutation` does it, so the card appears while the assistant is still
+ * talking. Mounted once, at the top of the app.
+ */
+export function useLiveData(): void {
+  const client = useQueryClient()
+  useEffect(() => window.api.onData(() => void client.invalidateQueries()), [client])
 }
 
 /**

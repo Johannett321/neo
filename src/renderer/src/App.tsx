@@ -8,7 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { CreateDialog } from '@/components/CreateDialog'
 import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
-import { useApi } from '@/lib/api'
+import { useApi, useLiveData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
@@ -247,6 +247,8 @@ function Gate(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
+  // Writes the assistant and Claude Desktop make, which nothing here is waiting on.
+  useLiveData()
   return (
     <HashRouter>
       <ToastProvider>
