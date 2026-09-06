@@ -25,7 +25,7 @@ ACCOUNT=$(psqlq "SELECT id FROM account WHERE handle='$HANDLE'")
 psqlq "INSERT INTO device (account_id,name,platform,token_hash)
        VALUES ('$ACCOUNT','sync-test','test',decode('$HASH','hex'))" >/dev/null
 
-esbuild test/sync.ts --bundle --platform=node --format=esm --target=node22 \
+npx --no-install esbuild test/sync.ts --bundle --platform=node --format=esm --target=node22 \
   --outfile=out/sync.mjs --external:@electric-sql/pglite --external:openai \
   --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared >/dev/null || exit 1
 
