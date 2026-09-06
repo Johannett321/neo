@@ -5,6 +5,7 @@ import { useApi, useApiMutation, usePrefetch } from '@/lib/api'
 import { ENTER, EXIT } from '@/lib/motion'
 import { projectColor, STATUS_LABEL } from '@/lib/format'
 import { useWorkspace, useWorkspaces } from '@/lib/workspace'
+import { PanelResizeHandle, useResizablePanel } from '@/lib/resize'
 import { Icon, type IconName } from './Icon'
 import { Brand } from './Logo'
 import { Mark } from './Mark'
@@ -31,13 +32,26 @@ export function Sidebar(): React.JSX.Element {
   const inProject = useMatch('/projects/:id/*')
   const projectId = inProject?.params.id
   const reduceMotion = useReducedMotion() ?? false
+  const { width, dragging, ref, onGrab, onReset } = useResizablePanel<HTMLElement>('sidebar')
 
   return (
     <aside
-      className="hairline flex w-[228px] shrink-0 flex-col border-r"
-      // A quiet ambient tint so it is always obvious which area you are working in.
-      style={{ backgroundColor: `color-mix(in oklch, ${workspace.color} 7%, var(--color-base-200))` }}
+      ref={ref}
+      className="hairline relative flex shrink-0 flex-col border-r"
+      style={{
+        width,
+        // A quiet ambient tint so it is always obvious which area you are working in.
+        backgroundColor: `color-mix(in oklch, ${workspace.color} 7%, var(--color-base-200))`
+      }}
     >
+      <PanelResizeHandle
+        side="left"
+        dragging={dragging}
+        onGrab={onGrab}
+        onReset={onReset}
+        label="Resize the sidebar"
+      />
+
       {/*
         The strip the traffic lights float over was empty; the app's own name belongs
         there. It is indented past them on macOS and sits at the normal gutter
@@ -116,8 +130,10 @@ function WorkspaceNav(): React.JSX.Element {
 
   /** Fetch what a link leads to while the pointer is still on its way to it. */
   const warm = (to: string): void => {
-    if (to === '/projects') prefetch('project:list', { workspaceId: workspace.id, status: 'all', archived: false })
-    else if (to === '/people') prefetch('person:list', { workspaceId: workspace.id, query: '' })
+    if (to === '/projects') {
+      prefetch('project:list', { workspaceId: workspace.id, status: 'all', archived: false })
+      prefetch('folder:list', { workspaceId: workspace.id })
+    } else if (to === '/people') prefetch('person:list', { workspaceId: workspace.id, query: '' })
   }
 
   return (

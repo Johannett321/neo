@@ -1,7 +1,10 @@
-import type { Project, ProjectDetail, ReentryBrief } from '@shared/types'
+import type {
+  Project, ProjectDetail, ProjectFolder, ProjectFolderView, ProjectStatus, ReentryBrief
+} from '@shared/types'
 import { daysSince, exec, q, q1 } from '../db/client'
 import {
-  mapActivity, mapCast, mapColumn, mapDecision, mapJournal, mapLink, mapNote, mapProject
+  mapActivity, mapCast, mapColumn, mapDecision, mapFolder, mapFolderView, mapJournal, mapLink,
+  mapNote, mapProject
 } from '../db/map'
 import { meetingViews, projectSummaries, projectSummary, taskViews } from '../db/queries'
 import { logActivity } from '../lib/activity'
@@ -17,6 +20,17 @@ import { handle, pick, reorder, upsert } from './util'
  * evaporate the moment you click into it. Only a genuine return rolls the clock.
  */
 const SAME_VISIT_MINUTES = 30
+
+/**
+ * How far down the folder tree anything will walk.
+ *
+ * Not a rule about how you are allowed to file — nobody nests twenty deep — but a
+ * floor under every recursive query here. A parent pointing at its own descendant is
+ * impossible through `folder:save`, and a database that has been through a repair is
+ * still allowed to be wrong; a walk that meets a loop must stop rather than hang the
+ * process that owns the window.
+ */
+const MAX_FOLDER_DEPTH = 20
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
@@ -39,6 +53,61 @@ function startedOn(value: string): string {
     throw new Error(`A start date must be a calendar date as YYYY-MM-DD, not "${value}".`)
   }
   return `${day}T12:00:00.000Z`
+}
+
+
+/**
+ * What the log says when a project changes state.
+ *
+ * Pausing is the one thing on this list you would want to find again months later —
+ * "when did we put this down?" — so it is worth a line rather than a silent column
+ * write. Written the way the archive line is: what happened, not what field moved.
+ */
+const STATUS_SAID: Record<ProjectStatus, string> = {
+  active: 'Picked back up',
+  paused: 'Paused',
+  dormant: 'Marked dormant',
+  done: 'Marked done'
+}
+
+
+/**
+ * The folder a project is being filed into, checked before it is written.
+ *
+ * Workspace isolation is a boundary, not a convention: a renderer that sent the id of
+ * a folder in another working life would otherwise file the project somewhere it can
+ * never be seen again, because every screen that draws folders is fenced to one
+ * workspace. Null is always allowed — that is unfiling.
+ */
+async function checkFolder(folderId: unknown, workspaceId: string): Promise<void> {
+  if (folderId === null || folderId === undefined) return
+  const folder = await q1<any>('SELECT workspace_id FROM project_folder WHERE id = $1', [folderId])
+  if (!folder) throw new Error('That folder no longer exists.')
+  if (folder.workspace_id !== workspaceId) {
+    throw new Error('A project cannot be filed in another workspace\u2019s folder.')
+  }
+}
+
+/**
+ * A folder and everything under it, the folder itself first.
+ *
+ * Used to stop a folder being dragged inside one of its own children, which would cut
+ * the whole branch off from the top of the tree — the rows would still be there, and
+ * nothing would ever draw them again.
+ */
+async function branchIds(id: string): Promise<string[]> {
+  const rows = await q<{ id: string }>(
+    `WITH RECURSIVE branch AS (
+       SELECT id, 0 AS depth FROM project_folder WHERE id = $1
+       UNION ALL
+       SELECT f.id, branch.depth + 1
+       FROM project_folder f JOIN branch ON f.parent_id = branch.id
+       WHERE branch.depth < ${MAX_FOLDER_DEPTH}
+     )
+     SELECT id FROM branch`,
+    [id]
+  )
+  return rows.map((r) => r.id)
 }
 
 export function registerProjectHandlers(): void {
@@ -140,10 +209,24 @@ export function registerProjectHandlers(): void {
 
   handle('project:save', async (draft) => {
     const fields = pick(draft as Partial<Project>, [
-      'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'isPinned',
-      'createdAt'
+      'workspaceId', 'name', 'summary', 'iconPath', 'color', 'deadline', 'status', 'folderId',
+      'isPinned', 'createdAt'
     ])
     if (fields.createdAt !== undefined) fields.createdAt = startedOn(String(fields.createdAt))
+
+    if (fields.folderId !== undefined) {
+      const workspaceId =
+        (fields.workspaceId as string | undefined) ??
+        (await q1<any>('SELECT workspace_id FROM project WHERE id = $1', [draft.id]))?.workspace_id
+      await checkFolder(fields.folderId, String(workspaceId ?? ''))
+    }
+
+    // Read before the write, so the log only speaks when the state actually moved —
+    // a screen that saves the whole project on every edit sends the status every time.
+    let statusWas = ''
+    if (draft.id && fields.status !== undefined) {
+      statusWas = (await q1<any>('SELECT status FROM project WHERE id = $1', [draft.id]))?.status ?? ''
+    }
 
     let orphan = ''
     if (draft.id && fields.iconPath !== undefined) {
@@ -165,6 +248,9 @@ export function registerProjectHandlers(): void {
         [mePersonId, project.id]
       )
       await logActivity(project.id, 'project_created', `Project created: ${project.name}`)
+    }
+    if (statusWas && statusWas !== project.status) {
+      await logActivity(project.id, 'state_updated', STATUS_SAID[project.status] ?? project.status)
     }
     await mirrorProject(project.id)
     return project
@@ -188,6 +274,121 @@ export function registerProjectHandlers(): void {
     // Its meetings went with it, and so did their recordings — but not the audio,
     // which is on disk and knows nothing about foreign keys.
     await pruneRecordings()
+  })
+
+  /*
+   * ------------------------------------------------------------------ folders
+   *
+   * Filing, and only filing. A folder holds no work of its own, so none of these
+   * logs activity — there is no project for the entry to belong to. What does have to
+   * happen is the mirror: where a project is filed is part of the path it is written
+   * to on disk, so anything that moves one rewrites it.
+   */
+
+  handle('folder:list', async ({ workspaceId }) => {
+    /*
+     * The whole tree in one statement, already in the order the page draws it.
+     *
+     * `sort_key` is what makes it depth-first: each level appends its own
+     * (position, name) to its parent's, so sorting the flat result by that array is
+     * the same walk as recursing into each folder in turn. The position is padded so
+     * it sorts as a number would — "10" after "9", not before it.
+     */
+    const rows = await q<any>(
+      `WITH RECURSIVE tree AS (
+         SELECT f.*, ARRAY[f.name] AS path, 0 AS depth,
+                ARRAY[lpad(f.sort_order::text, 6, '0') || ' ' || lower(f.name)] AS sort_key
+         FROM project_folder f
+         WHERE f.workspace_id = $1 AND f.parent_id IS NULL
+         UNION ALL
+         SELECT f.*, tree.path || f.name, tree.depth + 1,
+                tree.sort_key || (lpad(f.sort_order::text, 6, '0') || ' ' || lower(f.name))
+         FROM project_folder f
+         JOIN tree ON f.parent_id = tree.id
+         WHERE tree.depth < ${MAX_FOLDER_DEPTH}
+       )
+       SELECT tree.*,
+              COALESCE(c.project_count, 0) AS project_count,
+              COALESCE(s.folder_count, 0) AS folder_count
+       FROM tree
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS project_count
+         FROM project p
+         WHERE p.folder_id = tree.id AND p.archived_at IS NULL
+       ) c ON true
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS folder_count
+         FROM project_folder f WHERE f.parent_id = tree.id
+       ) s ON true
+       ORDER BY sort_key`,
+      [workspaceId]
+    )
+    return rows.map(mapFolderView) as ProjectFolderView[]
+  })
+
+  handle('folder:save', async (draft) => {
+    const fields = pick(draft as Partial<ProjectFolder>, [
+      'workspaceId', 'parentId', 'name', 'sortOrder'
+    ])
+    if (fields.name !== undefined) {
+      const name = String(fields.name).trim()
+      if (!name) throw new Error('A folder needs a name.')
+      fields.name = name
+    }
+
+    const existing = draft.id
+      ? await q1<any>('SELECT * FROM project_folder WHERE id = $1', [draft.id])
+      : null
+    if (draft.id && !existing) throw new Error('That folder no longer exists.')
+    const workspaceId = (fields.workspaceId as string | undefined) ?? existing?.workspace_id
+    if (!workspaceId) throw new Error('A folder belongs to a workspace.')
+
+    if (fields.parentId) {
+      const parent = await q1<any>('SELECT workspace_id FROM project_folder WHERE id = $1', [fields.parentId])
+      if (!parent) throw new Error('That folder no longer exists.')
+      if (parent.workspace_id !== workspaceId) {
+        throw new Error('A folder cannot be moved into another workspace.')
+      }
+      // Into itself, or into anything filed inside it: the branch would still exist
+      // and nothing would ever draw it again.
+      if (draft.id && (await branchIds(draft.id)).includes(String(fields.parentId))) {
+        throw new Error('A folder cannot be moved inside itself.')
+      }
+    }
+
+    // New folders go to the end of the level they are created in.
+    if (!draft.id && fields.sortOrder === undefined) {
+      const max = await q1<{ n: number }>(
+        `SELECT COALESCE(max(sort_order), -1) + 1 AS n FROM project_folder
+         WHERE workspace_id = $1 AND parent_id IS NOT DISTINCT FROM $2`,
+        [workspaceId, fields.parentId ?? null]
+      )
+      fields.sortOrder = max?.n ?? 0
+    }
+
+    return mapFolder(await upsert<any>('project_folder', fields, draft.id))
+  })
+
+  handle('folder:delete', async ({ id }) => {
+    const folder = await q1<any>('SELECT parent_id FROM project_folder WHERE id = $1', [id])
+    if (!folder) return
+    /*
+     * Everything inside comes up a level first, so deleting a folder is only ever
+     * undoing the filing — never losing a project or a whole branch of them. That is
+     * also why nothing asks before it runs: there is nothing to warn about.
+     */
+    const moved = await q<{ id: string }>(
+      'UPDATE project SET folder_id = $2 WHERE folder_id = $1 RETURNING id',
+      [id, folder.parent_id]
+    )
+    await exec('UPDATE project_folder SET parent_id = $2 WHERE parent_id = $1', [id, folder.parent_id])
+    await exec('DELETE FROM project_folder WHERE id = $1', [id])
+    // Where a project is filed is part of the path it is mirrored to.
+    for (const project of moved) await mirrorProject(project.id)
+  })
+
+  handle('folder:reorder', async ({ ids }) => {
+    await reorder('project_folder', ids)
   })
 
   handle('column:save', async (draft) => {

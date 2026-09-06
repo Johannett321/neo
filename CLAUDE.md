@@ -99,6 +99,31 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   constraint. (The graded health level this replaced was removed deliberately: the colour
   had to be decoded and clashed with the workspace palette. Colour on a project now means
   identity only.)
+- **Pausing is the one hand-set state, and it only subtracts.** `status = 'paused'` is
+  set from the project card's context menu or the Status field, and the whole of what it
+  does is fence `dashboard:today` — tasks, meeting to-dos, needs-a-look and the header
+  counts, all through the one `inWorkspace` clause. It is allowed past the no-hand-kept-
+  status rule for the same reason a folder is: nothing *derives* anything from it, and a
+  stale one costs you a quiet project rather than a wrong answer. On the projects page it
+  only ever changes how loud a card is — the band across its corner, and the whole card
+  at half opacity until you point at it — never whether it is there. It must not
+  start meaning anything more: not excluded from search, the timeline or the review.
+  Archiving is what hides a project; pausing only stops it asking. The band is
+  `base-content` as a fill rather than any hue, because every colour in this app is
+  already spoken for — see the note at the top of `styles.css`.
+- **A folder is filing, and only filing.** `project_folder` (self-referencing, workspace
+  scoped) groups project cards and nothing else — no dates, no state, no work of its own,
+  and nothing derived reads it. It is the one piece of organisation the user maintains by
+  hand, which is allowed precisely because nothing depends on it being right. Deleting one
+  lifts its projects and subfolders up a level rather than cascading; `folder:save` refuses
+  a parent inside the folder's own branch, and every recursive walk over the tree carries a
+  depth guard. Where a project is filed is part of the path it is mirrored to on disk, so
+  anything that moves one calls `mirrorProject()`.
+  The projects page navigates them the way a file browser does — a folder is a card, it
+  opens, breadcrumbs are the way back, and the open folder is a `?in=` query parameter so
+  Back walks up. That model is chosen for the person with no folders at all: with none,
+  the page must be exactly the grid of project cards it was before the feature existed.
+  Do not add chrome that only makes sense once folders are in use.
 - **Every mutation logs activity.** `logActivity()` inserts a row and bumps
   `last_activity_at`, which is what makes the re-entry brief possible. Handlers that
   change project content also call `mirrorProject()` to rewrite the Markdown mirror.
@@ -119,6 +144,12 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   workspace the flow creates falsifies its own condition: without the latch the screen
   unmounts mid-save and the app appears behind it. Nothing is written until the last
   button, so abandoning the flow leaves nothing behind.
+- **Every side panel resizes through one hook.** `lib/resize.tsx` — `useResizablePanel`
+  and `PanelResizeHandle` — and the bounds for each one live in `src/shared/panels.ts`,
+  never in the component. The panel's own edge is what a drag measures from, not the
+  window's: the meeting page's details column has the assistant beside it whenever the
+  assistant is open. A width is written to settings on pointer-up, not per pixel, and
+  the panel must be `relative` for the handle to sit on its edge.
 - **Settings screens are panes, not scrolls.** App, workspace and project settings all
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,

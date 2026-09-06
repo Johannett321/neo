@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS workspace (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- Somewhere to file projects, and nothing more: no dates, no state, no work of its
+-- own. Deleting one is handled in the handler, which lifts everything inside it up a
+-- level first; the cascade here is only the backstop for a workspace going away, and
+-- it can afford to be one because a project loses its folder rather than its life.
+CREATE TABLE IF NOT EXISTS project_folder (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  parent_id    uuid REFERENCES project_folder(id) ON DELETE CASCADE,
+  name         text NOT NULL,
+  sort_order   integer NOT NULL DEFAULT 0,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS project (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id       uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
@@ -27,6 +40,7 @@ CREATE TABLE IF NOT EXISTS project (
   color              text NOT NULL DEFAULT '',
   deadline           text,
   status             text NOT NULL DEFAULT 'active',
+  folder_id          uuid REFERENCES project_folder(id) ON DELETE SET NULL,
   is_pinned          boolean NOT NULL DEFAULT false,
   last_opened_at     timestamptz,
   previous_opened_at timestamptz,
@@ -385,6 +399,9 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS icon_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS deadline text`,
   `ALTER TABLE project ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT ''`,
+  // Filing, added later than the projects it files. SET NULL rather than CASCADE:
+  // losing a folder must never be a way to lose a project.
+  `ALTER TABLE project ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES project_folder(id) ON DELETE SET NULL`,
   // The where-we-are block is gone: a snapshot you have to keep rewriting by hand is
   // a status field wearing a different hat, and the log already keeps the history.
   // Dropping the columns is deliberate and irreversible — the text in them goes.
@@ -494,6 +511,8 @@ export const MIGRATIONS: string[] = [
 
   // 4. Indexes last, since they are the most likely to reference a migrated column.
   `CREATE INDEX IF NOT EXISTS idx_person_workspace ON person (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_project_folder ON project (folder_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_folder_parent ON project_folder (workspace_id, parent_id)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`
 ]

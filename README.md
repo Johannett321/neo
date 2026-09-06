@@ -194,6 +194,26 @@ it, how much is open and when the next date lands. The hat you wear is on the pr
 itself, not the card — you do not need reminding which role you hold in a project you
 are one click from opening.
 
+Once there are more projects than fit on a screen, they can be put in **folders**, and
+folders in folders. They work the way folders work everywhere else: a folder is a card in
+the same grid, clicking it opens it, and inside it you see what is filed there and nothing
+else. Breadcrumbs appear once you are inside one and are the way back up. Drag a project
+card onto a folder to file it, drag it onto a breadcrumb to move it back out, and drag a
+folder onto another to move it and everything in it. Both have a *Move to…* in their
+right-click menu, for when a drag is the wrong gesture.
+
+The point of doing it that way is what happens when you **don't** use folders, which most
+people won't: with none, the page is the same grid of project cards it has always been.
+No headings, no chevrons, no breadcrumbs, no scaffolding for a feature you are not using.
+
+A folder is filing and nothing else: it holds no dates and no state, it never appears in
+Today, search or the weekly review, and nothing in the app reads it back and asks you to
+keep it true. **Deleting one never deletes what is in it** — its projects and its
+subfolders move up a level and only the folder goes, because losing a project to a word
+that sounds like tidying up is not something this app will do. Folders are mirrored to
+disk as real directories, so `~/Documents/Neo/markdown/Day job/Clients/Acme/…` is exactly
+where you filed it.
+
 A project takes its workspace's colour until you give it one of its own in project
 settings. It shows on the project's mark and in the fill of its deadline bar — never as a
 stripe down the card or a wash across it, which is decoration rather than information. It
@@ -241,6 +261,32 @@ project's navigation arrives from the right and its items settle in sequence —
 entering and leaving a project reads as movement rather than a jump cut. It respects
 `prefers-reduced-motion`.
 
+### Pausing a project
+Some projects go quiet on purpose — the client is between phases, the initiative is
+waiting on a decision that is not yours. Nothing is wrong with them and there is nothing
+to chase, so **Pause project** (right-click any project card, or the Status field in its
+settings) takes the whole thing off Today: its overdue items, what is due this week, the
+to-dos a meeting left owing in it, and the nudge to come and look at it. The counts in
+the header come down with them, because a screen that says eleven open and lists four is
+worse than either.
+
+The project itself is untouched — its board, meetings, notes and log are all still there,
+and opening it shows everything. The card says so before it is read: a banded corner across
+its top right carrying the word **PAUSED**, in place of a status pill rather than above one,
+and the whole card steps back to half strength — band included — so it is quieter than the
+ones still running. Pointing at it brings it back: it is meant to be scanned past, not to be
+hard to read. The
+project's own page carries the same band as a bar saying what the state costs, with a
+one-click way back.
+
+The band takes no colour. Every colour in the app is already spoken for — the warm ones are
+signals and a project's own colour says which project — so paused is drawn in the text
+colour itself, graphite on white and ivory on black. Pausing and picking back up are both
+written to the project's log, so "when did we put this down?" has an answer.
+
+This is deliberately not archiving. Archiving is for something finished with; pausing is
+for something you fully intend to come back to and do not want asking in the meantime.
+
 ### Archiving and deleting
 Both workspaces and projects can be **archived** or **deleted**. Archiving is the one
 you want almost always: an archived project disappears from Today, the timeline, the
@@ -265,7 +311,8 @@ the first column, because that is what it has always meant.
 ### Today
 One screen for the workspace you are in, grouped by urgency rather than by project:
 overdue, due today, the next seven days, and the projects the app thinks need a look,
-with the reason attached. Each row carries a rule in **its project's** colour rather
+with the reason attached. Nothing from a paused project reaches it — that is what pausing
+one is for. Each row carries a rule in **its project's** colour rather
 than its workspace's — every row on this screen belongs to the same workspace, so that
 colour was the same on all of them and told you nothing.
 
@@ -594,6 +641,10 @@ Website relaunch, for Priya, due 2026-10-01"* — because a confirmation you can
 one you learn to click through. Nothing is written until you say yes, and declining is
 final: it is told so, and told not to try another way round.
 
+It can file, too — make a folder, move one, put a project in one or take it out — because
+sorting out a portfolio that has grown past a screenful is the kind of tedious rearranging
+worth asking for in a sentence. It is told to leave filing nobody asked it to touch alone.
+
 Every write it makes goes through the same channel your own click goes through, so a task
 it creates is not a special kind of task. It logs activity, bumps the project's clock and
 lands in the Markdown mirror exactly as a hand-made one does, because it is the same code
@@ -664,8 +715,9 @@ Everything lives in **`~/Documents/Neo`**:
 - `db/` — an embedded PostgreSQL database (PGlite: real Postgres compiled to WebAssembly,
   running inside the app). No server, no Docker, nothing to install or start.
 - `markdown/` — a plain-Markdown mirror of every project overview, note, meeting,
-  decision and journal entry, rewritten automatically on every change. If this app is
-  ever abandoned, the writing that matters survives in a format any editor opens.
+  decision and journal entry, rewritten automatically on every change, one directory per
+  workspace and per folder you filed a project in. If this app is ever abandoned, the
+  writing that matters survives in a format any editor opens.
 - `icons/` — the images you upload for workspaces, projects and people. Files nothing
   references any more are swept on launch.
 - `attachments/` — files you have dropped into a conversation with the assistant.

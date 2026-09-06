@@ -70,6 +70,32 @@ export function ProjectLayout(): React.JSX.Element {
         </div>
       </div>
 
+      {/*
+        Paused is a decision, and the screen has to carry it or the project simply
+        looks quiet. It is the card's own band brought inside — the same solid neutral,
+        the same word — which is what tells this apart from the archived bar below at a
+        glance, since a wash of grey would have made the two states look identical. The
+        bar says what the state actually costs, so picking it back up is a choice made
+        with the consequence in view rather than a setting to go and find.
+      */}
+      {project.status === 'paused' && (
+        <div className="hairline mb-6 flex items-center gap-3 rounded-box border bg-base-200/50 px-4 py-2.5">
+          <span className="shrink-0 rounded-full bg-base-content/75 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-base-100">
+            Paused
+          </span>
+          <span className="flex-1 text-[12px] text-base-content/60">
+            Nothing in this project reaches Today — no items, no to-dos left owing by a meeting, and
+            no nudge to come and look at it. Everything here is untouched and waiting.
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={() => save.mutate({ id: project.id, status: 'active' })}
+          >
+            Pick it back up
+          </button>
+        </div>
+      )}
+
       {project.archivedAt && (
         <div className="hairline mb-6 flex items-center gap-3 rounded-box border bg-base-200/50 px-4 py-2.5">
           <Icon name="archive" size={15} className="text-base-content/40" />

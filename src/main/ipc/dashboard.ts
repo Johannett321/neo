@@ -18,7 +18,12 @@ export function registerDashboardHandlers(): void {
   handle('dashboard:today', async ({ workspaceId }) => {
     const now = today()
     const soonEdge = addDays(now, SOON_DAYS)
-    const inWorkspace = 'p.workspace_id = $1 AND p.archived_at IS NULL'
+    // Paused is the one state you set by hand, and this is what it is for: a project
+    // you have deliberately put down has nothing to ask of today, so none of its work
+    // reaches this screen — not a card, not a to-do a meeting left owing, not a nudge
+    // to look at it. Same fence on every query below, and on the counts in the header,
+    // because a screen that says "eleven open" and lists four is worse than either.
+    const inWorkspace = "p.workspace_id = $1 AND p.archived_at IS NULL AND p.status <> 'paused'"
 
     const [overdue, dueToday, soon, projects, owed, stats] = await Promise.all([
       taskViews(
@@ -32,6 +37,8 @@ export function registerDashboardHandlers(): void {
         [workspaceId, now, soonEdge],
         't.due_date'
       ),
+      // Paused needs no clause here: `attentionReason` returns null for anything that
+      // is not active, and only projects with a reason are kept below.
       projectSummaries("p.workspace_id = $2 AND p.archived_at IS NULL AND p.status <> 'done'", [workspaceId]),
       // A to-do that was promoted to a card is answered by the card, exactly as the
       // meeting list counts it — the row's own `done` stops being read the moment
@@ -57,7 +64,8 @@ export function registerDashboardHandlers(): void {
       q<any>(
         `SELECT
            (SELECT count(*)::int FROM task t JOIN project p ON p.id = t.project_id
-             WHERE p.workspace_id = $1 AND p.archived_at IS NULL AND t.status = 'open') AS open_tasks,
+             WHERE p.workspace_id = $1 AND p.archived_at IS NULL AND p.status <> 'paused'
+               AND t.status = 'open') AS open_tasks,
            (SELECT count(*)::int FROM project
              WHERE workspace_id = $1 AND status = 'active' AND archived_at IS NULL) AS active_projects,
            (SELECT count(*)::int FROM person WHERE workspace_id = $1) AS people_tracked`,

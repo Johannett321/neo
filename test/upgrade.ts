@@ -343,6 +343,31 @@ async function main(): Promise<void> {
   }
   ok('a meeting cannot end up with two recordings', secondRefused)
 
+  /*
+   * Folders arrived long after these projects did. The table is created by the DDL
+   * and the column that points at it by a migration, in that order — the column
+   * cannot be added before the table it references exists, which is the whole reason
+   * the migrations run in labelled groups.
+   */
+  const [oldProject] = await q<{ id: string; workspace_id: string }>(
+    'SELECT id, workspace_id FROM project ORDER BY name LIMIT 1'
+  )
+  const [madeFolder] = await q<{ id: string }>(
+    `INSERT INTO project_folder (workspace_id, name) VALUES ($1, 'Clients') RETURNING id`,
+    [oldProject.workspace_id]
+  )
+  await q('UPDATE project SET folder_id = $2 WHERE id = $1', [oldProject.id, madeFolder.id])
+  ok('a project that predates folders can be filed in one',
+     (await q<{ folder_id: string }>('SELECT folder_id FROM project WHERE id = $1', [oldProject.id]))[0]
+       ?.folder_id === madeFolder.id)
+
+  // Deleting the folder must free the project rather than take it down with it.
+  await q('DELETE FROM project_folder WHERE id = $1', [madeFolder.id])
+  ok('and losing the folder unfiles the project instead of deleting it',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM project WHERE id = $1', [oldProject.id]))[0]?.n === 1 &&
+     (await q<{ folder_id: string | null }>('SELECT folder_id FROM project WHERE id = $1', [oldProject.id]))[0]
+       ?.folder_id === null)
+
   // An existing database has workspaces but no onboarding marker, which is exactly
   // the pair the renderer reads: it is the *absence of any workspace, ever* that says
   // this is a new install, so an upgrade lands in the app rather than in the pitch.

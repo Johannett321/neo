@@ -175,7 +175,10 @@ function WorkPane({ project }: { project: Project }): React.JSX.Element {
             }}
           />
         </Field>
-        <Field label="Status" hint="Paused and dormant stop it being counted as drifting.">
+        <Field
+          label="Status"
+          hint="Paused takes it off Today entirely. Dormant only stops it being counted as drifting."
+        >
           <select
             className="select select-bordered w-full"
             value={project.status}

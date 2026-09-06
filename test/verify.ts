@@ -13,6 +13,7 @@ import { registerSettingsHandlers } from '../src/main/ipc/settings'
 import { registerChatHandlers } from '../src/main/ipc/chat'
 import { registerMcpHandlers } from '../src/main/ipc/mcp'
 import { TOOLS } from '../src/main/lib/ai/tools'
+import { PANELS, clampPanelWidth } from '../src/shared/panels'
 import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
 import { apiOnly } from '../src/main/lib/ai/run'
 import { invokeChannel } from '../src/main/ipc/util'
@@ -160,6 +161,65 @@ async function main(): Promise<void> {
   ok('a task on a project with no colour of its own falls back to the workspace',
      unpaintedTasks.length > 0 &&
      unpaintedTasks.every((t: any) => t.projectColor === '' && t.workspaceColor !== ''))
+
+  /* ------------------------------------------------------------------- folders */
+
+  ok('a workspace starts with no folders', (await call('folder:list', { workspaceId: dayJob })).length === 0)
+
+  const clients = await call('folder:save', { workspaceId: dayJob, name: 'Clients' })
+  const acme = await call('folder:save', { workspaceId: dayJob, name: 'Acme', parentId: clients.id })
+  const folderTree = await call('folder:list', { workspaceId: dayJob })
+  ok('a folder can hold another folder',
+     folderTree.length === 2 &&
+     folderTree[0].id === clients.id && folderTree[0].depth === 0 &&
+     folderTree[1].id === acme.id && folderTree[1].depth === 1,
+     folderTree.map((f: any) => f.path.join('/')).join(', '))
+  ok('and it comes back knowing where it sits',
+     folderTree[1].path.join('/') === 'Clients/Acme')
+  ok('folders are fenced to their workspace like everything else',
+     (await call('folder:list', { workspaceId: own })).length === 0)
+  ok('a folder needs a name', await threw(() => call('folder:save', { workspaceId: dayJob, name: '  ' }),
+                                          'needs a name'))
+
+  const filed = await call('project:save', { id: idle.id, folderId: acme.id })
+  ok('a project can be filed in a folder', filed.folderId === acme.id)
+  ok('and says so on the card it is drawn from',
+     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === idle.id).folderId === acme.id)
+  ok('the folder counts what is filed in it',
+     (await call('folder:list', { workspaceId: dayJob })).find((f: any) => f.id === acme.id).projectCount === 1)
+
+  // Workspace isolation is the one boundary nothing crosses, filing included.
+  const elsewhere = await call('folder:save', { workspaceId: own, name: 'Somewhere else' })
+  ok('a project cannot be filed in another workspace\u2019s folder',
+     await threw(() => call('project:save', { id: idle.id, folderId: elsewhere.id }), 'another workspace'))
+  ok('and a folder cannot be moved into one either',
+     await threw(() => call('folder:save', { id: acme.id, parentId: elsewhere.id }), 'another workspace'))
+  ok('a folder cannot be moved inside itself',
+     await threw(() => call('folder:save', { id: clients.id, parentId: acme.id }), 'inside itself'))
+  ok('nor inside itself directly',
+     await threw(() => call('folder:save', { id: clients.id, parentId: clients.id }), 'inside itself'))
+  // Left where it is on purpose: the assistant's own fencing is checked against it
+  // further down, and a folder that has been deleted proves nothing.
+  void elsewhere
+
+  /*
+   * Deleting a folder is undoing the filing and nothing else: what was inside comes
+   * up a level. A folder that could take a project with it would be a second way to
+   * lose one, hidden behind a word that sounds like tidying up.
+   */
+  const doomedFolder = await call('folder:save', { workspaceId: dayJob, name: 'Temporary' })
+  await call('folder:save', { id: clients.id, parentId: doomedFolder.id })
+  const spare = await call('project:save', { workspaceId: dayJob, name: 'Filed away', status: 'active' })
+  await call('project:save', { id: spare.id, folderId: doomedFolder.id })
+  await call('folder:delete', { id: doomedFolder.id })
+  const lifted = await call('folder:list', { workspaceId: dayJob })
+  ok('deleting a folder lifts its subfolders up rather than taking them with it',
+     lifted.length === 2 && lifted.find((f: any) => f.id === clients.id)?.parentId === null)
+  ok('and its projects come up with them, filed nowhere',
+     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === spare.id).folderId === null)
+  ok('the project itself is untouched',
+     (await call('project:list', { workspaceId: dayJob })).some((p: any) => p.id === spare.id))
+  await call('project:delete', { id: spare.id })
 
   const today = await call('dashboard:today', { workspaceId: dayJob })
   ok('today: overdue populated', today.overdue.length >= 3, `${today.overdue.length} overdue`)
@@ -845,6 +905,21 @@ async function main(): Promise<void> {
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
   ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
 
+  // Every side panel remembers its own width, and each one falls back to its own
+  // default rather than to whatever the last panel written happened to be.
+  const widths = await call('settings:save', { sidebarWidth: 264, meetingWidth: 380 })
+  ok('every panel width is remembered separately',
+     widths.sidebarWidth === 264 &&
+     widths.meetingWidth === 380 &&
+     widths.assistantWidth === PANELS.assistant.default,
+     `${widths.sidebarWidth}/${widths.assistantWidth}/${widths.meetingWidth}`)
+  ok('a dragged width survives a reload',
+     (await call('settings:get')).sidebarWidth === 264)
+  ok('a panel is clamped to its own bounds, and to the window',
+     clampPanelWidth('assistant', 10_000, 4000) === PANELS.assistant.max &&
+     clampPanelWidth('sidebar', 10, 4000) === PANELS.sidebar.min &&
+     clampPanelWidth('meeting', 520, 900) === 400)
+
   const finished = new Date().toISOString()
   await call('settings:save', { onboardedAt: finished })
   ok('finishing onboarding is remembered across launches',
@@ -947,6 +1022,51 @@ async function main(): Promise<void> {
   ok('people expose an avatar field everywhere they appear',
      'avatar' in detail.cast[0] && 'avatar' in detail.meetings[0].attendees[0] &&
      'avatar' in projects[0].castPreview[0])
+
+  // --- pausing
+  //
+  // Paused is the one state the user sets by hand, and the whole of what it buys is
+  // that Today stops asking. So the assertion is about the screen, not the column.
+  const beforePause = await call('dashboard:today', { workspaceId: dayJob })
+  const itsWork = [...beforePause.overdue, ...beforePause.dueToday, ...beforePause.soon]
+    .filter((t: any) => t.projectName === 'Payments migration')
+  const openInIt = (await call('project:list', { workspaceId: dayJob }))
+    .find((p: any) => p.id === payments.id).openTasks
+  ok('a project has work on Today before it is paused', itsWork.length > 0, `${itsWork.length} items`)
+
+  await call('project:save', { id: payments.id, status: 'paused' })
+  const whilePaused = await call('dashboard:today', { workspaceId: dayJob })
+  ok('pausing a project takes every one of its items off Today',
+     ![...whilePaused.overdue, ...whilePaused.dueToday, ...whilePaused.soon]
+       .some((t: any) => t.projectName === 'Payments migration'))
+  ok('and stops it asking to be looked at',
+     !whilePaused.needsAttention.some((p: any) => p.id === payments.id))
+  ok('and what a meeting left owing in it goes too',
+     !whilePaused.owedFromMeetings.some((m: any) => m.projectId === payments.id))
+  ok('and the count in the header drops by exactly what it held',
+     whilePaused.stats.openTasks === beforePause.stats.openTasks - openInIt,
+     `${whilePaused.stats.openTasks} of ${beforePause.stats.openTasks}, minus ${openInIt}`)
+  ok('and it is no longer counted as an active project',
+     whilePaused.stats.activeProjects === beforePause.stats.activeProjects - 1)
+  ok('the log says when it was put down',
+     (await call('project:get', { id: payments.id, touch: false }))
+       .activity.some((a: any) => a.summary === 'Paused'))
+  ok('but its own screens still hold everything',
+     (await call('project:get', { id: payments.id, touch: false })).tasks.length > 0)
+
+  await call('project:save', { id: payments.id, status: 'active' })
+  const afterPause = await call('dashboard:today', { workspaceId: dayJob })
+  ok('picking it back up brings its work straight back',
+     afterPause.stats.openTasks === beforePause.stats.openTasks &&
+     [...afterPause.overdue, ...afterPause.dueToday, ...afterPause.soon]
+       .filter((t: any) => t.projectName === 'Payments migration').length === itsWork.length)
+  ok('and the log says that too',
+     (await call('project:get', { id: payments.id, touch: false }))
+       .activity.some((a: any) => a.summary === 'Picked back up'))
+  await call('project:save', { id: payments.id, status: 'active' })
+  ok('and a save that sends the same status again writes nothing at all',
+     (await call('project:get', { id: payments.id, touch: false })).activity
+       .filter((a: any) => a.summary === 'Picked back up').length === 1)
 
   // --- archiving and deleting
   const tooling = projects.find((p: any) => p.name === 'Internal tooling')
@@ -1124,8 +1244,50 @@ async function main(): Promise<void> {
      (await call('chat:list', { workspaceId: dayJob })).length === 0 &&
      (await q('SELECT id FROM chat_message WHERE conversation_id = $1', [conversationId])).length === 0)
 
+  /* --------------------------------------------------- folders, from the assistant */
+
+  const toolFolders = await tool('list_folders').run({}, dayJobCtx)
+  ok('the assistant sees the folder tree as paths, not ids',
+     toolFolders.some((f: any) => f.path === 'Clients / Acme'),
+     toolFolders.map((f: any) => f.path).join(', '))
+  ok('and a project says which folder it is filed in',
+     (await tool('list_projects').run({}, dayJobCtx)).find((p: any) => p.id === idle.id).folder === 'Clients / Acme')
+
+  ok('a folder is named the way a person names one',
+     (await tool('file_project').summary({ project: 'Internal tooling', folder: 'clients/acme' }, dayJobCtx))
+       .includes('Clients / Acme'))
+  ok('taking one out says so plainly',
+     (await tool('file_project').summary({ project: 'Internal tooling', folder: null }, dayJobCtx))
+       .includes('out of its folder'))
+  ok('a folder that is not there fails before the question is asked',
+     await threw(() => tool('file_project').summary({ project: 'Internal tooling', folder: 'Nowhere' }, dayJobCtx),
+                 'No folder in this workspace'))
+  ok('deleting a folder says what survives it',
+     (await tool('delete_folder').summary({ folder: 'Clients' }, dayJobCtx))
+       .includes('move up a level'))
+  ok('and a move that cannot be made is refused while it is still a question',
+     await threw(() => tool('update_folder').summary({ folder: 'Clients', parent: 'Clients' }, dayJobCtx),
+                 'inside itself'))
+
+  await tool('create_folder').run({ name: 'Archive box' }, dayJobCtx)
+  await tool('file_project').run({ project: 'Internal tooling', folder: 'Archive box' }, dayJobCtx)
+  ok('the assistant files a project through the same channel a drag does',
+     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === idle.id).folderId ===
+       (await call('folder:list', { workspaceId: dayJob })).find((f: any) => f.name === 'Archive box').id)
+  await tool('file_project').run({ project: 'Internal tooling', folder: 'Clients / Acme' }, dayJobCtx)
+  await tool('delete_folder').run({ folder: 'Archive box' }, dayJobCtx)
+  ok('and puts it back, and clears up after itself',
+     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === idle.id).folderId === acme.id &&
+     !(await call('folder:list', { workspaceId: dayJob })).some((f: any) => f.name === 'Archive box'))
+  ok('a folder in another workspace is invisible to a tool',
+     await threw(() => tool('update_folder').summary({ folder: 'Somewhere else' }, dayJobCtx),
+                 'No folder in this workspace'))
+
   const md = await call('settings:exportMarkdown')
   ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
+  const filedOverview = join((await call('settings:get')).markdownDir,
+                             'Day job', 'Clients', 'Acme', 'Internal tooling', '_overview.md')
+  ok('a filed project is mirrored inside its folders on disk', existsSync(filedOverview), filedOverview)
   const json = await call('settings:exportJson')
   ok('json export writes', typeof json.path === 'string', json.path)
 
@@ -1152,7 +1314,8 @@ async function main(): Promise<void> {
      described.find((t) => t.name === 'list_projects')!.writes === false &&
      described.find((t) => t.name === 'create_task')!.writes === true &&
      described.find((t) => t.name === 'delete_task')!.destroys === true &&
-     described.filter((t) => t.destroys).length === 1)
+     described.find((t) => t.name === 'delete_folder')!.destroys === true &&
+     described.filter((t) => t.destroys).length === 2)
 
   const activeId = (await call('settings:get')).activeWorkspaceId
   const activeName = (await call('workspace:list')).find((w: any) => w.id === activeId)?.name

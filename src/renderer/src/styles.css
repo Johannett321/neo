@@ -14,6 +14,12 @@
  * `error` onto the icon's own rose. The three health colours have to stay legible as
  * 8px dots sitting a few pixels from a primary button, so they are pulled apart by
  * hue: primary 42, warning 88, error 18, success 155.
+ *
+ * Paused takes none of them. Every colour here already means something — the warm ones
+ * are signals, a project's own colour is which project — and a project you have put
+ * down deliberately is neither, so its band is `base-content` used as a fill. That
+ * inverts with the theme on its own: graphite on white, ivory on black, always the one
+ * value on the screen guaranteed to read against the card behind it.
  */
 @plugin "daisyui/theme" {
   name: 'pm';

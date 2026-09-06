@@ -1,7 +1,8 @@
 import type {
   Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
-  PersonProject, Project, ProjectDetail, ProjectStatus, ProjectSummary, Profile, RecordingView,
+  PersonProject, Project, ProjectDetail, ProjectFolder, ProjectFolderView, ProjectStatus,
+  ProjectSummary, Profile, RecordingView,
   SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, Workspace
 } from './types'
 
@@ -49,6 +50,28 @@ export interface ApiMap {
   'project:save': { in: Draft<Project>; out: Project }
   'project:setArchived': { in: { id: string; archived: boolean }; out: Project }
   'project:delete': { in: { id: string }; out: void }
+
+  /**
+   * Every folder in the workspace, depth-first in the order they are shown, each
+   * carrying its path and how many projects are filed directly in it. The whole tree
+   * comes back in one call: there are tens of these, not thousands, and a page that
+   * fetches a level at a time cannot draw the tree it needs to draw.
+   */
+  'folder:list': { in: Scope; out: ProjectFolderView[] }
+  /**
+   * Create or rename a folder, or move it under another one. Moving a folder inside
+   * itself is refused rather than silently ignored — it would strand everything below
+   * it.
+   */
+  'folder:save': { in: Draft<ProjectFolder>; out: ProjectFolder }
+  /**
+   * Delete the folder itself and nothing else. Its subfolders and its projects move
+   * up to where it was, so unfiling is never a way to lose work. There is nothing to
+   * confirm because there is nothing to lose.
+   */
+  'folder:delete': { in: { id: string }; out: void }
+  /** Order the folders that share a parent. */
+  'folder:reorder': { in: { ids: string[] }; out: void }
 
 
   'task:list': { in: TaskFilter | void; out: import('./types').TaskView[] }

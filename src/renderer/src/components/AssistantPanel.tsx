@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useMatch } from 'react-router-dom'
 import type { AttachmentUpload, ChatMessage, ToolRecord } from '@shared/types'
-import { ASSISTANT_WIDTH, clampAssistantWidth } from '@shared/ai'
 import { call, useApi } from '@/lib/api'
+import { PanelResizeHandle, useResizablePanel } from '@/lib/resize'
 import { ENTER, EXIT } from '@/lib/motion'
 import { readFileForUpload, useAssistant, type LiveTool } from '@/lib/assistant'
 import { useWorkspace } from '@/lib/workspace'
@@ -449,64 +449,6 @@ function Suggestion({ text, projectId }: { text: string; projectId?: string }): 
   )
 }
 
-/**
- * Drag the panel's edge to resize it.
- *
- * The width is held locally while you are dragging and written to settings once you
- * let go — a preference is worth remembering, but not worth a database write per
- * pixel of mouse movement. The listeners go on the window rather than on the handle,
- * because a pointer moving faster than the layout follows leaves a 6px strip behind
- * immediately, and a drag that stops the moment you move quickly is worse than none.
- */
-function useResizable(): { width: number; dragging: boolean; onGrab: (e: React.PointerEvent) => void } {
-  const settings = useApi('settings:get')
-  const stored = settings.data?.assistantWidth ?? ASSISTANT_WIDTH.default
-  const [width, setWidth] = useState<number | null>(null)
-  const [dragging, setDragging] = useState(false)
-
-  // Until you drag it, the panel is whatever was saved — including after a reload.
-  const current = width ?? stored
-
-  const onGrab = useCallback(
-    (event: React.PointerEvent): void => {
-      event.preventDefault()
-      setDragging(true)
-      let latest = current
-
-      const onMove = (move: PointerEvent): void => {
-        latest = clampAssistantWidth(window.innerWidth - move.clientX, window.innerWidth)
-        setWidth(latest)
-      }
-      const onUp = (): void => {
-        setDragging(false)
-        document.body.style.userSelect = ''
-        document.body.style.cursor = ''
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-        void call('settings:save', { assistantWidth: Math.round(latest) })
-      }
-
-      // Dragging across a page of text selects all of it otherwise, and the cursor
-      // has to keep saying "resize" even once the pointer is off the handle.
-      document.body.style.userSelect = 'none'
-      document.body.style.cursor = 'col-resize'
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [current]
-  )
-
-  // A window narrowed after the fact must not leave the panel wider than it can be.
-  useEffect(() => {
-    const onResize = (): void =>
-      setWidth((w) => clampAssistantWidth(w ?? stored, window.innerWidth))
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [stored])
-
-  return { width: clampAssistantWidth(current, window.innerWidth), dragging, onGrab }
-}
-
 export function AssistantPanel(): React.JSX.Element {
   const workspace = useWorkspace()
   const { open, setOpen, openConversation, conversationId, running } = useAssistant()
@@ -514,12 +456,13 @@ export function AssistantPanel(): React.JSX.Element {
   const projectId = inProject?.params.id
   const reduceMotion = useReducedMotion() ?? false
   const openMenu = useContextMenu()
-  const { width, dragging, onGrab } = useResizable()
+  const { width, dragging, ref, onGrab, onReset } = useResizablePanel<HTMLElement>('assistant')
 
   return (
     <AnimatePresence initial={false}>
       {open && (
         <motion.aside
+          ref={ref}
           className="hairline relative flex shrink-0 flex-col overflow-hidden border-l bg-base-100"
           initial={{ width: reduceMotion ? width : 0 }}
           // While dragging the width *is* the pointer, so animating towards it would
@@ -527,22 +470,13 @@ export function AssistantPanel(): React.JSX.Element {
           animate={{ width, transition: dragging ? { duration: 0 } : ENTER }}
           exit={{ width: reduceMotion ? width : 0, transition: EXIT }}
         >
-          {/* The edge is the handle. It shows itself on approach and stays lit while
-              you are using it, so the panel does not look decorated when it is idle. */}
-          <div
-            className="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize"
-            onPointerDown={onGrab}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize the assistant"
-            title="Drag to resize"
-          >
-            <span
-              className={`absolute inset-y-0 left-0 w-0.5 bg-primary transition-opacity group-hover:opacity-100 ${
-                dragging ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
-          </div>
+          <PanelResizeHandle
+            side="right"
+            dragging={dragging}
+            onGrab={onGrab}
+            onReset={onReset}
+            label="Resize the assistant"
+          />
 
           {/* Fixed inner width so nothing reflows while the panel is opening. */}
           <div className="flex h-full flex-col" style={{ width }}>

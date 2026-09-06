@@ -21,8 +21,29 @@ const safeDir = (s: string): string => s.replace(/[/\\:*?"<>|]/g, '-').trim() ||
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function writeProjectFiles(root: string, project: any): Promise<number> {
-  const dir = join(root, safeDir(project.workspace_name), safeDir(project.name))
-  await rm(dir, { recursive: true, force: true })
+  // Folders are filing, so the mirror files it the same way: the folder a project is
+  // in is a real directory on disk, and a project in no folder sits at the top of its
+  // workspace exactly as it always has. Moving one leaves the old directory behind
+  // until the next full rebuild — the same wart a rename has always had, and the same
+  // cure.
+  const dir = join(
+    root,
+    safeDir(project.workspace_name),
+    ...((project.folder_path ?? []) as string[]).map(safeDir),
+    safeDir(project.name)
+  )
+  /*
+   * Clear what this project wrote last time, rather than the directory itself.
+   *
+   * A folder and a project are allowed to share a name — "Acme" the client folder,
+   * "Acme" the project — and then a project's directory is also another project's
+   * parent. Emptying the directory wholesale would take the neighbour's mirror with
+   * it and put it back only at the next full rebuild. Deleting the four the writer
+   * owns clears the same stale notes and keeps its hands off everything else.
+   */
+  for (const sub of ['notes', 'decisions', 'meetings', 'journal']) {
+    await rm(join(dir, sub), { recursive: true, force: true })
+  }
   await mkdir(dir, { recursive: true })
   let files = 0
 
@@ -204,8 +225,22 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
 }
 
 const PROJECT_ROW = /* sql */ `
-SELECT p.*, w.name AS workspace_name
-FROM project p JOIN workspace w ON w.id = p.workspace_id
+SELECT p.*, w.name AS workspace_name, fp.folder_path
+FROM project p
+JOIN workspace w ON w.id = p.workspace_id
+LEFT JOIN LATERAL (
+  -- The names from the top of the tree down to the folder this project is in. The
+  -- walk is upwards, so the names come out backwards and are ordered by depth.
+  WITH RECURSIVE up AS (
+    SELECT f.id, f.parent_id, f.name, 0 AS depth
+    FROM project_folder f WHERE f.id = p.folder_id
+    UNION ALL
+    SELECT f.id, f.parent_id, f.name, up.depth + 1
+    FROM project_folder f JOIN up ON f.id = up.parent_id
+    WHERE up.depth < 20
+  )
+  SELECT array_agg(name ORDER BY depth DESC) AS folder_path FROM up
+) fp ON true
 `
 
 /** Refresh one project's folder. Called after any mutation that changes its prose. */

@@ -122,6 +122,49 @@ async function resolveTask(id: string, ctx: ToolContext): Promise<{ id: string; 
   return { id: rows[0].id, title: rows[0].title, projectName: rows[0].project_name }
 }
 
+/**
+ * Every folder in the workspace, by id, as the path you would say out loud.
+ *
+ * A model reasons about "Clients / Acme", not about a uuid, so the tools hand back
+ * paths — and take them, too: `resolveFolder` accepts the same string it printed.
+ */
+async function folderPaths(ctx: ToolContext): Promise<Map<string, string>> {
+  const folders = await invokeChannel('folder:list', { workspaceId: ctx.workspaceId })
+  return new Map(folders.map((f) => [f.id, f.path.join(' / ')]))
+}
+
+/**
+ * A folder named the way a person names one: by its id, by its full path, or by the
+ * last part of it when that is not ambiguous. Fenced to the workspace by the channel
+ * it reads through, so a folder in another working life is simply not found.
+ */
+async function resolveFolder(
+  ref: string,
+  ctx: ToolContext
+): Promise<{ id: string; path: string; parentId: string | null }> {
+  const folders = await invokeChannel('folder:list', { workspaceId: ctx.workspaceId })
+  const wanted = ref.trim().toLowerCase()
+  // A path may be typed with any of the separators the tools have ever printed.
+  const normalise = (value: string): string =>
+    value.toLowerCase().split(/\s*[/>]\s*/).map((part) => part.trim()).filter(Boolean).join('/')
+  const target = normalise(wanted)
+
+  const matches = folders.filter(
+    (f) =>
+      f.id === ref ||
+      normalise(f.path.join('/')) === target ||
+      f.name.trim().toLowerCase() === wanted
+  )
+  if (matches.length === 0) throw new Error(`No folder in this workspace matches "${ref}".`)
+  if (matches.length > 1) {
+    throw new Error(
+      `"${ref}" matches ${matches.map((f) => f.path.join(' / ')).join(', ')}. ` +
+        'Give the full path of the one that is meant.'
+    )
+  }
+  return { id: matches[0].id, path: matches[0].path.join(' / '), parentId: matches[0].parentId }
+}
+
 /** Dates are spoken, not typed. "Friday" is the model's job; this only checks. */
 function checkDate(value: unknown, field: string): string | null {
   if (value === null || value === undefined || value === '') return null
@@ -237,15 +280,19 @@ export const TOOLS: Tool[] = [
     }),
     writes: false,
     run: async (input, ctx) => {
-      const projects = await invokeChannel('project:list', {
-        workspaceId: ctx.workspaceId,
-        status: (input.status as 'all') ?? 'all',
-        archived: input.includeArchived === true
-      })
+      const [projects, paths] = await Promise.all([
+        invokeChannel('project:list', {
+          workspaceId: ctx.workspaceId,
+          status: (input.status as 'all') ?? 'all',
+          archived: input.includeArchived === true
+        }),
+        folderPaths(ctx)
+      ])
       return projects.map((p) => ({
         id: p.id,
         name: p.name,
         summary: p.summary,
+        folder: p.folderId ? (paths.get(p.folderId) ?? null) : null,
         status: p.status,
         deadline: p.deadline,
         openTasks: p.openTasks,
@@ -259,6 +306,23 @@ export const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'list_folders',
+    description:
+      'The folders this workspace files its projects in, as a tree. Filing is optional — projects with no folder are listed by list_projects with folder null — and a folder holds nothing but projects and other folders.',
+    parameters: object({}),
+    writes: false,
+    run: async (_input, ctx) => {
+      const folders = await invokeChannel('folder:list', { workspaceId: ctx.workspaceId })
+      return folders.map((f) => ({
+        id: f.id,
+        name: f.name,
+        path: f.path.join(' / '),
+        parent: f.parentId ? (folders.find((p) => p.id === f.parentId)?.path.join(' / ') ?? null) : null,
+        projects: f.projectCount
+      }))
+    }
+  },
+  {
     name: 'get_project',
     description:
       'One project in full: its board and every card, the people on it, its notes, meetings, decisions, journal, links and recent log. Long prose is cut short — use get_document for the full text of a note or meeting.',
@@ -268,7 +332,12 @@ export const TOOLS: Tool[] = [
       const { id } = await resolveProject(String(input.project), ctx)
       // `touch: false` — the assistant reading a project is not you visiting it, and
       // must not roll the clock the re-entry brief measures from.
-      return projectPayload(await invokeChannel('project:get', { id, touch: false }))
+      const detail = await invokeChannel('project:get', { id, touch: false })
+      const folderId = detail.project.folderId
+      return {
+        ...projectPayload(detail),
+        folder: folderId ? ((await folderPaths(ctx)).get(folderId) ?? null) : null
+      }
     }
   },
   {
@@ -851,21 +920,28 @@ export const TOOLS: Tool[] = [
       {
         name: str('The project’s name.'),
         summary: optional('One line saying what it is.'),
-        deadline: optional('YYYY-MM-DD, the date the whole thing has to land.')
+        deadline: optional('YYYY-MM-DD, the date the whole thing has to land.'),
+        folder: optional('An existing folder to file it in, by path or name. Left out, it sits loose at the top of the projects page.')
       },
       ['name']
     ),
     writes: true,
-    summary: async (input) => {
+    summary: async (input, ctx) => {
       const deadline = checkDate(input.deadline, 'deadline')
-      return `Create the project “${String(input.name)}”${deadline ? `, due ${deadline}` : ''}.`
+      const folder = input.folder ? await resolveFolder(String(input.folder), ctx) : null
+      return (
+        `Create the project “${String(input.name)}”${deadline ? `, due ${deadline}` : ''}` +
+        `${folder ? `, filed in ${folder.path}` : ''}.`
+      )
     },
     run: async (input, ctx) => {
+      const folder = input.folder ? await resolveFolder(String(input.folder), ctx) : null
       const project = await invokeChannel('project:save', {
         workspaceId: ctx.workspaceId,
         name: String(input.name),
         summary: input.summary ? String(input.summary) : undefined,
-        deadline: checkDate(input.deadline, 'deadline') ?? undefined
+        deadline: checkDate(input.deadline, 'deadline') ?? undefined,
+        folderId: folder?.id ?? null
       })
       return { id: project.id, name: project.name }
     }
@@ -906,6 +982,140 @@ export const TOOLS: Tool[] = [
         deadline: input.deadline === undefined ? undefined : checkDate(input.deadline, 'deadline')
       })
       return { id: saved.id, name: saved.name }
+    }
+  },
+  {
+    /*
+     * Folders exist so a portfolio too big to read in one grid can be put away in
+     * parts. All four of these do only that: nothing here can change a project's
+     * work, and nothing that changes a project's work can move it between folders.
+     */
+    name: 'create_folder',
+    description:
+      'Make a folder to file projects in. Give a parent to make it a subfolder. It arrives empty — file_project puts projects in it.',
+    parameters: object(
+      {
+        name: str('What the folder is called.'),
+        parent: optional('The folder it sits inside, by path or name. Leave out for a folder at the top level.')
+      },
+      ['name']
+    ),
+    writes: true,
+    summary: async (input, ctx) => {
+      const name = String(input.name).trim()
+      if (!name) throw new Error('A folder needs a name.')
+      const parent = input.parent ? await resolveFolder(String(input.parent), ctx) : null
+      return parent
+        ? `Create the folder “${name}” inside ${parent.path}.`
+        : `Create the folder “${name}”.`
+    },
+    run: async (input, ctx) => {
+      const parent = input.parent ? await resolveFolder(String(input.parent), ctx) : null
+      const folder = await invokeChannel('folder:save', {
+        workspaceId: ctx.workspaceId,
+        name: String(input.name).trim(),
+        parentId: parent?.id ?? null
+      })
+      return { id: folder.id, name: folder.name }
+    }
+  },
+  {
+    name: 'update_folder',
+    description:
+      'Rename a folder, or move it — and everything filed in it — under a different one. Pass parent as null to bring it back to the top level.',
+    parameters: object(
+      {
+        folder: str('The folder, by path, name or id.'),
+        name: optional('A new name.'),
+        parent: optional('The folder to move it inside, or null for the top level.')
+      },
+      ['folder']
+    ),
+    writes: true,
+    summary: async (input, ctx) => {
+      const folder = await resolveFolder(String(input.folder), ctx)
+      const changes: string[] = []
+      if (input.name) changes.push(`rename it to “${String(input.name).trim()}”`)
+      if (input.parent !== undefined) {
+        // Resolving here is what makes the question answerable: a move that cannot
+        // be made must fail before it is asked about, not after it is agreed to.
+        const parent = input.parent === null ? null : await resolveFolder(String(input.parent), ctx)
+        if (parent?.id === folder.id) throw new Error('A folder cannot be moved inside itself.')
+        changes.push(parent ? `move it inside ${parent.path}` : 'move it to the top level')
+      }
+      return `On the folder ${folder.path}: ${changes.length ? changes.join(', ') : 'save it unchanged'}.`
+    },
+    run: async (input, ctx) => {
+      const folder = await resolveFolder(String(input.folder), ctx)
+      const parent =
+        input.parent === undefined ? undefined
+        : input.parent === null ? null
+        : (await resolveFolder(String(input.parent), ctx)).id
+      const saved = await invokeChannel('folder:save', {
+        id: folder.id,
+        name: input.name ? String(input.name).trim() : undefined,
+        parentId: parent
+      })
+      return { id: saved.id, name: saved.name }
+    }
+  },
+  {
+    name: 'delete_folder',
+    description:
+      'Remove a folder. Nothing inside it is deleted: its projects and its subfolders move up to where it was, so this only ever undoes the filing.',
+    parameters: object({ folder: str('The folder, by path, name or id.') }, ['folder']),
+    writes: true,
+    destroys: true,
+    summary: async (input, ctx) => {
+      const folder = await resolveFolder(String(input.folder), ctx)
+      const [inside] = await q<{ projects: number; folders: number }>(
+        `SELECT (SELECT count(*)::int FROM project WHERE folder_id = $1) AS projects,
+                (SELECT count(*)::int FROM project_folder WHERE parent_id = $1) AS folders`,
+        [folder.id]
+      )
+      const contents = [
+        inside.projects ? `${inside.projects} project${inside.projects === 1 ? '' : 's'}` : '',
+        inside.folders ? `${inside.folders} subfolder${inside.folders === 1 ? '' : 's'}` : ''
+      ].filter(Boolean)
+      return (
+        `Delete the folder ${folder.path}.` +
+        (contents.length
+          ? ` The ${contents.join(' and ')} inside move up a level; nothing is deleted with it.`
+          : '')
+      )
+    },
+    run: async (input, ctx) => {
+      const folder = await resolveFolder(String(input.folder), ctx)
+      await invokeChannel('folder:delete', { id: folder.id })
+      return { deleted: folder.path }
+    }
+  },
+  {
+    name: 'file_project',
+    description:
+      'Put a project in a folder, move it to another one, or take it out of folders altogether by passing folder as null. Nothing about the project itself changes.',
+    parameters: object(
+      {
+        project: str('The project id, or its name.'),
+        folder: {
+          type: ['string', 'null'],
+          description: 'The folder, by path or name. Null takes the project out of the folder it is in.'
+        }
+      },
+      ['project', 'folder']
+    ),
+    writes: true,
+    summary: async (input, ctx) => {
+      const project = await resolveProject(String(input.project), ctx)
+      if (input.folder === null) return `Take ${project.name} out of its folder.`
+      const folder = await resolveFolder(String(input.folder), ctx)
+      return `File ${project.name} in ${folder.path}.`
+    },
+    run: async (input, ctx) => {
+      const project = await resolveProject(String(input.project), ctx)
+      const folder = input.folder === null ? null : await resolveFolder(String(input.folder), ctx)
+      await invokeChannel('project:save', { id: project.id, folderId: folder?.id ?? null })
+      return { id: project.id, name: project.name, folder: folder?.path ?? null }
     }
   },
   {

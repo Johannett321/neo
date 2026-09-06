@@ -4,6 +4,7 @@ import type { CastMember, MeetingTodo, MeetingView } from '@shared/types'
 import { call, useApi, useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
 import { useToast } from '@/lib/toast'
+import { PanelResizeHandle, useResizablePanel } from '@/lib/resize'
 import { differs, formatBytes, relativeFromIso, todayStr } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { DateField } from '@/components/DateField'
@@ -45,6 +46,10 @@ export function MeetingWriter(): React.JSX.Element {
    * every write-up you ever open.
    */
   const [tab, setTab] = useState<'write' | 'recording'>('write')
+
+  // The details column is draggable like every other side panel, and remembers where
+  // you left it across meetings — it is one column, not one per meeting.
+  const panel = useResizablePanel<HTMLElement>('meeting')
 
   // The draft lives here, not in the query cache: every save invalidates everything,
   // and a refetch must never overwrite what is being typed.
@@ -347,60 +352,76 @@ export function MeetingWriter(): React.JSX.Element {
           )}
         </div>
 
-        <aside className="scroll-area hairline w-[19.5rem] shrink-0 space-y-6 border-l bg-base-200/30 px-5 py-6">
-          <Field label="Name">
-            <div className="relative">
-              <input
-                autoFocus={meetingId === 'new'}
-                className="input input-bordered input-sm w-full pr-8"
-                placeholder="Weekly sync, steering committee, client call…"
-                value={title}
-                onChange={(e) => edit(setTitle)(e.target.value)}
-              />
-              {/*
-                Inside the field, because what it fills in is the field. It suggests
-                and nothing more — the name lands where you can read it, change it or
-                type straight over it, and it is kept by the same autosave as the
-                rest of the page.
-              */}
-              <button
-                type="button"
-                className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-field text-base-content/35 transition hover:bg-base-content/8 hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-base-content/35"
-                title="Name it from what is in it"
-                aria-label="Suggest a name for this meeting"
-                disabled={naming}
-                onClick={() => void nameIt()}
-              >
-                <Icon
-                  name={naming ? 'refresh' : 'sparkles'}
-                  size={14}
-                  className={naming ? 'animate-spin' : ''}
+        {/* The handle sits outside the scrolling part, so it stays on the edge of the
+            column rather than travelling up it with the content. */}
+        <aside
+          ref={panel.ref}
+          className="hairline relative shrink-0 border-l bg-base-200/30"
+          style={{ width: panel.width }}
+        >
+          <PanelResizeHandle
+            side="right"
+            dragging={panel.dragging}
+            onGrab={panel.onGrab}
+            onReset={panel.onReset}
+            label="Resize the meeting details"
+          />
+
+          <div className="scroll-area h-full space-y-6 px-5 py-6">
+            <Field label="Name">
+              <div className="relative">
+                <input
+                  autoFocus={meetingId === 'new'}
+                  className="input input-bordered input-sm w-full pr-8"
+                  placeholder="Weekly sync, steering committee, client call…"
+                  value={title}
+                  onChange={(e) => edit(setTitle)(e.target.value)}
                 />
-              </button>
-            </div>
-          </Field>
+                {/*
+                  Inside the field, because what it fills in is the field. It suggests
+                  and nothing more — the name lands where you can read it, change it or
+                  type straight over it, and it is kept by the same autosave as the
+                  rest of the page.
+                */}
+                <button
+                  type="button"
+                  className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-field text-base-content/35 transition hover:bg-base-content/8 hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-base-content/35"
+                  title="Name it from what is in it"
+                  aria-label="Suggest a name for this meeting"
+                  disabled={naming}
+                  onClick={() => void nameIt()}
+                >
+                  <Icon
+                    name={naming ? 'refresh' : 'sparkles'}
+                    size={14}
+                    className={naming ? 'animate-spin' : ''}
+                  />
+                </button>
+              </div>
+            </Field>
 
-          <Field label="Date">
-            <DateField value={occurredOn} onChange={edit(setOccurredOn)} allowClear={false} />
-          </Field>
+            <Field label="Date">
+              <DateField value={occurredOn} onChange={edit(setOccurredOn)} allowClear={false} />
+            </Field>
 
-          {/* Recording a meeting that has not been saved yet saves it first — the
-              audio has to belong to something before the first second of it arrives. */}
-          <RecorderRail
-            meetingId={meeting?.id ?? idRef.current}
-            projectId={projectId}
-            recording={recording}
-            ensureSaved={ensureSaved}
-            onOpenRecording={() => setTab('recording')}
-          />
+            {/* Recording a meeting that has not been saved yet saves it first — the
+                audio has to belong to something before the first second of it arrives. */}
+            <RecorderRail
+              meetingId={meeting?.id ?? idRef.current}
+              projectId={projectId}
+              recording={recording}
+              ensureSaved={ensureSaved}
+              onOpenRecording={() => setTab('recording')}
+            />
 
-          <Attendees cast={cast} value={attendees} onChange={edit(setAttendees)} />
+            <Attendees cast={cast} value={attendees} onChange={edit(setAttendees)} />
 
-          <Todos
-            projectId={projectId}
-            meeting={meeting}
-            ensureSaved={ensureSaved}
-          />
+            <Todos
+              projectId={projectId}
+              meeting={meeting}
+              ensureSaved={ensureSaved}
+            />
+          </div>
         </aside>
       </div>
     </div>

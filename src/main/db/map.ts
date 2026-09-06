@@ -1,7 +1,7 @@
 import type {
   Activity, Attachment, BoardColumn, CastMember, ChatMessage, Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
-  Project, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
+  Project, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
   TaskView, TranscriptCue, Workspace
 } from '@shared/types'
 import { EMPTY_RECAP } from '@shared/types'
@@ -45,12 +45,30 @@ export const mapProject = (r: Row, icon: string | null = null): Project => ({
   color: r.color ?? '',
   deadline: r.deadline ?? null,
   status: r.status as ProjectStatus,
+  folderId: r.folder_id ?? null,
   isPinned: r.is_pinned,
   lastOpenedAt: isoOrNull(r.last_opened_at),
   previousOpenedAt: isoOrNull(r.previous_opened_at),
   lastActivityAt: iso(r.last_activity_at),
   createdAt: iso(r.created_at),
   archivedAt: isoOrNull(r.archived_at)
+})
+
+export const mapFolder = (r: Row): ProjectFolder => ({
+  id: r.id,
+  workspaceId: r.workspace_id,
+  parentId: r.parent_id ?? null,
+  name: r.name,
+  sortOrder: r.sort_order,
+  createdAt: iso(r.created_at)
+})
+
+export const mapFolderView = (r: Row): ProjectFolderView => ({
+  ...mapFolder(r),
+  path: r.path ?? [r.name],
+  depth: r.depth ?? 0,
+  projectCount: r.project_count ?? 0,
+  folderCount: r.folder_count ?? 0
 })
 
 export const mapColumn = (r: Row): BoardColumn => ({

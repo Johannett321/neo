@@ -71,6 +71,39 @@ export interface Workspace {
   createdAt: string
 }
 
+/**
+ * A drawer to file projects in, and nothing more.
+ *
+ * It carries no dates, no state and no work of its own: a folder cannot be overdue,
+ * cannot need a look, and never appears in Today, search or the weekly review. It is
+ * filing you do because *you* find it useful, which is why nothing in the app reads
+ * it back and asks you to keep it true.
+ *
+ * `parentId` is what makes subfolders, and it is the only relationship there is.
+ * Folders belong to a workspace like everything else does.
+ */
+export interface ProjectFolder {
+  id: string
+  workspaceId: string
+  /** Null at the top level. */
+  parentId: string | null
+  name: string
+  sortOrder: number
+  createdAt: string
+}
+
+/** A folder with its place in the tree worked out — what a list view needs. */
+export interface ProjectFolderView extends ProjectFolder {
+  /** Names from the top down, this folder last: `["Clients", "Acme"]`. */
+  path: string[]
+  /** How many levels down it sits. Top-level folders are 0. */
+  depth: number
+  /** Projects filed directly in it — not counting its subfolders'. */
+  projectCount: number
+  /** Folders filed directly in it. */
+  folderCount: number
+}
+
 export interface Project {
   id: string
   workspaceId: string
@@ -88,6 +121,12 @@ export interface Project {
   /** The date the whole project has to land, as YYYY-MM-DD. Separate from any task. */
   deadline: string | null
   status: ProjectStatus
+  /**
+   * The folder it is filed in, or null for the ones sitting loose at the top of the
+   * page. Filing is optional and always reversible; nothing else in the app changes
+   * because of it.
+   */
+  folderId: string | null
   isPinned: boolean
   lastOpenedAt: string | null
   previousOpenedAt: string | null
@@ -482,8 +521,14 @@ export interface Settings {
   theme: 'light' | 'dark' | 'system'
   staleAfterDays: number
   horizonDays: number
-  /** How wide you have dragged the assistant panel. */
+  /**
+   * How wide you have dragged each side panel, in pixels: the navigation down the
+   * left, the assistant down the right, and the meeting page's details column.
+   * Bounds and defaults are in `shared/panels.ts`.
+   */
+  sidebarWidth: number
   assistantWidth: number
+  meetingWidth: number
   /**
    * Try to record what the computer is playing as well as what the microphone
    * hears — the other half of a video call.

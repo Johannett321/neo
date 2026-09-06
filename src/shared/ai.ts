@@ -21,19 +21,3 @@ export const MODELS: AiModel[] = [
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini', hint: 'Faster and cheaper; fine for lookups.' },
   { id: 'gpt-5.5', label: 'GPT-5.5', hint: 'The most capable, and the most expensive.' }
 ]
-
-/**
- * How wide the assistant panel is, in pixels. It is a preference like the theme, so
- * it is persisted like the theme — in the settings table, not in browser storage,
- * because everything this app remembers lives in the folder you can back up.
- *
- * The maximum is a function of the window rather than a constant: the panel may take
- * a lot of room, but never so much that the screen behind it stops being usable.
- */
-export const ASSISTANT_WIDTH = { default: 420, min: 340, max: 760 }
-
-export const clampAssistantWidth = (width: number, windowWidth: number): number =>
-  Math.max(
-    ASSISTANT_WIDTH.min,
-    Math.min(width, ASSISTANT_WIDTH.max, Math.max(ASSISTANT_WIDTH.min, windowWidth - 620))
-  )

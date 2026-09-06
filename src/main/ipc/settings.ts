@@ -1,7 +1,7 @@
 import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, shell } from 'electron'
-import { ASSISTANT_WIDTH } from '@shared/ai'
+import { PANELS } from '@shared/panels'
 import type { Settings } from '@shared/types'
 import { db, dataRoot, exportDir, exec, markdownDir, q } from '../db/client'
 import { DDL, MIGRATIONS } from '../db/ddl'
@@ -15,7 +15,9 @@ const DEFAULTS = {
   theme: 'system' as const,
   staleAfterDays: THRESHOLDS.stillAfterDays,
   horizonDays: 21,
-  assistantWidth: ASSISTANT_WIDTH.default
+  sidebarWidth: PANELS.sidebar.default,
+  assistantWidth: PANELS.assistant.default,
+  meetingWidth: PANELS.meeting.default
 }
 
 async function readSettings(): Promise<Settings> {
@@ -43,7 +45,9 @@ async function readSettings(): Promise<Settings> {
     theme: (stored.theme as Settings['theme']) ?? DEFAULTS.theme,
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
+    sidebarWidth: num('sidebarWidth', DEFAULTS.sidebarWidth),
     assistantWidth: num('assistantWidth', DEFAULTS.assistantWidth),
+    meetingWidth: num('meetingWidth', DEFAULTS.meetingWidth),
     // On by default: a meeting recording that catches only your half of the call is
     // the failure this feature exists to avoid, so it tries, and says when it cannot.
     captureSystemAudio: (stored.captureSystemAudio ?? 'true') !== 'false',
@@ -52,7 +56,7 @@ async function readSettings(): Promise<Settings> {
 }
 
 const TABLES = [
-  'workspace', 'project', 'person', 'membership',
+  'workspace', 'project_folder', 'project', 'person', 'membership',
   'task', 'note', 'decision', 'link', 'journal_entry', 'activity',
   // A transcript is writing, and the export is what survives this app. The audio is
   // not in here — it is a file in the data folder, which is already the backup.
