@@ -34,14 +34,26 @@ export function Sidebar(): React.JSX.Element {
   const reduceMotion = useReducedMotion() ?? false
   const { width, dragging, ref, onGrab, onReset } = useResizablePanel<HTMLElement>('sidebar')
 
+  /*
+    Inside a project the sidebar belongs to that project, so the tint follows it —
+    but only when the project has a colour of its own. `projectColor()` is not what
+    is wanted here: its fallback would hand back the workspace colour anyway, and
+    reading the column directly is what keeps a colourless project looking exactly
+    as it did before. The same 7% recipe either way, so a project's tint is no
+    louder than the workspace's, and the colour crossfades rather than snapping as
+    you walk in and out.
+  */
+  const project = useApi('project:get', { id: projectId ?? '' }, { enabled: !!projectId })
+  const tint = project.data?.project.color || workspace.color
+
   return (
     <aside
       ref={ref}
-      className="hairline relative flex shrink-0 flex-col border-r"
+      className="hairline relative flex shrink-0 flex-col border-r transition-[background-color] duration-500 ease-out"
       style={{
         width,
         // A quiet ambient tint so it is always obvious which area you are working in.
-        backgroundColor: `color-mix(in oklch, ${workspace.color} 7%, var(--color-base-200))`
+        backgroundColor: `color-mix(in oklch, ${tint} 7%, var(--color-base-200))`
       }}
     >
       <PanelResizeHandle
