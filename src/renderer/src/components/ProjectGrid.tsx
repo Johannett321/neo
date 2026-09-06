@@ -48,6 +48,17 @@ export function ProjectGrid({
   const [carried, setCarried] = useState<string | null>(null)
 
   /*
+   * Whether the pointer has taken the card somewhere that is not this grid — a
+   * collapsible, a folder, a crumb, or the empty page between them. All of those are
+   * drops of their own, and while one of them is the answer this one is not: exactly
+   * one place on the screen may be lit at a time, or the page is offering two landings
+   * for a card that can only have one. So the cards close back up into the order they
+   * were in and the outline comes off, leaving only the space the card is leaving
+   * behind. Coming back over the grid picks the arrangement up again where it left off.
+   */
+  const [elsewhere, setElsewhere] = useState(false)
+
+  /*
    * The order the page is drawing *while you are deciding*, which is not the order the
    * database is in until you let go. It is held in a ref as well as in state because
    * the drop and the last movement over a card can land in the same frame, and the
@@ -140,6 +151,7 @@ export function ProjectGrid({
   const lift = (id: string): void => {
     measure()
     setCarried(id)
+    setElsewhere(false)
     show(ids.slice())
     onDragged({ kind: 'project', id })
   }
@@ -173,6 +185,7 @@ export function ProjectGrid({
 
   const release = (): void => {
     setCarried(null)
+    setElsewhere(false)
     onDragged(null)
     if (!dropped.current) show(null)
     dropped.current = false
@@ -187,8 +200,21 @@ export function ProjectGrid({
         // Without this the drop is refused and the card flies back to where it started.
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
+        setElsewhere(false)
         const slot = slotAt(e.clientX, e.clientY)
         if (slot !== null) over(slot)
+      }}
+      /*
+       * Leaving hands the drag over to whatever is out there. The guard is the usual
+       * one: `dragleave` bubbles, so moving from one card to the next fires it on the
+       * grid as well, and only a related target the grid does not contain — including
+       * none at all, which is how leaving the window arrives — is really a departure.
+       */
+      onDragLeave={(e) => {
+        if (!carried) return
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        setElsewhere(true)
+        show(ids.slice())
       }}
       onDrop={(e) => {
         if (!carried) return
@@ -213,6 +239,7 @@ export function ProjectGrid({
           <Carryable
             project={project}
             carried={carried === project.id}
+            landing={carried === project.id && !elsewhere}
             onLift={() => lift(project.id)}
             onRelease={release}
           />
@@ -242,12 +269,15 @@ export function ProjectGrid({
 function Carryable({
   project,
   carried,
+  landing,
   onLift,
   onRelease
 }: {
   project: ProjectSummary
-  /** This is the card in the air, so what is drawn here is the space it will land in. */
+  /** This is the card in the air, so the slot it left is held open where it stands. */
   carried: boolean
+  /** And this grid is still where it would land, so that slot is drawn as the landing. */
+  landing: boolean
   onLift: () => void
   onRelease: () => void
 }): React.JSX.Element {
@@ -273,7 +303,7 @@ function Carryable({
       <div className={away ? 'invisible' : ''}>
         <ProjectCard project={project} />
       </div>
-      {away && (
+      {away && landing && (
         <span className="pointer-events-none absolute inset-0 rounded-box border-2 border-dashed border-primary/40 bg-primary/[0.06]" />
       )}
     </div>

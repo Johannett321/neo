@@ -39,9 +39,9 @@ export function Sidebar(): React.JSX.Element {
     but only when the project has a colour of its own. `projectColor()` is not what
     is wanted here: its fallback would hand back the workspace colour anyway, and
     reading the column directly is what keeps a colourless project looking exactly
-    as it did before. The same 7% recipe either way, so a project's tint is no
-    louder than the workspace's, and the colour crossfades rather than snapping as
-    you walk in and out.
+    as it did before. The same recipe either way, so a project's tint is no louder
+    than the workspace's, and the colour crossfades rather than snapping as you walk
+    in and out.
   */
   const project = useApi('project:get', { id: projectId ?? '' }, { enabled: !!projectId })
   const tint = project.data?.project.color || workspace.color
@@ -52,8 +52,14 @@ export function Sidebar(): React.JSX.Element {
       className="hairline relative flex shrink-0 flex-col border-r transition-[background-color] duration-500 ease-out"
       style={{
         width,
-        // A quiet ambient tint so it is always obvious which area you are working in.
-        backgroundColor: `color-mix(in oklch, ${tint} 7%, var(--color-base-200))`
+        /*
+         * An ambient tint, so which area you are working in is answered by the whole
+         * column rather than by reading the mark at the top of it. Enough of the colour
+         * to be told apart from the workspace next door at a glance, and no more: it is
+         * still a surface the sidebar's own text and marks have to read against, which
+         * is what keeps this a mix into base-200 rather than the colour itself.
+         */
+        backgroundColor: `color-mix(in oklch, ${tint} 30%, var(--color-base-200))`
       }}
     >
       <PanelResizeHandle
