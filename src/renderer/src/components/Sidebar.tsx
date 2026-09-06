@@ -109,19 +109,27 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <div className="flex-1" />
-      <div className="px-3 pb-2">
-        <NavLink
-          to={projectId ? `/projects/${projectId}/settings` : '/settings'}
-          className={({ isActive }) =>
-            `flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
-              isActive ? 'bg-base-100 font-medium shadow-sm' : 'text-base-content/60 hover:bg-base-content/5'
-            }`
-          }
-        >
-          <Icon name="settings" size={15} className="opacity-70" />
-          {projectId ? 'Project settings' : 'Settings'}
-        </NavLink>
-      </div>
+      {/*
+        Only inside a project. The app's own settings hang off the ⋯ menu at the top
+        right of the window, and a workspace's live in the switcher below it — on the
+        workspace they belong to. A project's stay here because while you are in one
+        this column *is* the project.
+      */}
+      {projectId && (
+        <div className="px-3 pb-2">
+          <NavLink
+            to={`/projects/${projectId}/settings`}
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 rounded-field px-2.5 py-[7px] text-[13px] transition ${
+                isActive ? 'bg-base-100 font-medium shadow-sm' : 'text-base-content/60 hover:bg-base-content/5'
+              }`
+            }
+          >
+            <Icon name="settings" size={15} className="opacity-70" />
+            Project settings
+          </NavLink>
+        </div>
+      )}
       <WorkspaceSwitcher />
     </aside>
   )

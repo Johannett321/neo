@@ -10,7 +10,7 @@ import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
 import { useApi, useLiveData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
-import { ContextMenuProvider } from '@/lib/contextMenu'
+import { ContextMenuProvider, useContextMenu } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
 import { useTheme } from '@/lib/theme'
 import { RecorderProvider } from '@/lib/recorder'
@@ -139,6 +139,8 @@ function Shell(): React.JSX.Element {
               <Icon name="plus" size={14} />
               New
             </button>
+
+            <AppMenu />
           </header>
         )}
 
@@ -206,6 +208,40 @@ function Shell(): React.JSX.Element {
         }}
       />
     </div>
+  )
+}
+
+/**
+ * The app itself, rather than whatever is on screen — which is why it lives at the far
+ * end of the header and not in the sidebar, where every other thing you can press is
+ * about the workspace you are in. A workspace's own settings stay in the switcher at
+ * the bottom of the sidebar, on the workspace they belong to, and a project's in that
+ * project's own column.
+ *
+ * It hangs off the one menu system the whole app uses, so this says what is in the
+ * list and nothing about where it goes or how it closes.
+ */
+function AppMenu(): React.JSX.Element {
+  const openMenu = useContextMenu()
+  const navigate = useNavigate()
+
+  return (
+    <button
+      className="btn btn-ghost btn-sm -mr-2 px-2"
+      title="More"
+      aria-haspopup="menu"
+      onClick={(e) =>
+        openMenu(e, [
+          {
+            label: 'App settings',
+            icon: 'settings',
+            onSelect: () => navigate('/settings')
+          }
+        ])
+      }
+    >
+      <Icon name="more" size={16} />
+    </button>
   )
 }
 
