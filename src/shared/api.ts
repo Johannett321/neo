@@ -342,6 +342,59 @@ export interface ApiMap {
 
   'shell:openExternal': { in: { url: string }; out: void }
 
+  /* ------------------------------------------------------------------- updating */
+
+  /**
+   * Where the update stands, as of now. Cheap, and safe to ask for on every render:
+   * it reports what the runner already knows and never goes near the network.
+   *
+   * Progress arrives on the `update` event rather than by polling this, for the same
+   * reason a recording's does — it runs whether or not anything is on screen.
+   */
+  'update:status': { in: void; out: import('./update').UpdateStatus }
+  /**
+   * Look now, whatever the preference says and whatever the timer was going to do.
+   * This is the only path that will ask GitHub while updates are switched off — off
+   * means the app never does it on its own, not that the button is a lie.
+   */
+  'update:check': { in: void; out: import('./update').UpdateStatus }
+  /** Fetch the waiting release and park it. Only meaningful once one is available. */
+  'update:download': { in: void; out: import('./update').UpdateStatus }
+  /**
+   * Close and come back on the new version. Quitting is what applies it; there is no
+   * other way in, because replacing an application somebody is using is not a thing
+   * to do politely. False when there was nothing staged to apply.
+   */
+  'update:restart': { in: void; out: { restarting: boolean } }
+  /**
+   * Whether this copy can replace itself, and whether doing so will make macOS
+   * forget its privacy permissions. Read from the bundle's own signature — see
+   * `lib/updater.ts` — so a real Developer ID retires the permissions panel by itself.
+   */
+  'update:capability': { in: void; out: import('./update').UpdateCapability }
+
+  /**
+   * What changed, bundled with the app rather than fetched.
+   *
+   * Without a version it is the whole history, newest first — the Updates pane. With
+   * one it is that release alone, which is what the screen after an update draws, and
+   * null when that version shipped without writing anything down.
+   */
+  'changelog:list': { in: void; out: import('./update').ChangelogEntry[] }
+  'changelog:get': { in: { version: string }; out: import('./update').ChangelogEntry | null }
+
+  /**
+   * The three permissions an ad-hoc signed update costs, and the only honest way to
+   * get them back: asking for each one for real. Two of the three cannot be read
+   * without asking — macOS has no API for either — so `read` reports `unknown` rather
+   * than guessing, and pressing the button *is* the question.
+   */
+  'permission:read': { in: void; out: import('./update').PermissionReport[] }
+  'permission:ask': {
+    in: { name: import('./update').PermissionName }
+    out: import('./update').PermissionReport
+  }
+
   /**
    * Turn the window itself into glass, or take it back.
    *

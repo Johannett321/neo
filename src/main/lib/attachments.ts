@@ -7,7 +7,7 @@ import { attachmentDir } from '../db/client'
  * Files put into a conversation.
  *
  * They are written into the data folder beside the icons rather than into the
- * database, for the same reason: a backup of `~/Documents/Neo` is then a backup of
+ * database, for the same reason: a backup of `~/.neo` is then a backup of
  * everything, and a 4 MB screenshot does not have to be read out of a row every time
  * the panel repaints. The renderer never learns a path it could open — it hands over
  * bytes on the way in and receives a data URL on the way out.

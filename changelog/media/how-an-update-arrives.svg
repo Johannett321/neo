@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 168" role="img"
+     aria-label="Neo checks quietly, fetches in the background, and swaps itself when you close it">
+  <!--
+    Drawn rather than screenshotted, and in a palette that reads on both a light and a
+    dark page: an SVG in an <img> cannot inherit the app's colours, so it must not
+    depend on them. Neutral greys carry the structure; the one warm accent marks the
+    step that actually replaces the application.
+  -->
+  <style>
+    .box   { fill: none; stroke: #8b8b93; stroke-width: 1.25; }
+    .accent{ stroke: #d97742; }
+    .lead  { fill: #8b8b93; font: 500 12px ui-sans-serif, -apple-system, system-ui, sans-serif; }
+    .sub   { fill: #8b8b93; opacity: .72; font: 11px ui-sans-serif, -apple-system, system-ui, sans-serif; }
+    .num   { fill: #8b8b93; opacity: .5; font: 600 10px ui-monospace, monospace; }
+    .arrow { fill: none; stroke: #8b8b93; stroke-width: 1.25; opacity: .45; }
+  </style>
+
+  <g>
+    <rect class="box" x="8" y="26" width="184" height="94" rx="10"/>
+    <text class="num" x="24" y="50">01</text>
+    <text class="lead" x="24" y="72">Neo looks, quietly</text>
+    <text class="sub" x="24" y="92">Every few hours. Nothing</text>
+    <text class="sub" x="24" y="107">appears if there is nothing.</text>
+  </g>
+
+  <path class="arrow" d="M200 73h32m0 0-6-5m6 5-6 5"/>
+
+  <g>
+    <rect class="box" x="240" y="26" width="184" height="94" rx="10"/>
+    <text class="num" x="256" y="50">02</text>
+    <text class="lead" x="256" y="72">It fetches it</text>
+    <text class="sub" x="256" y="92">In the background, checked,</text>
+    <text class="sub" x="256" y="107">and parked beside the app.</text>
+  </g>
+
+  <path class="arrow" d="M432 73h32m0 0-6-5m6 5-6 5"/>
+
+  <g>
+    <rect class="box accent" x="472" y="26" width="160" height="94" rx="10"/>
+    <text class="num" x="488" y="50">03</text>
+    <text class="lead" x="488" y="72">You close it</text>
+    <text class="sub" x="488" y="92">The swap happens then,</text>
+    <text class="sub" x="488" y="107">and it opens back up.</text>
+  </g>
+
+  <text class="sub" x="8" y="150">No disk image. Nothing to drag. Nothing to press unless you want it sooner.</text>
+</svg>

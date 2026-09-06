@@ -4,7 +4,7 @@ import type { WeatherNow, WeatherPlace } from '@shared/types'
 /**
  * The one thing in this application that talks to the internet about you.
  *
- * Everything else here is deliberately offline — the database is in your Documents
+ * Everything else here is deliberately offline — the database is in your home
  * folder, the assistant only leaves the machine because you gave it a key. The
  * weather cannot be derived from anything local, so it is fetched, and the whole of
  * this file is about keeping that honest:

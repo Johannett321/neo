@@ -158,7 +158,7 @@ function IdentityPane({ workspace }: { workspace: Workspace }): React.JSX.Elemen
  * app enforces on data should hold for what leaves the machine too.
  *
  * The key is write-only across the bridge. It is stored beside everything else in
- * `~/Documents/Neo` and never sent back to the renderer — all this screen is ever
+ * `~/.neo` and never sent back to the renderer — all this screen is ever
  * told is whether there is one, which is all it needs to know.
  */
 function AssistantPane({ workspace }: { workspace: Workspace }): React.JSX.Element {

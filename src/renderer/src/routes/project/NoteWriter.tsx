@@ -9,7 +9,7 @@ import { ConfirmButton, EmptyState, Kbd } from '@/components/primitives'
 /**
  * A page to write on, rather than a box to fill in.
  *
- * A note is Markdown — it is stored as Markdown and mirrored to `~/Documents/Neo` as
+ * A note is Markdown — it is stored as Markdown and mirrored to `~/.neo` as
  * Markdown — and it renders itself as you write it. There is no preview, because a
  * preview is a second copy of the note you have to look away to see: type `## ` and
  * this line becomes a heading with the cursor still in it. See `MarkdownEditor`.

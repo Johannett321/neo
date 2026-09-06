@@ -227,6 +227,11 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,
   and if a screen needs more than about five, the screen is doing too much.
+- **The app updates itself, and the changelog ships with it.** `changelog/<version>.md`
+  is written in the same commit as the version bump; the release workflow refuses a tag
+  without one and generates the GitHub release notes from it, so a release is described
+  once. See *Updating itself* below for why there is no `electron-updater` here and what
+  the ad-hoc signature costs on every update.
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
   weight. Nothing is fetched at runtime; add a path rather than a dependency.
 - **Dates use `components/DateField.tsx`**, never `<input type="date">`.
@@ -317,6 +322,80 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 - Workspace colours are identifiers, not surfaces — a dot or a 2px rule, never a filled
   block. Theme tokens for `pm` / `pmdark` live in `styles.css`. This is why the Today
   banner is a photograph or an ordinary panel and never a wash of the workspace's hue.
+
+### Updating itself
+
+`src/main/lib/update.ts` is the pure half and `lib/updater.ts` the runner, split the way
+`notify.ts` and `notifier.ts` are. `lib/changelog.ts` reads the bundled changelog and
+`lib/permissions.ts` hands back what an update costs. The design rule is that **nothing
+is applied while somebody is using the app**.
+
+A release is found, fetched, unpacked, checked and parked as a complete working copy
+beside the application; only then is anything swapped, and the swap happens on the way
+out. A crash before it costs a folder the next launch sweeps (`pruneStaged()`, beside
+`pruneRecordings()`); a crash during it leaves the old version in place, because the
+outgoing bundle is **moved aside rather than deleted** and moved back if the new one
+cannot land.
+
+**There is no Squirrel and no `electron-updater`, and there cannot be.** Both validate
+the incoming bundle against the running one's designated requirement, and an ad-hoc
+signature pins that to a per-build hash — they would refuse every release this repository
+will ever publish. What stands in for that check is in `prepare()`: the bundle must carry
+`com.svartdal.neo`, must be the version it claimed, and must satisfy `codesign --verify
+--deep --strict`. Nothing this app downloads is quarantined, so Gatekeeper never sees it
+and those three questions are the only ones anybody asks. `ditto`, never `unzip`: an
+application bundle is symlinks and extended attributes, and only ditto puts both back.
+
+**The swap is a detached shell script and cannot be anything else** — a process cannot
+replace the bundle it is running out of. It is generated as text in the pure module so a
+test can read it without a Mac, and it waits on the pid rather than assuming the app has
+gone. `applyStagedUpdate()` runs from `before-quit`, *after* `closeDb()` resolves.
+
+`staged` is held in memory on purpose, and it is the only thing here that is: it means
+"the person agreed to this in this session". A preference that survived a restart and
+silently installed something would be an app updating itself at a moment nobody chose.
+
+Which copy may do this at all is `updateCapability()` — a development run (checked
+through `ELECTRON_RENDERER_URL`, never `app.isPackaged`, which lies), a non-AppImage
+Linux build and an unwritable folder all report `unsupported` and offer the downloads
+page. `resetsPermissions` is **read from the bundle's own signature** (`codesign -dv`,
+which writes to stderr even on success) rather than assumed, so a real Developer ID
+retires the whole permissions panel without a line being touched.
+
+**The changelog is a folder in the repository, bundled and never fetched.** `changelog/`
+holds one Markdown file per version with its illustrations in `media/`; it ships as
+`extraResources` and is found by looking for the file. The screen that reads it appears
+on the first launch after an update, which is exactly the launch most likely to have no
+network. The release workflow generates the GitHub release notes from the same files, so
+a release is described **once**: do not write notes into a tag by hand. A tag with no
+changelog file fails the workflow, and `verify.ts` asserts the same thing a step earlier.
+
+Illustrations are relative paths rewritten to `neo-media://changelog/…` by the parser,
+because the renderer's CSP allows an image from `self` and a data URL and nothing else,
+and because a screenshot re-fetched from the internet defeats the point of bundling it.
+`Markdown.tsx` therefore draws an image **only** for that scheme and renders anything
+else as its alt text; an image alone on a line becomes a figure, one inside a sentence
+stays inline. Add syntax to the parser, not to either renderer — image support went into
+`lib/markdown.ts` for that reason.
+
+**An update costs three permissions, every time, and the app says so where it is felt.**
+macOS remembers a privacy permission against the code signature, which is rebuilt each
+release, so the microphone, the audio tap and notifications are all forgotten. The screen
+that says what changed is the screen that asks for them back — one panel, a button each,
+no "grant all" (three system sheets at once is a stack nobody reads the wording of). Two
+of the three cannot be *read*: macOS has no API for either, so `permission:read` reports
+`unknown` rather than guessing and pressing the button **is** the question, exactly as
+`notification:test` already is. Do not add a state this cannot establish.
+
+**`off` means no request**, not a request whose answer is dropped — the same rule the
+weather is held to, asserted the same way by counting sockets in `verify.ts`. The *Check*
+button is still allowed to look, because a button that lied would be worse.
+
+`lastSeenVersion` gates the what's-new screen the way `onboardedAt` gates the
+introduction, and for the same reason: empty is indistinguishable from a new install, so
+it is written down and nothing is shown until the *next* update. It is written when the
+screen is shown rather than when it is closed — the marker is "this version has been
+announced", not "this was read to the end".
 
 ### Recording a meeting
 
@@ -447,8 +526,23 @@ looks the path up in the database, so the renderer never learns a path.
 
 ### The database
 
-PGlite (real PostgreSQL compiled to WebAssembly, in-process) writing to `~/Documents/Neo`.
+PGlite (real PostgreSQL compiled to WebAssembly, in-process) writing to `~/.neo`.
 No server, no Docker, nothing to start.
+
+**A dotfolder in the home directory, not Documents**, and `dataRoot()` in `db/client.ts`
+carries the reasoning: the database is the application's working state rather than one of
+your files, and Documents on a Mac may be an iCloud-synced folder, which is a poor place
+for something written to constantly. It is still a plain folder you can copy — the
+Markdown mirror is ordinary files and the app opens the folder directly from two places,
+so nothing depends on the Finder showing it.
+
+Earlier homes are **moved, never copied and never merged**: `~/Documents/Neo`, and before
+the rename `~/Documents/ProjectManager`. An existing `~/.neo` always wins, and a move that
+fails leaves the old folder in place and carries on using it — failing to tidy up is not a
+reason to fail to open somebody's work. `verify:upgrade` writes its old-schema database in
+the *legacy* location precisely so every run exercises the move. Note the consequence:
+running an older build after the move gives it a fresh empty folder in Documents, because
+nothing tells it where the data went. Do not add a third location.
 
 `src/main/db/ddl.ts` is the single source of truth, applied idempotently on every launch:
 `DDL` creates tables and indexes in one batch, then `MIGRATIONS` runs **one statement at a

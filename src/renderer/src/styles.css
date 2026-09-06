@@ -576,6 +576,38 @@ summary,
   color: color-mix(in oklch, var(--color-base-content) 62%, transparent);
 }
 
+/*
+ * An illustration in Markdown. Almost nothing in this app has one — a note is words
+ * — but a changelog earns them: "the update button now lives here" is a sentence
+ * that costs a paragraph and a screenshot that costs a glance.
+ *
+ * The hairline and the rounded corner are what keep a screenshot of the app from
+ * dissolving into the page it is being read on, since the two are the same colours.
+ */
+.md-figure {
+  margin: 1.1em 0;
+}
+.md-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-box);
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  background: var(--color-base-200);
+}
+.md-figure figcaption {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  text-align: center;
+  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+}
+.md-inline-image {
+  display: inline-block;
+  vertical-align: text-bottom;
+  max-height: 1.4em;
+  width: auto;
+}
+
 .md hr {
   margin: 1.2em 0;
   border: none;

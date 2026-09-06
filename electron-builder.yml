@@ -22,6 +22,19 @@ extraResources:
   # already copes with.
   - from: out/native/neo-audiotap
     to: native/neo-audiotap
+  # What changed, and the screenshots that go with it. Bundled rather than fetched:
+  # the screen that says what is new appears on the first launch after an update,
+  # which is exactly the launch most likely to happen on a train. See lib/changelog.ts.
+  - from: changelog
+    to: changelog
+    filter:
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+      - '**/*.webp'
+      - '**/*.gif'
+      - '**/*.svg'
 # Runs after the bundle is assembled and before a real signature would be applied.
 # See the script: without it macOS never reads the microphone and audio-capture
 # usage strings, and refuses both without ever asking.
@@ -36,14 +49,19 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: >-
       Neo records the meetings you ask it to, so it can write out what was said and
-      pull the decisions and commitments out of it. Recordings stay in your own
-      Documents folder.
+      pull the decisions and commitments out of it. Recordings stay in a folder on
+      this Mac and are never uploaded.
     # Core Audio process taps need this, and there is no public API to ask for the
     # permission up front — macOS shows its own sheet the first time a tap is opened,
     # and this is the sentence on it.
     NSAudioCaptureUsageDescription: >-
       Neo records what your computer is playing, so a recorded meeting captures the
       people on the call and not only your own microphone.
+  # The disk image is for a person installing Neo for the first time; the **zip** is
+  # what the app downloads to replace itself, because a `.dmg` is a thing you mount
+  # and drag out of and the whole point of the updater is that nobody does that.
+  # Both names are electron-builder's defaults, which the updater's asset matcher is
+  # written against — see `pickAsset` in `main/lib/update.ts`.
   target:
     - dmg
     - zip

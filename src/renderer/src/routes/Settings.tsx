@@ -10,6 +10,7 @@ import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
 import { IconPicker } from '@/components/IconPicker'
 import { SettingsLayout } from '@/components/SettingsLayout'
+import { UpdatesPane } from '@/components/Updates'
 import { Field, Kbd, Panel } from '@/components/primitives'
 
 export function SettingsPage(): React.JSX.Element {
@@ -77,6 +78,13 @@ export function SettingsPage(): React.JSX.Element {
           icon: 'chat',
           description: 'Let the Claude desktop app read and change what is in Neo.',
           render: () => <ClaudePane />
+        },
+        {
+          id: 'updates',
+          label: 'Updates',
+          icon: 'download',
+          description: 'How Neo keeps itself current, and what every version changed.',
+          render: () => <UpdatesPane />
         },
         {
           id: 'shortcuts',

@@ -1,7 +1,7 @@
 /**
  * Everything this app knows about Markdown syntax, in one place.
  *
- * A note *is* Markdown — it is stored as Markdown and mirrored to `~/Documents/Neo`
+ * A note *is* Markdown — it is stored as Markdown and mirrored to `~/.neo`
  * as Markdown — and the editor renders it in place as you type rather than beside
  * what you type. So this does not produce HTML: it says what each line is and where
  * the syntax ends and the words begin, and `MarkdownEditor` styles the line to match
@@ -110,7 +110,7 @@ export function fenced(lines: string[]): boolean[] {
 }
 
 export interface Inline {
-  kind: 'text' | 'strong' | 'em' | 'code' | 'strike' | 'link'
+  kind: 'text' | 'strong' | 'em' | 'code' | 'strike' | 'link' | 'image'
   /** The opening syntax, which hides when the cursor is elsewhere. */
   open: string
   body: string
@@ -127,6 +127,9 @@ const INLINE = [
   '(?<strong>\\*\\*[^\\n]+?\\*\\*|__[^\\n]+?__)',
   '(?<strike>~~[^\\n]+?~~)',
   '(?<em>\\*[^\\s*][^\\n]*?\\*|_[^\\s_][^\\n]*?_)',
+  // Before the link, and it has to be: a link pattern would match the `[…](…)` half
+  // of an image and leave a stray `!` behind as text.
+  '(?<image>!\\[[^\\]\\n]*\\]\\([^)\\s]*\\))',
   '(?<link>\\[[^\\]\\n]*\\]\\([^)\\s]*\\))',
   '(?<url>https?:\\/\\/[^\\s<>)\\]]+)'
 ].join('|')
@@ -156,6 +159,14 @@ export function inlines(source: string): Inline[] {
     else if (g.em) {
       const mark = g.em.slice(0, 1)
       out.push({ kind: 'em', open: mark, body: g.em.slice(1, -1), close: mark, href: '' })
+    } else if (g.image) {
+      const parts = /^!\[([^\]]*)\]\(([^)\s]*)\)$/.exec(g.image)
+      if (parts) {
+        // `body` is the alt text, which is what the editor shows and what the
+        // renderer draws underneath the picture. The renderer decides whether there
+        // *is* a picture — see components/Markdown.tsx.
+        out.push({ kind: 'image', open: '![', body: parts[1], close: `](${parts[2]})`, href: parts[2] })
+      }
     } else if (g.link) {
       const parts = /^\[([^\]]*)\]\(([^)\s]*)\)$/.exec(g.link)
       if (parts) {

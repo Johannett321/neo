@@ -32,6 +32,22 @@ function Inline({ source }: { source: string }): React.JSX.Element {
             return <s key={i}>{part.body}</s>
           case 'code':
             return <code key={i}>{part.body}</code>
+          case 'image':
+            /*
+             * An illustration, and only ever one of the app's own.
+             *
+             * The renderer will draw a picture for `neo-media://` and for nothing
+             * else. That is not squeamishness about the syntax — it is that the CSP
+             * allows an image from `self` and a data URL and nothing more, so an
+             * `https://` image pasted into a note would draw a broken-image icon and
+             * a `file://` one would be a renderer that had learned a path. Both are
+             * worse than the alt text, which is what they get instead.
+             */
+            return part.href.startsWith('neo-media://') ? (
+              <img key={i} src={part.href} alt={part.body} className="md-inline-image" />
+            ) : (
+              <Fragment key={i}>{part.body || part.href}</Fragment>
+            )
           case 'link':
             return (
               <a
@@ -259,10 +275,25 @@ export function Markdown({ source, className = '' }: { source: string; className
       paragraph.push(raw.trim())
       i++
     }
+    const text = paragraph.join(' ')
+    /*
+     * A line that is nothing but an illustration is a figure rather than a sentence
+     * with a picture in it: full width, with its alt text as the caption underneath.
+     * This is what lets a changelog be a page of screenshots and a note be a note,
+     * out of the same syntax and with nothing to choose between.
+     */
+    const figure = /^!\[([^\]]*)\]\((neo-media:\/\/[^)\s]+)\)$/.exec(text.trim())
     out.push(
-      <p key={out.length}>
-        <Inline source={paragraph.join(' ')} />
-      </p>
+      figure ? (
+        <figure key={out.length} className="md-figure">
+          <img src={figure[2]} alt={figure[1]} />
+          {figure[1] && <figcaption>{figure[1]}</figcaption>}
+        </figure>
+      ) : (
+        <p key={out.length}>
+          <Inline source={text} />
+        </p>
+      )
     )
   }
 

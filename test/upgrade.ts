@@ -1,8 +1,8 @@
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
-import { initDb, orphanedForeignKeys, q } from '../src/main/db/client'
+import { dataRoot, initDb, orphanedForeignKeys, q } from '../src/main/db/client'
 import { mapWorkspace } from '../src/main/db/map'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
@@ -123,7 +123,13 @@ const ok = (label: string, cond: boolean, extra = ''): void => {
 }
 
 async function main(): Promise<void> {
-  const dir = join(__dataDir, 'Neo', 'db')
+  /*
+   * Written where an older version kept it — `Documents/Neo` — rather than where this
+   * one does, so the run exercises the folder move as well as the schema. The two are
+   * the same kind of upgrade and both only ever happen once, on somebody's real data.
+   */
+  const legacyRoot = join(__dataDir, 'Neo')
+  const dir = join(legacyRoot, 'db')
   mkdirSync(dir, { recursive: true })
   const legacy = new PGlite(dir)
   await legacy.waitReady
@@ -163,6 +169,16 @@ async function main(): Promise<void> {
 
   // The real thing: open that database with the current code.
   await initDb()
+
+  /*
+   * The data moved to the new home rather than being left behind or copied. A version
+   * that read the old folder in place would work perfectly until the next release
+   * moved it, and a version that left a copy behind would leave somebody editing two
+   * databases without knowing which one the app had.
+   */
+  ok('an install that predates ~/.neo is moved into it, not left behind',
+     dataRoot() === join(__dataDir, '.neo') && !existsSync(legacyRoot),
+     dataRoot())
 
   const people = await q<{ name: string; workspace_id: string | null }>('SELECT name, workspace_id FROM person')
   ok('existing people survive the upgrade', people.length === 2, people.map((p) => p.name).join(', '))

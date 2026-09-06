@@ -92,6 +92,10 @@ first time:
 If you would rather not run an unsigned binary — entirely reasonable — build it yourself
 from source with `npm run dist`, which is three commands below and produces the same thing.
 
+**You only do this once.** After the first launch Neo keeps itself up to date, and it
+does the whole thing itself — no disk image, nothing to drag, no Gatekeeper dance a
+second time. See [Updating itself](#updating-itself).
+
 ## Run it from source
 
 You need [Node.js](https://nodejs.org/) 22 or newer. That is the whole list — there is no
@@ -110,7 +114,7 @@ npm install && npm run dev
 
 Clone it, then one line, and the app is open — there is no second terminal, no database
 to provision and no `.env` to fill in. It creates its own embedded PostgreSQL database on
-first launch, inside a plain folder in your Documents. To get a real application bundle
+first launch, inside `~/.neo`. To get a real application bundle
 instead of a development window, run `npm run dist`.
 
 On that first launch it introduces itself and asks for two things: your name, and one
@@ -284,7 +288,7 @@ Today, search or the weekly review, and nothing in the app reads it back and ask
 keep it true. **Deleting one never deletes what is in it** — its projects and its
 subfolders move up a level and only the folder goes, because losing a project to a word
 that sounds like tidying up is not something this app will do. Folders are mirrored to
-disk as real directories, so `~/Documents/Neo/markdown/Day job/Clients/Acme/…` is exactly
+disk as real directories, so `~/.neo/markdown/Day job/Clients/Acme/…` is exactly
 where you filed it.
 
 A project takes its workspace's colour until you give it one of its own in project
@@ -692,6 +696,50 @@ the explanation hidden behind a tooltip. The colour was a thing you had to learn
 and it competed with the workspace colours for meaning; the reason itself turned out to be
 the only part worth showing. Colour on a project now means identity, nothing more.
 
+### Updating itself
+
+Neo replaces itself. Every few hours it asks GitHub what the latest release is; if there
+is one, it fetches it in the background, checks it, and parks it beside the application.
+The swap happens the next time you close the app, and the app comes back on the new
+version. There is no disk image to mount, nothing to drag into Applications, and nothing
+to press unless you want it sooner.
+
+Nothing interrupts you to tell you about it. The only thing that ever appears unasked is
+one quiet button in the corner of the header, saying a version is ready whenever you are.
+There is deliberately no dialog and no *Later* — an update that has to be dismissed is an
+update that gets dismissed for a year.
+
+**Settings › Updates** has the three answers: keep Neo current (the default), tell me and
+let me decide, or never look. *Never look* means **no request is made at all**, the same
+rule the weather is held to and asserted the same way; the *Check* button beside it still
+works whenever you press it.
+
+#### What changed, and the permissions it costs
+
+The first launch after an update shows what is new — read from a changelog bundled
+inside the app rather than fetched, so it works on a train. A changelog entry can be one
+sentence or a page with screenshots; both are written as ordinary Markdown in
+[`changelog/`](changelog/), and the release notes on GitHub are generated from the same
+files when the tag is pushed, so a release is described once rather than twice.
+
+That screen also asks for three permissions back, and this is the honest cost of a
+project with no Apple Developer certificate. macOS remembers what an app is allowed to
+do against that app's **code signature**, and Neo's is rebuilt from scratch with every
+release — so after each update your Mac has genuinely never met this copy before, and
+the microphone, the audio tap and notifications are all forgotten.
+
+Letting those lapse quietly is the worst version of this: you would find out three weeks
+later, in a recording with only your own half of a call in it. So they are handed back
+where the benefit is being read, with a button each, and the app knows to ask because it
+reads its own signature rather than assuming — the day there is a real Developer ID, the
+panel stops appearing on its own.
+
+#### Where it cannot
+
+Some copies must not replace themselves, and say so instead of pretending: a development
+build, a Linux build that is not an AppImage, and an app in a folder your account cannot
+write to. Those offer the downloads page.
+
 ### Notifications
 The other half of *needs a look*: the same facts, brought to you on the days you would
 want them, rather than waiting for you to open the app.
@@ -875,7 +923,7 @@ in arguments.
 
 ## Your data
 
-Everything lives in **`~/Documents/Neo`**:
+Everything lives in **`~/.neo`**:
 
 - `db/` — an embedded PostgreSQL database (PGlite: real Postgres compiled to WebAssembly,
   running inside the app). No server, no Docker, nothing to install or start.
@@ -891,6 +939,19 @@ Everything lives in **`~/Documents/Neo`**:
   it. Deleting a recording's audio from inside Neo removes the folder and keeps the
   transcript.
 - `exports/` — JSON dumps of the structured data, on demand.
+
+**If you have been using Neo already, your data moves itself.** Earlier versions kept
+all of this in `~/Documents/Neo`; the first launch after updating moves that folder to
+`~/.neo` and says so in the log. It is a move and not a copy, so there is never a second
+database quietly going stale, and it never lands on top of an existing `~/.neo` — if one
+is somehow already there, that one wins and the old folder is left exactly where it is.
+
+The leading dot is deliberate. Documents is for your files, and a PostgreSQL database
+being written to constantly is not one of them — on a Mac with iCloud's *Desktop &
+Documents* sync switched on it was being uploaded byte by byte as it changed, which is a
+poor thing to do to a database. It is still a plain folder you can copy, and the Markdown
+mirror is still ordinary files; **File › Reveal Data Folder** and the Data settings pane
+both open it directly, whatever the Finder chooses to hide.
 
 The Markdown mirror covers recordings too: a recorded meeting writes its recap into the
 write-up file and its transcript into a second file beside it, so the words survive this
@@ -970,6 +1031,13 @@ reports are welcome.
 Releases are built by GitHub Actions on native runners for all three platforms —
 `.github/workflows/release.yml`, triggered by pushing a `v*` tag. `ci.yml` runs the
 typecheck and both verify scripts on every push and pull request.
+
+**Cutting a release** means three things in one commit: bump `version` in `package.json`,
+write `changelog/<version>.md`, and tag it. The workflow refuses a tag with no changelog
+file — saying what changed is part of shipping it — and it sets the GitHub release notes
+from that file, so the sentence somebody reads before updating is the one the app shows
+them afterwards. The macOS **zip** goes up alongside the disk image and is not optional:
+it is the file already-installed copies download to replace themselves.
 
 Settings has no reset button: emptying the database is a thing you do to the data folder,
 not something to leave a click away from your own work.

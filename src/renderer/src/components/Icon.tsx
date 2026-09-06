@@ -52,6 +52,8 @@ const PATHS = {
   chat: 'M8 18.5l-4 2.5v-4.2A2.3 2.3 0 013 14.5v-7A2.5 2.5 0 015.5 5h13A2.5 2.5 0 0121 7.5v7a2.5 2.5 0 01-2.5 2.5H8z',
   paperclip: 'M19 11.5l-7.4 7.4a4.5 4.5 0 01-6.4-6.4l8-8a3 3 0 014.2 4.2l-8 8a1.5 1.5 0 01-2.1-2.1L15 7',
   arrowUp: 'M12 19V5M6 11l6-6 6 6',
+  // An arrow into a tray: what an update is, before it is anything else.
+  download: 'M12 4v10M8 10.5l4 4 4-4M5 19h14',
   stop: 'M8 8h8v8H8z',
   mic: 'M12 3.5a2.5 2.5 0 012.5 2.5v6a2.5 2.5 0 01-5 0V6A2.5 2.5 0 0112 3.5zM5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6',
   play: 'M7.5 5.2l11 6.8-11 6.8V5.2z',

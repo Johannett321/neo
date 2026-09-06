@@ -11,6 +11,7 @@ import { loadSampleData } from '../lib/sample'
 import { recordingDir } from '../lib/recording/store'
 import { setGlass } from '../lib/glass'
 import { handOver } from '../lib/splash'
+import { setUpdatePreference } from '../lib/updater'
 import { handle } from './util'
 
 const DEFAULTS = {
@@ -37,6 +38,14 @@ const DEFAULTS = {
    * the day's deadlines arrives at this moment and then it is quiet.
    */
   notifyAt: '09:00',
+  /*
+   * Automatic, and this is the one default in the app that acts without being asked.
+   * It earns that by being reversible and by never interrupting: nothing is applied
+   * until the app is closed, so the version you get is the current one and the moment
+   * you get it is a moment you chose. An update that waits behind a button is an
+   * update that is still waiting a year later.
+   */
+  updates: 'automatic' as const,
   staleAfterDays: THRESHOLDS.stillAfterDays,
   horizonDays: 21,
   sidebarWidth: PANELS.sidebar.default,
@@ -87,6 +96,10 @@ async function readSettings(): Promise<Settings> {
       ? (stored.notifyAt as string)
       : DEFAULTS.notifyAt,
     notifyWeekends: stored.notifyWeekends === 'true',
+    // Read back through the list of what it may be, exactly as the formats are: a
+    // value left by an older build must not mean "never look for an update again".
+    updates: pickOne(stored.updates, ['automatic', 'notify', 'off'], DEFAULTS.updates),
+    lastSeenVersion: stored.lastSeenVersion ?? '',
     staleAfterDays: num('staleAfterDays', DEFAULTS.staleAfterDays),
     horizonDays: num('horizonDays', DEFAULTS.horizonDays),
     sidebarWidth: num('sidebarWidth', DEFAULTS.sidebarWidth),
@@ -121,7 +134,12 @@ export function registerSettingsHandlers(): void {
         [key, String(value)]
       )
     }
-    return readSettings()
+    const settings = await readSettings()
+    // The runner holds the preference rather than reading it before every tick: it
+    // ticks whether or not the database is reachable, and `off` has to mean no
+    // request rather than a request that is thrown away.
+    setUpdatePreference(settings.updates)
+    return settings
   })
 
   handle('settings:revealData', async () => {

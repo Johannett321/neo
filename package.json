@@ -1,6 +1,6 @@
 {
   "name": "neo",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "A personal command centre for running several working lives at once.",
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",

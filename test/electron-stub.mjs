@@ -15,6 +15,7 @@ export const app = {
   getVersion: () => '0.0.0-test',
   setName: () => {},
   setPath: () => {},
+  quit: () => {},
   whenReady: async () => {}
 }
 
@@ -26,7 +27,25 @@ export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths
 // A headless run has no microphone and nothing to ask about it. The recording
 // pipeline is exercised by writing bytes straight into a segment, which is what the
 // renderer does anyway once the browser has handed them over.
-export const systemPreferences = { askForMediaAccess: async () => false }
+export const systemPreferences = {
+  askForMediaAccess: async () => false,
+  getMediaAccessStatus: () => 'not-determined'
+}
+
+/**
+ * Every request the app tried to make, and the reason the whole verify run can stay
+ * offline: nothing here reaches a socket, so an assertion about a switch meaning
+ * "no request" is checking the actual absence of one rather than a returned null.
+ *
+ * The updater and the weather are the only two things in the app that would use it.
+ */
+export const __fetches = []
+export const net = {
+  fetch: async (url) => {
+    __fetches.push(String(url))
+    throw new Error('The verify run makes no network requests.')
+  }
+}
 export const protocol = { registerSchemesAsPrivileged: () => {}, handle: () => {} }
 export const powerMonitor = { on: () => {} }
 // The splash screen asks the desktop whether it is dark, because the setting that

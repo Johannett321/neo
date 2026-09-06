@@ -1,4 +1,4 @@
-import { ipcMain, __handlers, __notifications } from 'electron'
+import { ipcMain, __handlers, __notifications, __fetches } from 'electron'
 import { initDb, closeDb, clearStrandedTriggers, orphanedForeignKeys } from '../src/main/db/client'
 import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
@@ -12,6 +12,7 @@ import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
 import { registerWeatherHandlers } from '../src/main/ipc/weather'
+import { registerUpdateHandlers } from '../src/main/ipc/updates'
 import { registerChatHandlers } from '../src/main/ipc/chat'
 import { registerMcpHandlers } from '../src/main/ipc/mcp'
 import { TOOLS } from '../src/main/lib/ai/tools'
@@ -25,6 +26,12 @@ import { deliveryDue } from '../src/main/lib/notify'
 import { deliverNotifications } from '../src/main/lib/notifier'
 import { splashDocument } from '../src/main/lib/splash'
 import { describeWeather } from '../src/shared/weather'
+import {
+  appImageSwapScript, changelogVersion, compareVersions, isNewer,
+  macSwapScript, parseChangelog, parseRelease, pickAsset
+} from '../src/main/lib/update'
+import { changelogMedia, listChangelog, readChangelog } from '../src/main/lib/changelog'
+import { checkForUpdate, setUpdatePreference, updateStatus } from '../src/main/lib/updater'
 import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
@@ -91,6 +98,7 @@ async function main(): Promise<void> {
   registerSearchHandlers()
   registerSettingsHandlers()
   registerWeatherHandlers()
+  registerUpdateHandlers()
   registerMcpHandlers()
   registerChatHandlers()
 
@@ -1942,6 +1950,143 @@ async function main(): Promise<void> {
   ok('the splash screen draws the same mark the sidebar does',
      splash.includes(`rx="${MARK.face.r}"`) &&
      MARK.steps.every((s) => splash.includes(`x="${s.x}" y="${s.y}"`)))
+
+  /*
+   * A fresh install lands in the home directory, not in Documents. The database is
+   * the application's working state rather than one of your files, and Documents on
+   * a Mac may be an iCloud-synced folder — which is a poor place for something being
+   * written to constantly. `verify:upgrade` asserts the other half: that an older
+   * install is *moved* here rather than left behind.
+   */
+  const where = await call('settings:get')
+  ok('a new install keeps its data in a dotfolder at home',
+     where.dataDir.endsWith('/.neo') && where.markdownDir === join(where.dataDir, 'markdown'),
+     where.dataDir)
+
+  /* ------------------------------------------------------------------ updating */
+
+  ok('versions sort the way a person reads them',
+     compareVersions('1.2.0', '1.10.0') < 0 &&
+     compareVersions('1.2.0', '1.2.0') === 0 &&
+     compareVersions('v2.0.0', '1.99.99') > 0 &&
+     // A missing segment is a zero, so these are the same version and not two.
+     compareVersions('1.2.0', '1.2') === 0 &&
+     // A pre-release comes before the version it is leading up to, never after it.
+     compareVersions('1.2.0-beta.1', '1.2.0') < 0 &&
+     isNewer('1.3.0', '1.2.9') && !isNewer('1.2.9', '1.2.9') && !isNewer('1.2.8', '1.2.9'))
+
+  const assets = [
+    { name: 'Neo-1.2.0-arm64.dmg', url: 'https://github.com/a/b/1', bytes: 1 },
+    { name: 'Neo-1.2.0-arm64-mac.zip', url: 'https://github.com/a/b/2', bytes: 2 },
+    { name: 'Neo-1.2.0-mac.zip', url: 'https://github.com/a/b/3', bytes: 3 },
+    { name: 'Neo-Setup-1.2.0.exe', url: 'https://github.com/a/b/4', bytes: 4 },
+    { name: 'Neo-1.2.0.AppImage', url: 'https://github.com/a/b/5', bytes: 5 }
+  ]
+  ok('each machine is offered the file that belongs on it',
+     pickAsset(assets, 'darwin', 'arm64')?.name === 'Neo-1.2.0-arm64-mac.zip' &&
+     // Intel is the name with no architecture in it, which is how electron-builder
+     // writes it — and it must never be the answer for Apple silicon.
+     pickAsset(assets, 'darwin', 'x64')?.name === 'Neo-1.2.0-mac.zip' &&
+     pickAsset(assets, 'win32', 'x64')?.name === 'Neo-Setup-1.2.0.exe' &&
+     pickAsset(assets, 'linux', 'x64')?.name === 'Neo-1.2.0.AppImage')
+
+  /*
+   * The failure this guards against is silent and permanent: an Apple silicon Mac
+   * will happily run the Intel build under Rosetta, so a loose match would move
+   * somebody onto the wrong architecture and nothing anywhere would say so.
+   */
+  ok('a Mac is never handed the wrong architecture',
+     pickAsset(assets.filter((a) => !a.name.includes('arm64')), 'darwin', 'arm64') === null)
+
+  ok('a release only offers assets from the place it lives',
+     parseRelease({ tag_name: 'v1.3.0', body: 'x', assets: [
+       { name: 'Neo-1.3.0-mac.zip', browser_download_url: 'https://example.com/evil.zip', size: 1 },
+       { name: 'Neo-1.3.0-arm64-mac.zip', browser_download_url: 'https://github.com/a/b/z', size: 1 }
+     ] })?.assets.length === 1 &&
+     parseRelease({ tag_name: 'v1.3.0', prerelease: true, assets: [] }) === null &&
+     parseRelease({ tag_name: 'v1.3.0', draft: true, assets: [] }) === null &&
+     parseRelease({ tag_name: 'nightly', assets: [] }) === null)
+
+  /*
+   * Off means **no request**, exactly as it does for the weather, and this is the
+   * assertion that keeps it true. It counts sockets rather than trusting a returned
+   * value: a version that fetched and threw the answer away would pass any check
+   * that only looked at what came back.
+   */
+  const before = __fetches.length
+  setUpdatePreference('off')
+  await checkForUpdate()
+  ok('updates switched off ask nobody anything',
+     __fetches.length === before && updateStatus().phase !== 'checking')
+
+  ok('the swap waits for the app to go, and puts the old one back if it cannot land',
+     (() => {
+       const script = macSwapScript({
+         app: '/Applications/Neo.app', staged: '/tmp/s/Neo.app', backup: '/tmp/s/previous.app', pid: 4242
+       })
+       return script.includes('kill -0 4242') &&
+         // Moved aside, never deleted: a failed move must leave somebody running the
+         // version they already had rather than nothing at all.
+         script.includes('mv "$APP" "$BACKUP"') &&
+         script.includes('mv "$BACKUP" "$APP"') &&
+         // Opened before anything is tidied, so a slow disk cannot cost an app.
+         script.indexOf('open "$APP"') < script.lastIndexOf('rm -rf "$BACKUP"') &&
+         appImageSwapScript({ image: '/opt/Neo.AppImage', staged: '/tmp/n', pid: 7 })
+           .includes('kill -0 7')
+     })())
+
+  /* ----------------------------------------------------------------- the changelog */
+
+  ok('a changelog reads its front matter, and its heading when it has none',
+     (() => {
+       const full = parseChangelog('1.2.0', '---\ntitle: Big news\ndate: 2026-09-06\n---\n\nHello.')
+       const heading = parseChangelog('1.1.0', '# From the heading\n\nBody.')
+       const bare = parseChangelog('1.0.0', 'Just a sentence.')
+       return full.title === 'Big news' && full.date === '2026-09-06' && full.body === 'Hello.' &&
+         // The heading becomes the title and leaves the body, so it is not drawn twice.
+         heading.title === 'From the heading' && heading.body === 'Body.' &&
+         bare.title === 'Version 1.0.0' && bare.body === 'Just a sentence.'
+     })())
+
+  ok('a changelog illustration is pointed at the only scheme that can serve it',
+     (() => {
+       const entry = parseChangelog('1.2.0', '![How it works](media/how.svg)\n\n![Remote](https://x/y.png)')
+       return entry.body.includes('![How it works](neo-media://changelog/media/how.svg)') &&
+         // Left exactly as written, and therefore drawn as its alt text: the point of
+         // bundling these is that they work with no network.
+         entry.body.includes('![Remote](https://x/y.png)')
+     })())
+
+  ok('only a version-shaped name is a changelog',
+     changelogVersion('1.2.0.md') === '1.2.0' && changelogVersion('README.md') === '' &&
+     changelogVersion('../secrets.md') === '')
+
+  /*
+   * The release workflow refuses a tag with no changelog file, so this is the same
+   * rule enforced a step earlier: saying what changed is part of shipping it, and
+   * finding that out from a failed release is finding it out too late.
+   */
+  const version = (await call('settings:get')).appVersion
+  const shipped = await readChangelog(version)
+  const history = await listChangelog()
+  ok('this version says what changed in it',
+     Boolean(shipped?.body) || version === '0.0.0-test',
+     version)
+  ok('the changelog is newest first',
+     history.length > 0 && history.every((entry: any, i: number) =>
+       i === 0 || compareVersions(history[i - 1].version, entry.version) > 0))
+
+  ok('a changelog illustration cannot be asked for outside its own folder',
+     changelogMedia('media/how-an-update-arrives.svg') !== '' &&
+     changelogMedia('../../package.json') === '' &&
+     changelogMedia('../README.md') === '' &&
+     // Only an image, whatever else is in there.
+     changelogMedia('1.2.0.md') === '')
+
+  const updateSettings = await call('settings:save', { updates: 'notify' })
+  ok('how much updating happens by itself is remembered',
+     updateSettings.updates === 'notify' &&
+     (await call('settings:save', { updates: 'nonsense' })).updates === 'automatic')
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

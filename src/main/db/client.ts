@@ -9,30 +9,60 @@ let pg: PGlite | null = null
 let root = ''
 
 /**
- * Everything lives in a plain, visible folder you own — no container, no daemon,
- * no opaque application-support directory. Back it up by copying it.
+ * Everything lives in one plain folder you own — no container, no daemon, no opaque
+ * application-support directory. Back it up by copying it.
+ *
+ * `~/.neo`, and the leading dot is the point. Documents is where *your* files go, and
+ * a running PostgreSQL database is not one of them: it is the application's working
+ * state, it is written to constantly, and on a Mac with iCloud's Desktop & Documents
+ * sync switched on it was being uploaded byte by byte as it changed — which is at
+ * best a waste and at worst a way to corrupt a database that has no business being
+ * synced. A dotfolder in the home directory is where a local-first application's data
+ * has lived on Unix for forty years, and it stays a plain folder you can copy: the
+ * Markdown mirror is still ordinary files, and **File › Reveal Data Folder** and the
+ * Data settings pane both open it directly, whatever the Finder chooses to hide.
+ *
+ * `app.getPath` rather than `homedir()` so a test can point the whole application
+ * somewhere temporary; the bare fallback is for a headless run with no Electron.
  */
 export function dataRoot(): string {
   if (root) return root
-  let documents: string
+  let home: string
   try {
-    documents = app.getPath('documents')
+    home = app.getPath('home')
   } catch {
-    documents = join(homedir(), 'Documents')
+    home = homedir()
   }
 
-  root = join(documents, 'Neo')
+  root = join(home, '.neo')
 
-  // The app used to be called ProjectManager. Move the folder across on first launch
-  // under the new name, but never on top of an existing one.
-  const legacy = join(documents, 'ProjectManager')
-  if (!existsSync(root) && existsSync(legacy)) {
+  /*
+   * Two earlier homes, newest first: `~/Documents/Neo`, and before the app was
+   * renamed, `~/Documents/ProjectManager`. The first one that exists is moved across
+   * on first launch — but **never on top of an existing folder**, so a `~/.neo` that
+   * is already there always wins and nothing can be quietly buried under it.
+   *
+   * A move that fails leaves the old folder exactly where it is and carries on using
+   * it. Failing to tidy up is not a reason to fail to open somebody's work.
+   */
+  if (!existsSync(root)) {
+    let documents: string
     try {
-      renameSync(legacy, root)
-      console.log(`Moved your data from ${legacy} to ${root}`)
-    } catch (error) {
-      console.warn('Could not move the data folder, continuing with the old one:', error)
-      root = legacy
+      documents = app.getPath('documents')
+    } catch {
+      documents = join(home, 'Documents')
+    }
+    const legacy = [join(documents, 'Neo'), join(documents, 'ProjectManager')].find((path) =>
+      existsSync(path)
+    )
+    if (legacy) {
+      try {
+        renameSync(legacy, root)
+        console.log(`Moved your data from ${legacy} to ${root}`)
+      } catch (error) {
+        console.warn('Could not move the data folder, continuing with the old one:', error)
+        root = legacy
+      }
     }
   }
 

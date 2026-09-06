@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
 import type { AiEvent, OpenTarget, RecordingEvent } from '@shared/types'
+import type { UpdateStatus } from '@shared/update'
 
 /**
  * The only surface the renderer gets. The database connection, the filesystem and
@@ -64,6 +65,18 @@ const api = {
     ipcRenderer.on('recording', listener)
     return () => {
       ipcRenderer.off('recording', listener)
+    }
+  },
+  /**
+   * The app replacing itself: a release found, a download getting closer, something
+   * parked and waiting for the next quit. It runs on a timer whether or not anybody
+   * is looking at the settings pane, so the screen is told rather than polling.
+   */
+  onUpdate(callback: (status: UpdateStatus) => void): () => void {
+    const listener = (_event: unknown, payload: UpdateStatus): void => callback(payload)
+    ipcRenderer.on('update', listener)
+    return () => {
+      ipcRenderer.off('update', listener)
     }
   },
   /**

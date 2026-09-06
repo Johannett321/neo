@@ -5,6 +5,8 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { Icon } from '@/components/Icon'
 import { PageTransition } from '@/components/PageTransition'
 import { Sidebar } from '@/components/Sidebar'
+import { UpdateNotice } from '@/components/Updates'
+import { WhatsNew } from '@/components/WhatsNew'
 import { CreateDialog } from '@/components/CreateDialog'
 import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
@@ -138,8 +140,17 @@ function Shell(): React.JSX.Element {
               <span className="flex-1">Search everything…</span>
             </button>
 
+            {/*
+              Before the assistant and after the search, which is the quietest place
+              in the header that is still somewhere you look. It draws nothing at all
+              unless there is a version waiting — see components/Updates.tsx.
+            */}
+            <div className="ml-auto">
+              <UpdateNotice />
+            </div>
+
             <button
-              className={`btn btn-sm ml-auto gap-1.5 ${assistant.open ? 'btn-active' : 'btn-ghost'}`}
+              className={`btn btn-sm gap-1.5 ${assistant.open ? 'btn-active' : 'btn-ghost'}`}
               onClick={assistant.toggle}
               title="Assistant (⌘J)"
               aria-pressed={assistant.open}
@@ -207,6 +218,12 @@ function Shell(): React.JSX.Element {
       </div>
 
       <AssistantPanel />
+
+      {/*
+        Mounted here rather than at the gate: it is a thing the app says once you are
+        already inside it, and a first run has an introduction of its own to give.
+      */}
+      <WhatsNew />
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <CreateDialog

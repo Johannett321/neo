@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { dataRoot } from './db/client'
 import { mirrorAll } from './lib/markdown'
+import { checkForUpdate } from './lib/updater'
 
 /**
  * Menu items that the renderer has to act on — navigation, dialogs — are sent as
@@ -43,6 +44,20 @@ export function buildAppMenu(): void {
             label: name,
             submenu: [
               { role: 'about' as const, label: `About ${name}` },
+              /*
+               * Where macOS has put this since before anyone reading it was working,
+               * which is the whole argument for it being here: nobody hunts for it,
+               * they look under the app's own name. It both looks *and* opens the
+               * pane, because "checking" with no screen to report to is a menu item
+               * that appears to do nothing.
+               */
+              {
+                label: 'Check for Updates…',
+                click: () => {
+                  void checkForUpdate(true)
+                  send('go:/settings?pane=updates')
+                }
+              },
               { type: 'separator' as const },
               {
                 label: 'Settings…',
@@ -90,6 +105,13 @@ export function buildAppMenu(): void {
         ...(isMac
           ? [{ role: 'close' as const }]
           : [
+              {
+                label: 'Check for Updates…',
+                click: () => {
+                  void checkForUpdate(true)
+                  send('go:/settings?pane=updates')
+                }
+              },
               {
                 label: 'Settings…',
                 accelerator: 'CmdOrCtrl+,',

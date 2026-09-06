@@ -308,7 +308,13 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
                     }}
                   />
                 )}
-                {step === 'notifications' && <Notifications asked={asked} />}
+                {step === 'notifications' && (
+                  <Notifications
+                    asked={asked}
+                    workspaceName={workspaceName}
+                    reduce={Boolean(reduce)}
+                  />
+                )}
                 {step === 'ready' && (
                   <Ready
                     name={name}
@@ -550,7 +556,7 @@ function Tour(): React.JSX.Element {
 
       <Line className="mt-5">
         <p className="text-[11.5px] leading-relaxed text-base-content/40">
-          Everything is kept on this machine, in your Documents folder, as a database and a mirror of
+          Everything is kept on this machine, in a folder you own, as a database and a mirror of
           plain Markdown. Nothing leaves it on its own.
         </p>
       </Line>
@@ -696,8 +702,6 @@ function WorkspaceStep({
   )
 }
 
-/** What you made, before it is written. The two shortcuts are the two that matter on
- *  an empty app: putting something in, and finding it again. */
 /**
  * The one panel in the flow that asks for something the app cannot give itself.
  *
@@ -710,16 +714,14 @@ function WorkspaceStep({
  * Only shown where the operating system actually asks. See `notification:capability`.
  */
 function Notifications({
-  asked
+  asked,
+  workspaceName,
+  reduce
 }: {
   asked: { shown: boolean; reason: string } | null
+  workspaceName: string
+  reduce: boolean
 }): React.JSX.Element {
-  const moments: [IconName, string][] = [
-    ['flag', 'A project deadline a week out, and again on the day'],
-    ['clock', 'A card due tomorrow, and one due today'],
-    ['alert', 'Anything still open the morning after it was due']
-  ]
-
   return (
     <div>
       <Line>
@@ -728,30 +730,38 @@ function Notifications({
         </h1>
       </Line>
       <Line className="mt-2">
-        <p className="max-w-[32rem] text-[13.5px] leading-relaxed text-base-content/60">
-          Neo works out what is coming from the dates already on your work — there is no
-          reminder to set, and nothing to dismiss. Once a morning it says the one thing
-          worth knowing, and the rest of the day it is quiet.
+        <p className="max-w-[30rem] text-[13.5px] leading-relaxed text-base-content/60">
+          One notification a morning, worked out from the dates already on your work. There is
+          no reminder to set and nothing to dismiss.
         </p>
       </Line>
 
+      {/*
+        The picture is the pitch. Everything the prose here used to claim — the hour, the
+        fact that four due things arrive as one sentence, the working life named at the end
+        of it — is visible in a single drawn notification, so it is drawn instead of said.
+      */}
       <Line className="mt-6">
-        <div className="hairline space-y-2.5 rounded-box border bg-base-200/40 px-4 py-3.5">
-          {moments.map(([glyph, label]) => (
-            <div key={label} className="flex items-center gap-2.5">
-              <Icon name={glyph} size={14} className="shrink-0 text-primary" />
-              <span className="text-[12.5px] text-base-content/65">{label}</span>
-            </div>
-          ))}
-        </div>
+        <Banner workspaceName={workspaceName} reduce={reduce} />
       </Line>
 
-      <Line className="mt-4">
-        <p className="text-[11.5px] leading-relaxed text-base-content/40">
-          Nine in the morning, never at weekends, and one notification however many things
-          are due on it. All of it is yours to change in Settings, per workspace, and you
-          can turn the whole thing off in a click.
-        </p>
+      {/* The detail is real and worth having; it is simply not worth reading before you
+          have agreed to anything. Folded, it is one line. */}
+      <Line className="mt-5">
+        <Disclosure label="What it will tell you">
+          <div className="space-y-2">
+            {MOMENTS.map(([glyph, label]) => (
+              <div key={label} className="flex items-center gap-2.5">
+                <Icon name={glyph} size={14} className="shrink-0 text-primary" />
+                <span className="text-[12.5px] text-base-content/65">{label}</span>
+              </div>
+            ))}
+            <p className="pt-1 text-[11.5px] leading-relaxed text-base-content/40">
+              Nine in the morning, never at weekends. All of it is yours to change in Settings,
+              per workspace — including off.
+            </p>
+          </div>
+        </Disclosure>
       </Line>
 
       {/*
@@ -761,24 +771,20 @@ function Notifications({
       */}
       <Line className="mt-5">
         {asked === null ? (
-          <p className="text-[12px] leading-relaxed text-base-content/45">
-            Your Mac will ask you to allow it. Nothing is sent anywhere — a notification is
-            drawn by this machine, from work that never leaves it.
+          <p className="text-[12px] text-base-content/45">
+            Your Mac will ask you to allow it. Nothing leaves this machine.
           </p>
         ) : asked.shown ? (
           <div className="flex items-start gap-2.5 text-[12.5px] text-base-content/65">
             <Icon name="check" size={15} className="mt-px shrink-0 text-success" />
-            <span>
-              That one just appeared on your desktop. Deadlines will arrive looking like it.
-            </span>
+            <span>That one just appeared on your desktop. Deadlines will arrive looking like it.</span>
           </div>
         ) : (
           <div className="flex items-start gap-2.5 text-[12.5px] text-base-content/65">
             <Icon name="alert" size={15} className="mt-px shrink-0 text-warning" />
             <span>
-              Nothing appeared yet. If your Mac has just asked, choose Allow — otherwise you
-              can switch Neo on under Notifications in System Settings, and send yourself a
-              test one from Settings whenever you like.
+              Nothing appeared yet. If your Mac has just asked, choose Allow — otherwise switch
+              Neo on under Notifications in System Settings.
             </span>
           </div>
         )}
@@ -787,6 +793,106 @@ function Notifications({
   )
 }
 
+/** The three moments, said once each. Only reached by opening the disclosure. */
+const MOMENTS: [IconName, string][] = [
+  ['flag', 'A project deadline a week out, and again on the day'],
+  ['clock', 'A card due tomorrow, and one due today'],
+  ['alert', 'Anything still open the morning after it was due']
+]
+
+/**
+ * One notification, drawn.
+ *
+ * It is the shape `notify.ts` actually produces — several due things collapsed into one
+ * sentence, the detail under it, the working life last — and it carries the workspace
+ * you have just named, so what is on screen is a notification about your own work rather
+ * than a diagram of a feature. The hour is in the corner because saying "nine in the
+ * morning" costs a line and showing it costs nothing.
+ */
+function Banner({
+  workspaceName,
+  reduce
+}: {
+  workspaceName: string
+  reduce: boolean
+}): React.JSX.Element {
+  const where = workspaceName.trim() || 'Day job'
+  return (
+    <div className="hairline rounded-box border bg-base-200/40 px-5 py-6">
+      <motion.div
+        animate={reduce ? undefined : { y: [0, -4, 0] }}
+        transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+        className="hairline mx-auto flex max-w-[25rem] items-start gap-3 rounded-[16px] border bg-base-100 px-3.5 py-3 shadow-[0_18px_36px_-16px_rgb(0_0_0/0.45)]"
+      >
+        <Logo size={34} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[10.5px] font-medium uppercase tracking-[0.07em] text-base-content/40">
+              Neo
+            </span>
+            <span className="ml-auto shrink-0 text-[11px] text-base-content/35">9:00</span>
+          </div>
+          <div className="mt-0.5 truncate text-[13px] font-semibold tracking-[-0.01em]">
+            2 items are due tomorrow
+          </div>
+          <div className="truncate text-[12px] text-base-content/55">
+            Sign off the brief, Send the invoice · {where}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+/**
+ * A line you can open, for the paragraph that is true but not yet wanted.
+ *
+ * Deliberately not a `<details>`: this sits inside the flow's form, and the panel it
+ * lives on animates its children in sequence, so the body has to be something
+ * `AnimatePresence` can measure and unmount.
+ */
+function Disclosure({
+  label,
+  children
+}: {
+  label: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const reduce = useReducedMotion()
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex items-center gap-1.5 text-[12px] text-base-content/45 transition hover:text-base-content/75"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+      >
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+        {label}
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            className="overflow-hidden"
+            initial={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            animate={reduce ? { opacity: 1 } : { height: 'auto', opacity: 1 }}
+            exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={{ duration: reduce ? 0.12 : 0.24, ease: EASE }}
+          >
+            <div className="pt-3">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** What you made, before it is written. The two shortcuts are the two that matter on
+ *  an empty app: putting something in, and finding it again. */
 function Ready({
   name,
   workspaceName,

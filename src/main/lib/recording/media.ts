@@ -3,6 +3,7 @@ import { Readable } from 'node:stream'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { iconDir, q1 } from '../../db/client'
+import { changelogMedia } from '../changelog'
 import { readSegmentStream, segmentBytes } from './store'
 
 /**
@@ -31,6 +32,15 @@ export const segmentUrl = (segmentId: string): string => `${MEDIA_SCHEME}://segm
  */
 export const bannerUrl = (filename: string): string => `${MEDIA_SCHEME}://banner/${encodeURIComponent(filename)}`
 
+/**
+ * A changelog's illustrations, over the same scheme and for a third reason: the CSP
+ * on the renderer allows an image from `self` and from a data URL and nothing else,
+ * and a screenshot of a whole screen is not a thing to inline as base64. The files
+ * are bundled with the app rather than fetched, so what this serves is always
+ * something the build put there — see `lib/changelog.ts` for the containment check.
+ */
+export const changelogUrl = (relative: string): string => `${MEDIA_SCHEME}://changelog/${relative}`
+
 /** Must run before the app is ready, which is why it is not part of the handler. */
 export const MEDIA_SCHEME_PRIVILEGES = {
   scheme: MEDIA_SCHEME,
@@ -43,6 +53,7 @@ export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     const url = new URL(request.url)
     if (url.hostname === 'banner') return serveBanner(url)
+    if (url.hostname === 'changelog') return serveChangelog(url)
     if (url.hostname !== 'segment') return new Response('Not found', { status: 404 })
 
     const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
@@ -96,6 +107,32 @@ export function registerMediaProtocol(): void {
       return new Response('Not found', { status: 404 })
     }
   })
+}
+
+/**
+ * An illustration out of the bundled changelog.
+ *
+ * What makes a file servable here is that it resolves to somewhere inside the
+ * changelog folder the build shipped — `changelogMedia()` does that check and
+ * returns nothing at all otherwise, so a `../` typed into a URL reaches no further
+ * than a 404. The folder is read-only and shipped with the app, which is why this
+ * needs no database lookup the way a banner does.
+ */
+async function serveChangelog(url: URL): Promise<Response> {
+  const path = changelogMedia(decodeURIComponent(url.pathname.replace(/^\//, '')))
+  if (!path) return new Response('Not found', { status: 404 })
+  try {
+    const bytes = await readFile(path)
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        'content-type': BANNER_MIME[extname(path).toLowerCase()] ?? 'application/octet-stream',
+        // Shipped with the build and therefore unchanging for the life of it.
+        'cache-control': 'private, max-age=31536000, immutable'
+      }
+    })
+  } catch {
+    return new Response('Not found', { status: 404 })
+  }
 }
 
 const BANNER_FILE = /^[0-9a-f-]{36}\.(png|jpg|jpeg|webp|gif|svg)$/i

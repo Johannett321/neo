@@ -1,4 +1,5 @@
 import type { ClockFormat, DateFormat, TemperatureUnits } from './formats'
+import type { UpdatePreference } from './update'
 
 /**
  * The contract between the Electron main process and the renderer.
@@ -774,6 +775,25 @@ export interface Settings {
   notifyAt: string
   /** Whether that delivery happens on a Saturday or a Sunday. Off, by default. */
   notifyWeekends: boolean
+  /**
+   * How much of updating itself the app is allowed to do without being asked.
+   *
+   * `automatic` — the default — checks, downloads and swaps the application on the
+   * way out, so the version you are running is the current one and nobody ever drags
+   * anything anywhere. `notify` does everything up to the download and waits to be
+   * told. `off` makes **no request at all**, which is the same rule the weather is
+   * held to: switched off is silence, not a request whose answer is thrown away.
+   */
+  updates: UpdatePreference
+  /**
+   * The version whose changelog has been read, so the "what's new" screen is shown
+   * once per update and never on a fresh install.
+   *
+   * Empty until the first launch after this feature shipped — which is deliberately
+   * indistinguishable from a new install, because somebody's *first* sight of Neo
+   * should not be a list of what changed in a version they never ran.
+   */
+  lastSeenVersion: string
   staleAfterDays: number
   horizonDays: number
   /**

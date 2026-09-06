@@ -20,7 +20,7 @@ cd neo
 npm install && npm run dev
 ```
 
-Your data lives in `~/Documents/Neo`. Development and a packaged build **share that
+Your data lives in `~/.neo`. Development and a packaged build **share that
 folder**, and PGlite has no lock of its own, so do not run two copies at once — the app
 takes a single-instance lock, but a dev build and an installed build have different bundle
 identifiers, which is why there is also a `.lock` file holding the owning pid.

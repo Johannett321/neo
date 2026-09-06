@@ -6,7 +6,7 @@ import { dataRoot, q } from '../../db/client'
 /**
  * Where the audio lives.
  *
- * One folder per recording, one file per segment, inside `~/Documents/Neo` with
+ * One folder per recording, one file per segment, inside `~/.neo` with
  * everything else — so a backup of that folder is a backup of the meetings too, and
  * a recording can be dragged out and played in anything.
  *

@@ -10,6 +10,7 @@ import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
 import { abandonSplash, openSplash, splashFor, splashOpen } from './lib/splash'
 import { kickNotifications, startNotifications, stopNotifications } from './lib/notifier'
+import { applyStagedUpdate, pruneStaged, startUpdates, stopUpdates } from './lib/updater'
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
 import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
 import { pruneRecordings } from './lib/recording/store'
@@ -26,6 +27,7 @@ import { registerRecordingHandlers } from './ipc/recordings'
 import { registerSearchHandlers } from './ipc/search'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTaskHandlers } from './ipc/tasks'
+import { registerUpdateHandlers } from './ipc/updates'
 import { registerWeatherHandlers } from './ipc/weather'
 import { registerWorkspaceHandlers } from './ipc/workspaces'
 import { invokeChannel } from './ipc/util'
@@ -168,6 +170,7 @@ function registerHandlers(): void {
   registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
+  registerUpdateHandlers()
   registerWeatherHandlers()
   registerMcpHandlers()
   // Registered last: the assistant's tools call the channels above by name.
@@ -238,6 +241,14 @@ async function start(): Promise<void> {
   // cascade in the database frees none of it.
   const sweptAudio = await pruneRecordings()
   if (sweptAudio > 0) console.log(`Removed ${sweptAudio} recording folder(s) with no recording left.`)
+  /*
+   * And the same for an update that was downloaded and never applied — a lid closed
+   * on the way to the airport, a machine restarted for another reason. A staged
+   * release is hundreds of megabytes and nothing will ever come back for it: if it is
+   * still wanted, this launch will find it again and fetch it in the background.
+   */
+  const sweptUpdates = await pruneStaged()
+  if (sweptUpdates > 0) console.log(`Removed ${sweptUpdates} staged update(s) that were never applied.`)
   registerHandlers()
   registerMediaProtocol()
 
@@ -296,6 +307,10 @@ async function start(): Promise<void> {
     return existing && !existing.isDestroyed() ? existing : createWindow()
   })
 
+  // Last of all, and quietly: the first look happens half a minute in, so it is never
+  // competing with the first screen for a slow connection.
+  startUpdates((await invokeChannel('settings:get')).updates)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -335,6 +350,7 @@ app.on('before-quit', (event) => {
   closing = true
   stopPipeline()
   stopNotifications()
+  stopUpdates()
   // The helper hands its audio device back to Core Audio when its stdin closes. Left
   // running it would keep a private aggregate device alive after the app has gone.
   stopSystemAudio()
@@ -342,7 +358,16 @@ app.on('before-quit', (event) => {
     .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
     .then(() => closeDb())
     .catch((error: unknown) => console.error('Could not close the database cleanly:', error))
-    .finally(() => app.exit(0))
+    .finally(() => {
+      /*
+       * The very last thing, and after the database is closed rather than before.
+       * The swap waits for this process to disappear before it touches the bundle,
+       * so starting it here costs nothing — and starting it any earlier would race a
+       * shutdown that is still writing.
+       */
+      applyStagedUpdate()
+      app.exit(0)
+    })
 })
 
 // Ctrl-C in a terminal during development deserves the same courtesy.

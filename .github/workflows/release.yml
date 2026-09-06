@@ -55,11 +55,15 @@ jobs:
           # it does. The macOS artifacts are unsigned; the README says so.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # The zip goes up with the rest, and it is not optional: it is the file the app
+      # downloads to replace itself. A release without one is a release nobody
+      # already running Neo will ever be offered. See `main/lib/updater.ts`.
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: |
             dist/*.dmg
+            dist/*-mac.zip
             dist/*.exe
             dist/*.AppImage
           if-no-files-found: error
@@ -70,9 +74,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      # The release notes are the changelog file this version shipped with, so the
+      # sentence read *before* updating and the one the app shows *after* it are the
+      # same sentence rather than two descriptions that drift apart. Illustrations are
+      # relative paths — they resolve inside the app, where the files are bundled — so
+      # they are rewritten to raw URLs here, and only here.
+      - name: Take the release notes from the changelog
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION="${TAG#v}"
+          FILE="changelog/$VERSION.md"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::$FILE is missing. Every release says what changed in it."
+            exit 1
+          fi
+          RAW="https://raw.githubusercontent.com/$REPO/$TAG/changelog/"
+          # Drop the front matter, then point every relative image at the tag it
+          # belongs to — a `main` URL would go stale the moment the next release lands.
+          awk 'NR==1 && /^---$/ {front=1; next} front && /^---$/ {front=0; next} !front' "$FILE" \
+            | sed -E "s#\]\((\./)?(media/[^)]+)\)#](${RAW}\2)#g" > notes.md
+          cat notes.md
 
       - name: Attach the artifacts to the release
         env:
@@ -80,7 +111,9 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
+          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
           # -print0/-0 rather than $(find ...): artifact names can contain spaces,
           # and unquoted word splitting turns one file into two missing ones.
-          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \) -print0 \
+          find artifacts -type f \
+            \( -name '*.dmg' -o -name '*-mac.zip' -o -name '*.exe' -o -name '*.AppImage' \) -print0 \
             | xargs -0 gh release upload "$TAG" --repo "$REPO" --clobber
