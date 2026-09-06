@@ -43,6 +43,9 @@ import {
 } from '../src/main/db/oplog'
 import { DEVICE_ONLY_COLUMNS, SCHEMA_VERSION } from '@shared/ops'
 import { randomUUID } from 'node:crypto'
+import {
+  blobKey, newMasterKey, open, passphraseComplaint, seal, unwrapMasterKey, workspaceKey, wrapMasterKey
+} from '../src/main/lib/sync/crypto'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -2414,6 +2417,67 @@ async function main(): Promise<void> {
      stateBefore === stateAfter
        ? `${replayed.batches} batches, ${replayed.ops} ops`
        : firstDifference(stateBefore, stateAfter))
+
+  /* ------------------------------------------------------------------ *
+   * Sealing what leaves the machine
+   * ------------------------------------------------------------------ */
+
+  const master = newMasterKey()
+  ok('a master key is 256 bits', master.length === 32)
+
+  const wsKey = workspaceKey(master, dayJob)
+  ok('sealing and opening returns exactly what went in',
+     open(wsKey, seal(wsKey, 'the quick brown fox')).toString('utf8') === 'the quick brown fox')
+
+  ok('the same plaintext seals differently every time',
+     seal(wsKey, 'same') !== seal(wsKey, 'same'),
+     'a repeated nonce would leak that two batches are identical')
+
+  ok('another workspace key cannot open it', await (async () => {
+    try {
+      open(workspaceKey(master, own), seal(wsKey, 'private'))
+      return false
+    } catch {
+      return true
+    }
+  })())
+
+  ok('a single altered byte is refused rather than half-opened', await (async () => {
+    const sealed = Buffer.from(seal(wsKey, 'do not change me'), 'base64')
+    sealed[sealed.length - 20] ^= 0x01
+    try {
+      open(wsKey, sealed.toString('base64'))
+      return false
+    } catch {
+      return true
+    }
+  })())
+
+  // The workspace is the unit of encryption because it is already the unit of
+  // isolation. Two workspaces must never share a key.
+  ok('a workspace key is derived, not stored, and is its own',
+     workspaceKey(master, dayJob).equals(workspaceKey(master, dayJob)) &&
+     !workspaceKey(master, dayJob).equals(workspaceKey(master, own)))
+
+  ok('a file is named the same way on every device, and differently in every workspace',
+     blobKey(master, dayJob, 'abc123') === blobKey(master, dayJob, 'abc123') &&
+     blobKey(master, dayJob, 'abc123') !== blobKey(master, own, 'abc123'))
+
+  const wrapped = wrapMasterKey(master, 'a passphrase worth typing')
+  ok('the master key comes back from its wrapping',
+     unwrapMasterKey(wrapped, 'a passphrase worth typing')?.equals(master) === true)
+
+  // A wrong passphrase is an ordinary thing a person does, not a fault to throw at
+  // them: the screen has to be able to say so and let them try again.
+  ok('a wrong passphrase returns nothing rather than throwing',
+     unwrapMasterKey(wrapped, 'not the passphrase') === null)
+
+  ok('the same passphrase wraps to different bytes on a different device',
+     wrapMasterKey(master, 'a passphrase worth typing').sealed !== wrapped.sealed,
+     'the salt is what stops two accounts sharing a wrapping')
+
+  ok('a passphrase too short to be worth anything is refused',
+     passphraseComplaint('short') !== null && passphraseComplaint('a passphrase worth typing') === null)
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

@@ -15,6 +15,7 @@ npm run build           # typecheck (node + web) + electron-vite build
 npm run typecheck       # both projects; typecheck:node / typecheck:web individually
 npm run verify          # whole backend, headless, in plain Node
 npm run verify:upgrade  # open a database written by an older version of the app
+npm run verify:sync     # two data folders, one account, a real sync server
 npm run package         # unpacked app into dist/
 npm run dist            # packaged, signed-if-possible application
 npm run build:mcp       # the Claude Desktop connector into out/mcp/
@@ -168,6 +169,72 @@ Writing before `initOplog()` throws. `index.ts` brings the log up immediately af
 `initDb()` and before any housekeeping, and anything else that opens the database has
 to do the same — a batch from a device with no identity looks fine and orders wrongly
 the moment a second machine appears.
+
+### Syncing
+
+`src/main/lib/sync/` and the Sync pane in app settings. The log is the mechanism;
+this is only a transport over it, which is why **Local and synced are the same code
+path with this attached or not attached**. There is deliberately no second way to
+write anything.
+
+**The device is the source of truth and the server is a relay.** A write made offline
+is committed here the moment it happens and is never provisional. `engine.ts` pushes
+before it pulls — what this machine has already written is the thing most at risk —
+and the cursors only advance behind work that actually landed, so a pass that fails
+half way has still moved everything it moved.
+
+**A passkey authenticates; a passphrase decrypts.** This is a change from the design
+document and it is not a preference. An Electron renderer is loaded from `file://`,
+so it cannot run a WebAuthn ceremony against the sync server's domain — the origin
+will not match the relying party id — and the only way to get one is a window loading
+a page *the server serves*. A server that serves the JavaScript handling a PRF secret
+can take the master key whenever it likes, and the end-to-end claim is then
+decoration. So `lib/sync/signin.ts` opens the server's page in a window Neo owns and
+takes exactly one thing back: a device token, which is a thing the server issued
+itself. The passphrase is typed in Neo's own window, stretched with scrypt in the
+main process, and never leaves it.
+
+`crypto.ts` is the whole of it. AES-256-GCM rather than XChaCha20-Poly1305 because
+the latter is not in Node and reaching for a dependency to hold the one primitive
+everything rests on is a poor trade; scrypt rather than Argon2id because Argon2 is a
+native module, and a native module here is a compile against one Electron's headers
+plus a crash that takes the main process with it — the same reasoning that keeps the
+audio tap a child process.
+
+**A workspace key is derived from the master key, not stored.** HKDF with the
+workspace id, so every device holding the master arrives at the same key with nothing
+to fetch and no keyring to be out of date on one machine. **This forecloses sharing a
+single workspace without re-keying it**: handing somebody one workspace's key means
+handing them the account. Shared workspaces will need explicit random keys wrapped
+per recipient, and everything that exists by then has to be re-encrypted under one.
+That is a real migration and it is the price of not building key distribution before
+there is anybody to distribute to.
+
+The master key is cached through `safeStorage`, so the passphrase is asked for once
+per install rather than once per launch — a passphrase typed every morning is a
+passphrase chosen for speed. A copied `~/.neo` on somebody else's machine opens
+nothing, because the cache is behind their login keychain and not in the folder.
+
+**A batch that cannot be opened does not stop the stream.** It means a different
+passphrase wrote it, or it is damaged; either way every batch behind it is still
+readable and refusing to move past it would strand the whole workspace on one bad
+row. It is logged and the cursor advances.
+
+`sync_state` holds only the *pull* cursor, one row per workspace, because a stream
+that cannot be reached must not hold up the others. What has been pushed is a single
+number in `setting`: batches leave in the order they were written, so one that fails
+stops the queue behind it on purpose.
+
+The engine starts **after** `adoptExistingRows()`, never before. A device that pushed
+its log before taking its own existing rows into it would hand the other Mac an
+account of a working life that begins today.
+
+`npm run verify:sync` is the assertion this exists for: two data folders, one
+account, a real server, and the second one has never seen any of it. It cannot run in
+one process — a device is a data folder and `initDb()` opens one — so it runs twice
+with `PM_TEST_DIR` pointing somewhere different each time. It checks that the board
+columns arrive too, because those are made by the project handler rather than sent as
+content: their presence is what proves the ops were *applied* and not merely copied.
 
 ### Conventions that matter
 

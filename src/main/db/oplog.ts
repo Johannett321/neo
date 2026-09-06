@@ -143,6 +143,15 @@ export interface StoredBatch extends Batch {
   origin: 'local' | 'remote'
 }
 
+/** How many batches are waiting to be handed over. For the status line. */
+export async function pendingCount(afterSeq = '0'): Promise<number> {
+  const row = await q1<{ n: number }>(
+    `SELECT count(*)::int AS n FROM op_batch WHERE origin = 'local' AND seq > $1`,
+    [afterSeq]
+  )
+  return row?.n ?? 0
+}
+
 /** What this device has written and not yet handed to a transport. */
 export async function pending(afterSeq = '0', limit = 200): Promise<StoredBatch[]> {
   const rows = await q<Record<string, unknown>>(

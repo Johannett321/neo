@@ -467,6 +467,21 @@ CREATE TABLE IF NOT EXISTS sync_row (
   PRIMARY KEY (table_name, row_id)
 );
 
+-- How far this device has read each workspace's stream on the server.
+--
+-- Only the *pull* cursor lives here, one row per workspace, because a stream that
+-- cannot be reached must not hold up the others. What has been pushed is a single
+-- number in setting: batches leave in the order they were written, so one that
+-- fails stops the queue behind it on purpose.
+--
+-- No foreign key to workspace: a device that has signed in and not yet replayed
+-- anything has a cursor for a workspace whose rows have not arrived.
+CREATE TABLE IF NOT EXISTS sync_state (
+  workspace_id uuid PRIMARY KEY,
+  remote_seq   bigint NOT NULL DEFAULT 0,
+  synced_at    timestamptz
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_workspace  ON project (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_column_project     ON board_column (project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_task_project       ON task (project_id);
