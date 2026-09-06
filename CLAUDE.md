@@ -186,13 +186,27 @@ half way has still moved everything it moved.
 **A passkey authenticates; a passphrase decrypts.** This is a change from the design
 document and it is not a preference. An Electron renderer is loaded from `file://`,
 so it cannot run a WebAuthn ceremony against the sync server's domain — the origin
-will not match the relying party id — and the only way to get one is a window loading
-a page *the server serves*. A server that serves the JavaScript handling a PRF secret
-can take the master key whenever it likes, and the end-to-end claim is then
-decoration. So `lib/sync/signin.ts` opens the server's page in a window Neo owns and
-takes exactly one thing back: a device token, which is a thing the server issued
-itself. The passphrase is typed in Neo's own window, stretched with scrypt in the
-main process, and never leaves it.
+will not match the relying party id — and the only way to get one is a page *the
+server serves*. A server that serves the JavaScript handling a PRF secret can take the
+master key whenever it likes, and the end-to-end claim is then decoration.
+
+**And it happens in the real browser rather than a window Neo owns.** Electron will
+service a ceremony once `app.configureWebAuthn()` has been called, but only with Touch
+ID credentials bound to that Mac's Secure Enclave, **which iCloud Keychain does not
+sync** — a passkey made that way exists on one laptop and nowhere else, so the second
+Mac could never sign in, which is the whole reason any of this is being built. So
+`lib/sync/signin.ts` opens the server's page with `shell.openExternal` and listens on a
+loopback port for the answer: RFC 8252's arrangement, and `gh auth login`'s. Exactly one
+thing crosses back — a device token, which the server issued itself — guarded by a
+`state` nonce compared in constant time. The passphrase is typed in Neo's own window,
+stretched with scrypt in the main process, and never leaves it.
+
+Signing in asks for **no handle at all**: the passkey is discoverable, so the browser
+offers whichever Neo passkey it holds. The second Mac is one press and a fingerprint.
+Only making an account asks for an email, and that is the once-ever case, so it is the
+quiet button. Whether the passphrase box appears once or twice is answered by asking the
+server whether the account has key material — not guessed from whether this Mac has
+workspaces, which is a different question with the same answer on exactly one machine.
 
 `crypto.ts` is the whole of it. AES-256-GCM rather than XChaCha20-Poly1305 because
 the latter is not in Node and reaching for a dependency to hold the one primitive
@@ -257,6 +271,46 @@ every icon behind it) and **not there yet** (the other device has not uploaded i
 rows move in one pass and bytes in another). `forgetIcon()` exists because the icon
 cache remembers absence, and an avatar that arrives but only appears after a restart
 looks exactly like one that never arrived.
+
+**Near-instant is two mechanisms, and the poll is neither of them.** `POLL_INTERVAL_MS`
+is a floor — what makes a change appear *at all* when a proxy has quietly eaten the
+connection — and on its own it meant a change waited up to a minute at each end.
+
+Outbound: `oplog.ts` has `onLocalWrite`, a listener the engine subscribes to, so writing
+here schedules a push instead of waiting for the clock. The log still knows nothing about
+a network — with nothing attached the set is empty and `commit()` ends where it always
+did. `wake()` gathers a burst behind 400ms of quiet with a two-second cap, because a note
+being typed autosaves repeatedly and a plain debounce under continuous typing never
+fires. A local-write wake pushes and does **not** pull or reconcile files: nobody else
+has said anything, so a round trip per workspace and a `stat()` per file behind every
+autosave would buy nothing.
+
+Inbound: **one SSE connection per device**, not one per workspace, and the event names
+the workspace. That is not tidiness — a device cannot subscribe to a workspace it has
+not heard of, so per-workspace streams left the case that matters most, a workspace made
+on the other Mac, waiting on the poll. `listen()` supervises it: a drop reconnects with
+backoff to thirty seconds, because a single drop used to demote the device to the poll
+until the app was restarted, which is indistinguishable from "syncing is slow today".
+The server sends a comment the moment a stream opens — Tomcat does not flush headers
+until the first write, so a silent stream is one whose client does not yet know it is
+connected. A write is never announced to the device that made it; that would have every
+push answered by a sync to fetch what it had just sent.
+
+`syncNow()` **coalesces rather than drops**. The old guard returned early while a pass
+was in flight, so a change announced during one waited for the next minute; now it is
+remembered and run once the pass is out of the way, and a pass that ended badly does not
+loop.
+
+**Money is Stripe's, and none of it is on the path a keystroke takes.** `sync:prices` is
+the only channel that reaches a payment provider, and only while the settings pane is
+open; everything else — plan, trial end, renewal, whether this account may write —
+arrives on `/v1/account` from the sync server's own columns, so a Stripe outage cannot
+slow a sync or lock anybody out. `sync:pay` asks for a link and opens it with
+`shell.openExternal`: a payment page inside a window with no address bar is the one
+thing everybody is told to check. **An unpaid account goes receive-only, not dark** — a
+402 on push is caught rather than thrown, pulls and downloads carry on, and everything
+already on the server can still be fetched on every machine. Refusing to hand back work
+that has already been paid for would be a hostage note.
 
 `npm run verify:sync` is the assertion this exists for: two data folders, one
 account, a real server, and the second one has never seen any of it. It cannot run in

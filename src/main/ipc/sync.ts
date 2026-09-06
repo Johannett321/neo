@@ -1,3 +1,4 @@
+import { shell } from 'electron'
 import { handle } from './util'
 import type { SyncStatus } from '@shared/sync'
 import { NUDGE_AFTER_DAYS, NUDGE_AFTER_PROJECTS } from '@shared/sync'
@@ -87,6 +88,23 @@ export function registerSyncHandlers(): void {
       [new Date().toISOString()]
     )
     return { show: false }
+  })
+
+  /**
+   * Money, and the only two channels here that reach a payment provider at all.
+   *
+   * The app never sees a card. It asks the sync server for a link and opens it in the
+   * real browser — not a window Neo owns, because a payment page whose address bar
+   * nobody can see is the one thing everybody is told to check before typing a card
+   * into it.
+   */
+  handle('sync:prices', async () => engine.prices())
+
+  handle('sync:pay', async ({ kind }) => {
+    const url = await engine.payLink(kind)
+    if (!/^https:\/\//.test(url)) throw new Error('That is not a link worth opening.')
+    await shell.openExternal(url)
+    return { opened: true }
   })
 
   handle('sync:now', async () => {
