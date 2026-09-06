@@ -10,6 +10,7 @@ import { mirrorAll } from '../lib/markdown'
 import { loadSampleData } from '../lib/sample'
 import { recordingDir } from '../lib/recording/store'
 import { setGlass } from '../lib/glass'
+import { handOver } from '../lib/splash'
 import { handle } from './util'
 
 const DEFAULTS = {
@@ -165,6 +166,10 @@ export function registerSettingsHandlers(): void {
    * out loud.
    */
   handle('window:glass', ({ on }) => ({ material: setGlass(on) }))
+
+  // The splash screen's cue to leave. See `lib/splash.ts` for why it waits for this
+  // rather than for the database it is actually covering.
+  handle('window:ready', () => handOver())
 
   handle('shell:openExternal', async ({ url }) => {
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

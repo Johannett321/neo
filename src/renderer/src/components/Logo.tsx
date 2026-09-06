@@ -1,13 +1,14 @@
 import { useId } from 'react'
+import { MARK } from '@shared/mark'
 
 /**
  * The app's own mark: three squares on a diagonal inside a squircle, on the
  * rose-to-amber gradient — separate things, held in one line of sight.
  *
- * The geometry is lifted straight from `scripts/make-icon.mjs` on its 1024 grid, so
- * the thing in the sidebar and the thing in the dock are the same drawing rather than
- * two that merely resemble each other. Paths rather than an image file: nothing to
- * fetch, nothing for the CSP to allow, and crisp at 16px.
+ * The geometry comes from `@shared/mark` on its 1024 grid, so the thing in the
+ * sidebar, the thing on the splash screen and the thing in the dock are the same
+ * drawing rather than three that merely resemble each other. Paths rather than an
+ * image file: nothing to fetch, nothing for the CSP to allow, and crisp at 16px.
  */
 export function Logo({ size = 22, className = '' }: { size?: number; className?: string }): React.JSX.Element {
   // Several logos can be on screen at once; a shared gradient id would let the first
@@ -26,16 +27,37 @@ export function Logo({ size = 22, className = '' }: { size?: number; className?:
           The icon blends by (u + v) / 2 across the face, which is exactly a linear
           gradient along the diagonal between the two corners of the squircle.
         */}
-        <linearGradient id={id} gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+        <linearGradient
+          id={id}
+          gradientUnits="userSpaceOnUse"
+          x1={MARK.face.x}
+          y1={MARK.face.y}
+          x2={MARK.face.x + MARK.face.size}
+          y2={MARK.face.y + MARK.face.size}
+        >
           <stop offset="0" stopColor="var(--color-brand-from)" />
           <stop offset="1" stopColor="var(--color-brand-to)" />
         </linearGradient>
       </defs>
-      <rect x="100" y="100" width="824" height="824" rx="185" fill={`url(#${id})`} />
+      <rect
+        x={MARK.face.x}
+        y={MARK.face.y}
+        width={MARK.face.size}
+        height={MARK.face.size}
+        rx={MARK.face.r}
+        fill={`url(#${id})`}
+      />
       <g fill="#fff">
-        <rect x="294" y="574" width="156" height="156" rx="26" />
-        <rect x="434" y="434" width="156" height="156" rx="26" />
-        <rect x="574" y="294" width="156" height="156" rx="26" />
+        {MARK.steps.map((s) => (
+          <rect
+            key={`${s.x},${s.y}`}
+            x={s.x}
+            y={s.y}
+            width={MARK.step.size}
+            height={MARK.step.size}
+            rx={MARK.step.r}
+          />
+        ))}
       </g>
     </svg>
   )

@@ -8,7 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { CreateDialog } from '@/components/CreateDialog'
 import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
-import { useApi, useLiveData } from '@/lib/api'
+import { call, useApi, useLiveData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider, useContextMenu } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
@@ -287,15 +287,33 @@ function Gate(): React.JSX.Element {
     )
   }, [firstRun, ready, settings.data, workspaces.length, archived.length])
 
-  if (!ready || firstRun === null) return <div className="glass-window h-full bg-base-100" />
-  if (firstRun) return <Welcome onDone={() => setFirstRun(false)} />
-  if (!active) return <Onboarding />
+  /*
+   * The splash screen is still up until this is sent, and this is the earliest moment
+   * it can honestly go: whichever of the three screens below is the right one, it is
+   * now known and its data is here. Sent from a render effect rather than from main
+   * guessing off `ready-to-show`, which fires on the pane above — empty, and still
+   * waiting on its first query.
+   */
+  const settled = ready && firstRun !== null
+  useEffect(() => {
+    if (settled) void call('window:ready')
+  }, [settled])
+
+  if (!settled) return <div className="glass-window h-full bg-base-100" />
   return (
-    <AssistantProvider workspaceId={active.id}>
-      <RecorderProvider>
-        <Shell />
-      </RecorderProvider>
-    </AssistantProvider>
+    <div className="app-enter h-full">
+      {firstRun ? (
+        <Welcome onDone={() => setFirstRun(false)} />
+      ) : !active ? (
+        <Onboarding />
+      ) : (
+        <AssistantProvider workspaceId={active.id}>
+          <RecorderProvider>
+            <Shell />
+          </RecorderProvider>
+        </AssistantProvider>
+      )}
+    </div>
   )
 }
 

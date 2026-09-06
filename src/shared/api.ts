@@ -358,6 +358,18 @@ export interface ApiMap {
     in: { on: boolean }
     out: { material: 'window' | 'paint' }
   }
+  /**
+   * "There is something real on screen." Sent once, on the first render that has its
+   * data — which is the moment the splash screen can go and the window it has been
+   * standing in for can be revealed.
+   *
+   * It is the renderer that says so rather than main working it out, because only the
+   * renderer knows: `ready-to-show` fires on an empty shell that is still waiting for
+   * its first query, and handing over there would trade a splash for a blank pane.
+   * Saying it twice is harmless — a reload in development arrives long after the
+   * splash has gone, and the hand-off is idempotent.
+   */
+  'window:ready': { in: void; out: void }
 
   /* -------------------------------------------------------- the Claude connector */
 

@@ -29,6 +29,9 @@ export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths
 export const systemPreferences = { askForMediaAccess: async () => false }
 export const protocol = { registerSchemesAsPrivileged: () => {}, handle: () => {} }
 export const powerMonitor = { on: () => {} }
+// The splash screen asks the desktop whether it is dark, because the setting that
+// would say so lives in the database it is waiting for. A headless run has no desktop.
+export const nativeTheme = { shouldUseDarkColors: false, on: () => {} }
 export const session = {
   defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} }
 }

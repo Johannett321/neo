@@ -8,6 +8,7 @@ import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from '.
 import { pruneIcons } from './lib/icons'
 import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
+import { abandonSplash, openSplash, splashFor, splashOpen } from './lib/splash'
 import { kickNotifications, startNotifications, stopNotifications } from './lib/notifier'
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
 import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
@@ -127,7 +128,18 @@ function createWindow(): BrowserWindow {
   // app that is already running, and Windows has no constructor option for acrylic.
   applyGlassTo(window)
 
-  window.once('ready-to-show', () => window.show())
+  /*
+   * The first window of a launch is not shown by itself: the splash screen is
+   * standing in for it, and it is revealed at the hand-off — once the renderer says
+   * it has something real to draw — so that a blank pane never appears around the
+   * mark. Every window after that (the dock icon clicked with none open, a
+   * notification followed into a closed app) shows itself the moment it can.
+   */
+  const covered = splashOpen()
+  if (covered) splashFor(window)
+  window.once('ready-to-show', () => {
+    if (!covered) window.show()
+  })
 
   // Anything that is not the app itself opens in the real browser.
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -163,6 +175,13 @@ function registerHandlers(): void {
 }
 
 async function start(): Promise<void> {
+  /*
+   * Before anything is opened, and it has to be: everything below this line — the
+   * database booting, the schema, the catalogue check, the sweeps — happens with no
+   * window in existence at all. Without this the whole of it is a bouncing dock icon.
+   */
+  openSplash()
+
   // A packaged build gets its icon from the bundle; in development the dock would
   // otherwise show Electron's.
   if (!app.isPackaged && app.dock) {
@@ -286,6 +305,9 @@ if (isPrimary) {
   void app.whenReady().then(() =>
     start().catch((error: unknown) => {
       // A failed migration must say so rather than leaving a blank window behind.
+      // Nothing is going to be handed over to, and an error box behind a window that
+      // insists on staying on top is an error box nobody reads.
+      abandonSplash()
       const message = error instanceof Error ? error.message : String(error)
       console.error('Neo failed to start:', error)
       dialog.showErrorBox(

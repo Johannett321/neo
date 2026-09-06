@@ -252,6 +252,27 @@ summary,
   border-color: color-mix(in oklch, var(--color-primary) 45%, transparent);
 }
 
+/*
+ * The app arriving under the splash screen.
+ *
+ * The window is revealed at the moment the splash begins to dissolve, so what is
+ * behind the mark has to already be fading up rather than snapping into place — the
+ * two together read as one hand-off instead of a window appearing and a picture
+ * going away. Opacity and nothing else: a transform here would make every fixed
+ * dialog in the app a child of a transformed ancestor.
+ */
+@keyframes app-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.app-enter {
+  animation: app-enter 0.26s ease-out both;
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -267,7 +288,8 @@ summary,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise {
+  .rise,
+  .app-enter {
     animation: none;
   }
 }

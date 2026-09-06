@@ -23,6 +23,7 @@ import { announceChange, onChange } from '../src/main/lib/changes'
 import { attentionReason } from '../src/main/lib/attention'
 import { deliveryDue } from '../src/main/lib/notify'
 import { deliverNotifications } from '../src/main/lib/notifier'
+import { splashDocument } from '../src/main/lib/splash'
 import { describeWeather } from '../src/shared/weather'
 import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
@@ -34,6 +35,7 @@ import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { MARK } from '@shared/mark'
 import type { BridgeEndpoint } from '@shared/mcp'
 
 const call = async (channel: string, input?: unknown): Promise<any> => {
@@ -1927,6 +1929,19 @@ async function main(): Promise<void> {
   await stopBridge()
   ok('closing the bridge takes the endpoint away, so the connector knows the app is shut',
      !existsSync(endpointFile()) && !existsSync(info.endpoint))
+
+  /*
+   * The splash screen is loaded as a `data:` URL before the database is open, so
+   * anything it referenced would resolve against nothing and silently not appear —
+   * and it has one job, which is to be on screen immediately.
+   */
+  const splash = splashDocument(false)
+  ok('the splash screen references nothing it would have to fetch',
+     // `url(#...)` is the gradient it defines itself, which is the one kind allowed.
+     !/<script|<link|src=|@import|:\/\/|url\((?!#)/i.test(splash) && splash.includes('Neo'))
+  ok('the splash screen draws the same mark the sidebar does',
+     splash.includes(`rx="${MARK.face.r}"`) &&
+     MARK.steps.every((s) => splash.includes(`x="${s.x}" y="${s.y}"`)))
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })
