@@ -111,7 +111,16 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
+          # The release is made here if nobody made it first, titled from the
+          # changelog's own front matter. `edit` alone fails with "release not
+          # found" after three platforms have spent twenty minutes building.
+          TITLE="$(sed -nE '1,/^---$/!d; s/^title:[[:space:]]*//p' "changelog/${TAG#v}.md" | head -1)"
+          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --verify-tag \
+              --title "Neo ${TAG#v}${TITLE:+ — $TITLE}" --notes-file notes.md
+          else
+            gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
+          fi
           # -print0/-0 rather than $(find ...): artifact names can contain spaces,
           # and unquoted word splitting turns one file into two missing ones.
           find artifacts -type f \
