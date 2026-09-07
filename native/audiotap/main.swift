@@ -154,7 +154,7 @@ func stringProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySele
  `muteBehavior` is left unmuted on purpose: you have to be able to hear the meeting
  you are recording.
  */
-func startTap() -> (aggregate: AudioObjectID, tap: AudioObjectID, format: AudioStreamBasicDescription) {
+func startTap() -> (aggregate: AudioObjectID, tap: AudioObjectID) {
     guard let output = audioObjectID(kAudioHardwarePropertyDefaultSystemOutputDevice),
           let outputUID = stringProperty(output, kAudioDevicePropertyDeviceUID)
     else {
@@ -206,26 +206,55 @@ func startTap() -> (aggregate: AudioObjectID, tap: AudioObjectID, format: AudioS
         fail("Could not open the audio device that reads the tap (\(aggregateStatus)).")
     }
 
+    return (aggregate, tap)
+}
+
+/**
+ The shape of the audio the IOProc will actually be handed.
+
+ Asked of the aggregate device's input stream, deliberately, and not of the tap.
+ The tap describes the audio at its source; the aggregate is what delivers it, at
+ whatever rate the aggregate runs at — and those two disagreed once, expensively.
+ A Bluetooth headset changes its whole mode when its microphone is opened (AirPods
+ go from 48 kHz playback to a 24 kHz headset link), and the aggregate created a
+ moment later runs at the new rate while the tap still reports the old one. Audio
+ labelled 48 kHz and delivered at 24 kHz plays back at double speed.
+ */
+func streamFormat(of device: AudioObjectID) -> AudioStreamBasicDescription? {
     var format = AudioStreamBasicDescription()
     var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
     var address = AudioObjectPropertyAddress(
-        mSelector: kAudioTapPropertyFormat,
+        mSelector: kAudioDevicePropertyStreamFormat,
+        mScope: kAudioObjectPropertyScopeInput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &format)
+    return status == noErr && format.mSampleRate > 0 ? format : nil
+}
+
+func nominalRate(of device: AudioObjectID) -> Double? {
+    var rate = 0.0
+    var size = UInt32(MemoryLayout<Double>.size)
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
-    guard AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &format) == noErr else {
-        fail("The tap would not say what shape its audio is.")
-    }
-
-    return (aggregate, tap, format)
+    let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate)
+    return status == noErr && rate > 0 ? rate : nil
 }
 
 // MARK: - Running
 
-let (aggregate, tap, format) = startTap()
+let (aggregate, tap) = startTap()
 
+guard let format = streamFormat(of: aggregate) else {
+    fail("The audio device would not say what shape its audio is.")
+}
 let channels = max(1, Int(format.mChannelsPerFrame))
-let sampleRate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
+/// The rate the bytes on stdout are at. Read again, and announced, whenever the
+/// device changes its mind — see `streamFormat(of:)` for who does that and why.
+var sampleRate = nominalRate(of: aggregate) ?? format.mSampleRate
 
 /*
  Float32 in, signed 16-bit mono out.
@@ -269,7 +298,28 @@ guard AudioDeviceStart(aggregate, procID) == noErr else {
     fail("Could not start the audio device.")
 }
 
+// Started, so the rate is settled as far as it will be by now; a device still in
+// the middle of changing mode reports what it changed to on the listener below.
+sampleRate = nominalRate(of: aggregate) ?? sampleRate
 emit(["type": "ready", "sampleRate": sampleRate, "channels": 1, "format": "s16le"])
+
+/*
+ The rate can move under a running tap: the headset finishing its mode change a
+ beat after we started, or the person switching output devices mid-meeting. The
+ bytes keep flowing either way; what has to change is the label, and the parent is
+ told so the graph on the other side can resample from the new rate rather than
+ play the old one at the wrong speed.
+ */
+var rateAddress = AudioObjectPropertyAddress(
+    mSelector: kAudioDevicePropertyNominalSampleRate,
+    mScope: kAudioObjectPropertyScopeGlobal,
+    mElement: kAudioObjectPropertyElementMain
+)
+AudioObjectAddPropertyListenerBlock(aggregate, &rateAddress, .main) { _, _ in
+    guard let changed = nominalRate(of: aggregate), changed != sampleRate else { return }
+    sampleRate = changed
+    emit(["type": "format", "sampleRate": sampleRate, "channels": 1, "format": "s16le"])
+}
 
 /*
  Shutting down.

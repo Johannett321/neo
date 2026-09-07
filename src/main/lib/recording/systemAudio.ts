@@ -63,6 +63,43 @@ export interface SystemAudioStart {
   reason: string
 }
 
+/** One line of the helper's stderr, understood. `null` is a line that was not JSON. */
+export type HelperEvent =
+  | { type: 'ready'; sampleRate: number }
+  | { type: 'format'; sampleRate: number }
+  | { type: 'error'; message: string }
+  | { type: 'dropped'; bytes: number }
+  | { type: 'other' }
+  | null
+
+/**
+ * Reads the helper's JSON lines, and nothing else does. `ready` carries the rate the
+ * bytes on stdout are at; `format` is that rate changing under a running tap, which a
+ * Bluetooth headset does the moment its microphone is opened (AirPods drop from 48 kHz
+ * playback to a 24 kHz headset link). The renderer builds its buffers from the number,
+ * so a label that is wrong plays the other side of the call at double speed.
+ */
+export function parseHelperLine(line: string): HelperEvent {
+  let event: Record<string, unknown>
+  try {
+    event = JSON.parse(line)
+  } catch {
+    return null
+  }
+  if (!event || typeof event !== 'object') return null
+  switch (event.type) {
+    case 'ready':
+    case 'format':
+      return { type: event.type, sampleRate: Number(event.sampleRate) || 48_000 }
+    case 'error':
+      return { type: 'error', message: String(event.message ?? 'Unknown error.') }
+    case 'dropped':
+      return { type: 'dropped', bytes: Number(event.bytes) || 0 }
+    default:
+      return { type: 'other' }
+  }
+}
+
 export function stopSystemAudio(): void {
   if (!child) return
   const stopping = child
@@ -144,19 +181,19 @@ export async function startSystemAudio(): Promise<SystemAudioStart> {
       pending = lines.pop() ?? ''
       for (const line of lines) {
         if (!line.trim()) continue
-        let event: Record<string, unknown>
-        try {
-          event = JSON.parse(line)
-        } catch {
+        const event = parseHelperLine(line)
+        if (event === null) {
           console.warn('neo-audiotap:', line)
-          continue
-        }
-        if (event.type === 'ready') {
-          answer({ ok: true, sampleRate: Number(event.sampleRate) || 48_000, reason: '' })
+        } else if (event.type === 'ready') {
+          answer({ ok: true, sampleRate: event.sampleRate, reason: '' })
+        } else if (event.type === 'format') {
+          // The device under the tap changed rate. The bytes keep coming; the window
+          // holding the graph is told what rate they are at from here on.
+          if (child === started) send('system-audio-format', { sampleRate: event.sampleRate })
         } else if (event.type === 'error') {
-          answer({ ok: false, sampleRate: 0, reason: String(event.message ?? 'Unknown error.') })
+          answer({ ok: false, sampleRate: 0, reason: event.message })
         } else if (event.type === 'dropped') {
-          console.warn(`neo-audiotap dropped ${String(event.bytes)} bytes; the window fell behind.`)
+          console.warn(`neo-audiotap dropped ${event.bytes} bytes; the window fell behind.`)
         }
       }
     })

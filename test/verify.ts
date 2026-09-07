@@ -37,7 +37,7 @@ import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
-import { helperPath } from '../src/main/lib/recording/systemAudio'
+import { helperPath, parseHelperLine } from '../src/main/lib/recording/systemAudio'
 import { addDays, attachmentDir, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
 import { pruneNoteImages } from '../src/main/lib/images'
 import { flushMirrors, mirrorStats } from '../src/main/lib/markdown'
@@ -1155,6 +1155,23 @@ async function main(): Promise<void> {
      process.platform !== 'darwin' || existsSync(helperPath()) === (await call('systemAudio:available')).available,
      helperPath() || '(no helper built)')
 
+  /*
+   * The rate the helper's bytes are at is read off what it reports, and a change of
+   * rate under a running tap is an event of its own rather than a restart. A
+   * Bluetooth headset drops from 48 kHz to 24 kHz the moment its microphone is
+   * opened; audio labelled with the old rate plays back at double speed.
+   */
+  {
+    const ready = parseHelperLine('{"type":"ready","sampleRate":24000,"channels":1,"format":"s16le"}')
+    const moved = parseHelperLine('{"type":"format","sampleRate":48000}')
+    const bare = parseHelperLine('{"type":"ready"}')
+    ok('the helper\'s rate is read off its own report, and a change of rate is its own event',
+       ready?.type === 'ready' && ready.sampleRate === 24000 &&
+       moved?.type === 'format' && moved.sampleRate === 48000 &&
+       bare?.type === 'ready' && bare.sampleRate === 48000 &&
+       parseHelperLine('not json at all') === null &&
+       parseHelperLine('{"type":"error","message":"no"}')?.type === 'error')
+  }
 
   // What a recording listens to is about this machine, not about a working life, so
   // it lives in app settings beside the theme rather than on the workspace.

@@ -727,6 +727,23 @@ one Electron's headers and a crash in it takes the app down. Stopping is done by
 closing its stdin, never by killing it, because it has to hand the private aggregate
 device back to Core Audio — verify asserts nothing is left behind.
 
+**The microphone is opened before the tap, and the order is load-bearing.** A
+Bluetooth headset is one device in two modes — playback at 48 kHz, and a 24 kHz
+headset link that is the only mode with a microphone — and opening the microphone
+is what makes it switch. It cannot switch while the tap's aggregate device holds its
+output side at the playback rate: started tap-first, the AirPods' microphone track
+ended the instant it opened, the `AudioContext` clock stood still, and the recorder
+wrote nothing until another application played sound and shook the device loose. So
+a meeting recorded fine and a note dictated alone was empty. Two consequences. The
+helper labels its bytes with the *aggregate's* rate read after it has started, not
+the tap's format, and emits a `format` line when that rate moves under it (the
+switch finishes a beat after the aggregate is made); `onSystemAudioFormat` carries
+it to the feed, which stamps each buffer with the rate it arrived at and lets the
+graph resample. And the watchdog checks that `currentTime` has moved since its last
+look, because a stalled graph is the one failure the track states cannot show: the
+mixed track is generated and always "live", and a `MediaRecorder` over it sits at
+`recording` producing nothing.
+
 Two clocks meet in the schedule (the tap runs on the output device, the mic on its
 own), so it is allowed to slip: behind the clock it restarts just ahead of now, and
 more than `SYSTEM_AUDIO_BUFFER_MS` ahead it drops a chunk. Nothing is scheduled while

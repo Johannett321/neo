@@ -43,6 +43,18 @@ export function createSystemAudioFeed(
 ): SystemAudioFeed {
   const gain = context.createGain()
   let cursor = 0
+  /**
+   * The rate the bytes are arriving at, which is not fixed for the life of the tap.
+   * A Bluetooth headset changes its whole mode when its microphone is opened — AirPods
+   * go from 48 kHz playback to a 24 kHz headset link — and the helper says so when the
+   * device under it moves. Each buffer is stamped with the rate it was captured at and
+   * the graph resamples; stamping every buffer with the rate at start played the other
+   * side of the call at double speed.
+   */
+  let rate = sampleRate
+  const stopFormat = window.api.onSystemAudioFormat((next) => {
+    if (next > 0) rate = next
+  })
 
   const stop = window.api.onSystemAudio((chunk) => {
     const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)
@@ -57,7 +69,7 @@ export function createSystemAudioFeed(
     // an hour is the difference between two crystals. Let a chunk go instead.
     if (cursor - now > MAX_LEAD_S) return
 
-    const buffer = context.createBuffer(1, count, sampleRate)
+    const buffer = context.createBuffer(1, count, rate)
     const channel = buffer.getChannelData(0)
     for (let i = 0; i < count; i++) {
       // Little-endian pairs, sign-extended. Read out rather than cast over, because
@@ -76,6 +88,7 @@ export function createSystemAudioFeed(
     node: gain,
     release: () => {
       stop()
+      stopFormat()
       gain.disconnect()
     }
   }
