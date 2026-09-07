@@ -6,19 +6,14 @@ import { Markdown } from '@/components/Markdown'
 import { Modal } from '@/components/primitives'
 
 /**
- * The first launch after an update: what changed, and the three things macOS forgot.
+ * The first launch after an update: what changed, then — if this build cost the
+ * app its permissions — a second, dedicated dialog asking for them back.
  *
- * These are one screen rather than two, and that is the whole design. Updating this
- * app costs the microphone, the audio tap and notifications, every time, because
- * there is no Developer ID and macOS remembers a permission against a signature that
- * changes with every build. An app that quietly let those lapse would be an app that
- * silently stopped recording the other half of your calls — the failure would surface
- * a week later, in a meeting, as a recording with half a conversation in it.
- *
- * So the cost is paid where the benefit is being read. You open Neo, it tells you
- * what is new, and the same panel hands you three buttons that take a second each.
- * Nothing here is a warning and nothing is red: it is the receipt for an update that
- * has already happened.
+ * These are two screens rather than one on purpose. A paragraph about permissions
+ * tacked onto the bottom of a changelog is exactly the kind of thing a "Done"
+ * click skips past without reading; putting it in its own dialog, after the
+ * changelog is out of the way, gives it the one thing that made it get skipped —
+ * full attention — instead of competing with release notes for it.
  *
  * Shown **once per version**, and never to a new install — `lastSeenVersion` is
  * empty until the first update, and somebody's first sight of Neo should not be a
@@ -29,8 +24,10 @@ export function WhatsNew(): React.JSX.Element | null {
   const settings = useApi('settings:get')
   const capability = useApi('update:capability')
   const [version, setVersion] = useState('')
-  const [dismissed, setDismissed] = useState(false)
+  const [step, setStep] = useState<'changelog' | 'permissions' | 'done'>('changelog')
   const entry = useApi('changelog:get', { version }, { enabled: Boolean(version) })
+  const resets = capability.data?.resetsPermissions ?? false
+  const permissions = useApi('permission:read', undefined, { enabled: resets })
 
   /*
    * Latched, and written down at the same moment it is shown rather than when it is
@@ -55,78 +52,89 @@ export function WhatsNew(): React.JSX.Element | null {
     void call('settings:save', { lastSeenVersion: current.appVersion })
   }, [settings.data, version])
 
-  if (!version || dismissed) return null
+  if (!version || step === 'done') return null
 
   // A release that shipped without writing a changelog says nothing at all rather
   // than opening an empty dialog with a heading in it.
   const changelog = entry.data
-  const resets = capability.data?.resetsPermissions ?? false
   if (entry.isPending) return null
-  if (!changelog && !resets) return null
+  // Whether there is a second screen at all is not known until the permission
+  // report is back, so the first screen's "Done" button waits for it too.
+  if (resets && permissions.isPending) return null
+  const reports = permissions.data ?? []
+  const showPermissions = resets && reports.length > 0
+  if (!changelog && !showPermissions) return null
 
-  return (
-    <Modal
-      open
-      onClose={() => setDismissed(true)}
-      title={changelog?.title ?? `Neo ${version}`}
-      description={changelog ? `Version ${version}` : 'Updated just now.'}
-      width="max-w-2xl"
-      footer={
-        <button className="btn btn-primary btn-sm" onClick={() => setDismissed(true)}>
-          Done
-        </button>
-      }
-    >
-      {changelog && <Markdown source={changelog.body} className="text-[13px]" />}
-      {resets && <Permissions />}
-    </Modal>
-  )
+  if (step === 'changelog' && changelog) {
+    const advance = (): void => setStep(showPermissions ? 'permissions' : 'done')
+    return (
+      <Modal
+        open
+        onClose={advance}
+        title={changelog.title}
+        description={`Version ${version}`}
+        width="max-w-2xl"
+        footer={
+          <button className="btn btn-primary btn-sm" onClick={advance}>
+            Done
+          </button>
+        }
+      >
+        <Markdown source={changelog.body} className="text-[13px]" />
+      </Modal>
+    )
+  }
+
+  if (showPermissions) {
+    return <PermissionsDialog reports={reports} onClose={() => setStep('done')} />
+  }
+
+  return null
 }
 
-const LABELS: Record<PermissionName, { title: string; detail: string }> = {
-  microphone: {
-    title: 'Microphone',
-    detail: 'So a meeting recording hears the room you are sitting in.'
-  },
-  systemAudio: {
-    title: 'Audio from this computer',
-    detail: 'So a recorded call captures the people on it and not only your own half.'
-  },
-  notifications: {
-    title: 'Notifications',
-    detail: 'So a deadline can still reach you on the morning it matters.'
-  }
+const LABELS: Record<PermissionName, { title: string; detail: string; icon: 'mic' | 'waveform' | 'bell' }> = {
+  microphone: { title: 'Microphone', detail: 'Hears the room.', icon: 'mic' },
+  systemAudio: { title: 'Audio from this computer', detail: 'Hears the call.', icon: 'waveform' },
+  notifications: { title: 'Notifications', detail: 'Deadlines can reach you.', icon: 'bell' }
 }
 
 /**
- * The three permissions, each with a button that genuinely asks for it.
- *
- * There is no "grant all", on purpose: each of these puts a system sheet on screen,
- * and three sheets arriving at once is a stack of dialogs nobody reads the wording
- * of. One at a time, each with a sentence saying what it is for, is slower and is the
- * only version that leaves somebody knowing what they agreed to.
+ * Its own dialog, deliberately louder than the rest of the app: an amber icon and a
+ * one-line reason, not the paragraph the settings pane can afford. It follows the
+ * changelog rather than sitting inside it, which is the whole of what makes it hard
+ * to wave away without a glance — it is the only thing on screen when it appears.
  *
  * Nothing here reports a state it has not established. macOS will not say whether an
  * app may show a notification or open an audio tap, so those two start as neither
  * granted nor denied and only become one once the button has been pressed — which is
- * why the button says "Allow" and the row is quiet rather than alarmed.
+ * why the button says "Allow" and a granted row is quiet rather than boastful. And
+ * there is no "grant all": three system sheets arriving at once is a stack nobody
+ * reads the wording of.
  */
-function Permissions(): React.JSX.Element {
-  const initial = useApi('permission:read')
+function PermissionsDialog({
+  reports: initialReports,
+  onClose
+}: {
+  reports: PermissionReport[]
+  onClose: () => void
+}): React.JSX.Element {
   const [asked, setAsked] = useState<Record<string, PermissionReport>>({})
   const [asking, setAsking] = useState('')
-
-  const reports = (initial.data ?? []).map((report) => asked[report.name] ?? report)
-  if (reports.length === 0) return <></>
+  const reports = initialReports.map((report) => asked[report.name] ?? report)
 
   return (
-    <div className="hairline mt-5 rounded-box border bg-base-200/40 p-4">
-      <div className="text-[13px] font-medium">Neo needs its permissions back</div>
-      <p className="mt-1 text-[12px] leading-relaxed text-base-content/55">
-        macOS remembers what an app is allowed to do against that app’s signature, and this
-        build is signed afresh every release. So as far as your Mac is concerned Neo is new
-        here again. It takes a second each.
-      </p>
+    <Modal
+      open
+      onClose={onClose}
+      title="Allow Neo again"
+      description={`This update reset ${reports.length === 1 ? 'a permission' : `${reports.length} permissions`} on macOS.`}
+      width="max-w-sm"
+    >
+      <div className="flex justify-center pb-1">
+        <div className="flex size-11 items-center justify-center rounded-full bg-warning/15">
+          <Icon name="alert" size={20} className="text-warning" />
+        </div>
+      </div>
 
       <div className="mt-3 space-y-1">
         {reports.map((report) => {
@@ -136,38 +144,46 @@ function Permissions(): React.JSX.Element {
           return (
             <div
               key={report.name}
-              className={`flex items-center gap-3 rounded-field px-2 py-2 ${gone ? 'opacity-45' : ''}`}
+              className={`hairline flex items-center gap-3 rounded-field border px-3 py-2.5 ${gone ? 'opacity-45' : ''}`}
             >
+              <Icon
+                name={label.icon}
+                size={15}
+                className={done ? 'text-success' : 'text-base-content/40'}
+              />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-[13px]">
-                  {done && <Icon name="check" size={13} className="text-success" />}
-                  {label.title}
-                </div>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-base-content/45">
-                  {report.reason || label.detail}
-                </p>
+                <div className="text-[13px] font-medium">{label.title}</div>
+                <p className="text-[11px] text-base-content/45">{label.detail}</p>
               </div>
-              {!gone && (
-                <button
-                  className={`btn btn-xs shrink-0 ${done ? 'btn-ghost' : ''}`}
-                  disabled={asking === report.name}
-                  onClick={async () => {
-                    setAsking(report.name)
-                    try {
-                      const result = await call('permission:ask', { name: report.name })
-                      setAsked((all) => ({ ...all, [report.name]: result }))
-                    } finally {
-                      setAsking('')
-                    }
-                  }}
-                >
-                  {asking === report.name ? 'Asking…' : done ? 'Again' : 'Allow'}
-                </button>
+              {done ? (
+                <Icon name="check" size={15} className="shrink-0 text-success" />
+              ) : (
+                !gone && (
+                  <button
+                    className="btn btn-primary btn-xs shrink-0"
+                    disabled={asking === report.name}
+                    onClick={async () => {
+                      setAsking(report.name)
+                      try {
+                        const result = await call('permission:ask', { name: report.name })
+                        setAsked((all) => ({ ...all, [report.name]: result }))
+                      } finally {
+                        setAsking('')
+                      }
+                    }}
+                  >
+                    {asking === report.name ? '…' : 'Allow'}
+                  </button>
+                )
               )}
             </div>
           )
         })}
       </div>
-    </div>
+
+      <button className="btn btn-ghost btn-sm mt-4 w-full" onClick={onClose}>
+        Done
+      </button>
+    </Modal>
   )
 }
