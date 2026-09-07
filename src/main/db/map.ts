@@ -1,9 +1,10 @@
+import { imageUrl } from '../lib/images'
 import type {
   Activity, Attachment, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, ContentFolderView,
   Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
   Project, ProjectCollapsible, ProjectCollapsibleView, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
-  TaskView, TranscriptCue, Workspace, WorkspaceLink
+  TaskView, TranscriptCue, Workspace, WorkspaceLink, NoteImage
 } from '@shared/types'
 import { EMPTY_RECAP } from '@shared/types'
 import type { CaptureState, Engine, Stage } from '@shared/recording'
@@ -241,6 +242,16 @@ export const mapNote = (r: Row): Note => ({
   isPinned: r.is_pinned,
   createdAt: iso(r.created_at),
   updatedAt: iso(r.updated_at)
+})
+
+export const mapNoteImage = (r: Row): NoteImage => ({
+  id: r.id,
+  projectId: r.project_id,
+  name: r.name,
+  mime: r.mime,
+  bytes: Number(r.bytes),
+  path: r.path,
+  url: imageUrl(r.path)
 })
 
 export const mapCanvas = (r: Row): Canvas => ({

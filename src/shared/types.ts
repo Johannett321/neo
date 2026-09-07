@@ -508,6 +508,19 @@ export interface Note {
   updatedAt: string
 }
 
+/** A picture in a note, stored beside the database and served over `neo-media://`. */
+export interface NoteImage {
+  id: string
+  projectId: string
+  name: string
+  mime: string
+  bytes: number
+  /** Filename inside attachments/. The renderer never sees a path it can read. */
+  path: string
+  /** What the note's Markdown refers to it by. */
+  url: string
+}
+
 export interface Meeting {
   id: string
   projectId: string

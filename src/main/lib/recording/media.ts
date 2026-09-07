@@ -2,7 +2,7 @@ import { protocol } from 'electron'
 import { Readable } from 'node:stream'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import { iconDir, q1 } from '../../db/client'
+import { attachmentDir, iconDir, q1 } from '../../db/client'
 import { changelogMedia } from '../changelog'
 import { readSegmentStream, segmentBytes } from './store'
 
@@ -41,6 +41,14 @@ export const bannerUrl = (filename: string): string => `${MEDIA_SCHEME}://banner
  */
 export const changelogUrl = (relative: string): string => `${MEDIA_SCHEME}://changelog/${relative}`
 
+/*
+ * A picture in a note is the fourth thing on the scheme, for the banner's reason: a
+ * note is re-sent to the renderer on every save, and a screenshot inlined into it
+ * would come across the bridge with every keystroke. `imageUrl()` lives in
+ * `lib/images.ts`, beside the sweep, so the row mapper can build one without
+ * importing Electron's protocol module.
+ */
+
 /** Must run before the app is ready, which is why it is not part of the handler. */
 export const MEDIA_SCHEME_PRIVILEGES = {
   scheme: MEDIA_SCHEME,
@@ -54,6 +62,7 @@ export function registerMediaProtocol(): void {
     const url = new URL(request.url)
     if (url.hostname === 'banner') return serveBanner(url)
     if (url.hostname === 'changelog') return serveChangelog(url)
+    if (url.hostname === 'image') return serveImage(url)
     if (url.hostname !== 'segment') return new Response('Not found', { status: 404 })
 
     const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
@@ -160,6 +169,30 @@ async function serveBanner(url: URL): Promise<Response> {
         'content-type': BANNER_MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
         // The filename is a UUID and its contents never change, so the window may
         // keep it: without this the photograph is re-read on every navigation.
+        'cache-control': 'private, max-age=31536000, immutable'
+      }
+    })
+  } catch {
+    return new Response('Not found', { status: 404 })
+  }
+}
+
+const IMAGE_FILE = /^[0-9a-f-]{36}\.(png|jpg|jpeg|webp|gif)$/i
+
+/**
+ * A note's picture, checked against the rows exactly as a banner is: only a file a
+ * `note_image` row names is served, whatever is typed into the URL.
+ */
+async function serveImage(url: URL): Promise<Response> {
+  const file = decodeURIComponent(url.pathname.replace(/^\//, ''))
+  if (!IMAGE_FILE.test(file)) return new Response('Not found', { status: 404 })
+  const row = await q1<{ path: string }>('SELECT path FROM note_image WHERE path = $1 LIMIT 1', [file])
+  if (!row) return new Response('Not found', { status: 404 })
+  try {
+    const bytes = await readFile(join(attachmentDir(), file))
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        'content-type': BANNER_MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
         'cache-control': 'private, max-age=31536000, immutable'
       }
     })

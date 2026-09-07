@@ -31,6 +31,9 @@ const TEXT_EXTENSIONS = new Set([
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
+/** Whether a file is a picture a note can carry. */
+export const isImageMime = (mime: string): boolean => IMAGE.has(mime)
+
 export type AttachmentShape = 'image' | 'document' | 'text'
 
 /** How a file will be shown to the model, or null if it cannot be. */

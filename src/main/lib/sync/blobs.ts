@@ -62,6 +62,10 @@ async function referenced(): Promise<Blob[]> {
        FROM chat_attachment a JOIN conversation c ON c.id = a.conversation_id
       WHERE a.path <> ''
      UNION ALL
+     SELECT 'attachment', i.path, p.workspace_id
+       FROM note_image i JOIN project p ON p.id = i.project_id
+      WHERE i.path <> ''
+     UNION ALL
      -- A segment is addressed by its recording and its file together: the names are
      -- ordinals, so 0000.webm means nothing without knowing which recording it is in.
      SELECT 'segment', s.recording_id || '/' || s.path, pr.workspace_id

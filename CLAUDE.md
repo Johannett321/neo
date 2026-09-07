@@ -459,6 +459,25 @@ content: their presence is what proves the ops were *applied* and not merely cop
   workspace the flow creates falsifies its own condition: without the latch the screen
   unmounts mid-save and the app appears behind it. Nothing is written until the last
   button, so abandoning the flow leaves nothing behind.
+- **A picture in a note is a row and a file, and nothing points at the row.**
+  `note_image` is scoped to the *project* — a note being written for the first time has
+  no id yet — and holds the uuid filename the bytes were stored under in `attachments/`,
+  which is what makes it a blob the sync reconciler can name. The note's Markdown refers
+  to it by `neo-media://image/<file>`, served by `recording/media.ts` only for a file a
+  row names. Because the reference lives in prose, `lib/images.ts`'s launch sweep is
+  what deletes: a row no note or meeting in its project mentions, after a day's grace
+  for a row that synced ahead of the note that mentions it. The mirror copies the file
+  into the project's `media/` and rewrites the address to a relative path, so Obsidian
+  shows it. `![alt|300](…)` is the width, Obsidian's way, and the only size there is.
+- **`[[Links]]` between notes resolve by title, inside one project, and are never
+  stored.** Backlinks are computed in the renderer from the bodies `project:get` already
+  returns (`lib/noteLinks.ts`); there is no link table to keep right. The editor is
+  handed the titles it may complete to and a callback for ⌘-click, and knows nothing
+  about notes otherwise.
+- **The mirror is coalesced, not immediate.** `mirrorProject()` waits `MIRROR_DELAY_MS`
+  for a burst of autosaves to end; `flushMirrors()` runs on the way out, and
+  `settings:exportMarkdown` still rebuilds everything at once. `verify.ts` counts
+  rewrites through `mirrorStats`.
 - **Every side panel resizes through one hook.** `lib/resize.tsx` — `useResizablePanel`
   and `PanelResizeHandle` — and the bounds for each one live in `src/shared/panels.ts`,
   never in the component. The panel's own edge is what a drag measures from, not the

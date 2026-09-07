@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useApi, useApiMutation } from '@/lib/api'
 import { differs, relativeFromIso } from '@/lib/format'
+import { excerpt } from '@/lib/markdown'
+import { useImageDrop, useNoteLinks } from '@/lib/noteLinks'
 import { Icon } from '@/components/Icon'
-import { MarkdownEditor } from '@/components/MarkdownEditor'
+import { MarkdownEditor, type EditorHandle } from '@/components/MarkdownEditor'
 import { ConfirmButton, EmptyState, Kbd } from '@/components/primitives'
 
 /**
@@ -33,11 +35,14 @@ export function NoteWriter(): React.JSX.Element {
    */
   const [params] = useSearchParams()
   const startIn = params.get('in')
+  // A `[[link]]` to a note that does not exist yet lands here with the name it used.
+  const startTitle = params.get('title')
   const navigate = useNavigate()
+  const editor = useRef<EditorHandle>(null)
   const save = useApiMutation('note:save')
   const remove = useApiMutation('note:delete')
 
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(noteId === 'new' ? (startTitle ?? '') : '')
   const [body, setBody] = useState('')
   const [savedAt, setSavedAt] = useState<string | null>(null)
 
@@ -49,7 +54,7 @@ export function NoteWriter(): React.JSX.Element {
   const deleted = useRef(false)
   // Nothing is written back until you have actually typed something. Without this the
   // page would save its own empty initial state over the note it is still loading.
-  const touched = useRef(false)
+  const touched = useRef(noteId === 'new' && Boolean(startTitle))
   draft.current = { title, body }
 
   const edit = (set: (v: string) => void) => (value: string): void => {
@@ -66,9 +71,12 @@ export function NoteWriter(): React.JSX.Element {
     if (noteId === 'new' || noteId === idRef.current || !note) return
     idRef.current = note.id
     touched.current = false
-    saved.current = { title: note.title, body: note.body }
+    // A note that arrived with Windows line endings is straightened on the way in:
+    // the editor counts characters, and a `\r` it cannot see is a caret one off.
+    const straight = note.body.replace(/\r\n?/g, '\n')
+    saved.current = { title: note.title, body: straight }
     setTitle(note.title)
-    setBody(note.body)
+    setBody(straight)
     setSavedAt(note.updatedAt)
   }, [noteId, note])
 
@@ -109,8 +117,14 @@ export function NoteWriter(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [title, body, dirty])
 
-  // Leaving the page is the last moment to keep what is on it.
+  // Leaving the page is the last moment to keep what is on it — and so is closing
+  // the window, which unmounts nothing.
   useEffect(() => () => void flushRef.current(), [])
+  useEffect(() => {
+    const onUnload = (): void => void flushRef.current()
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -127,7 +141,12 @@ export function NoteWriter(): React.JSX.Element {
   // rather than at the top of a list you then have to walk down again.
   const filedIn = note?.folderId ?? startIn
   const back = `/projects/${projectId}/notes${filedIn ? `?in=${filedIn}` : ''}`
-  const words = body.trim() ? body.trim().split(/\s+/).length : 0
+  // The words, not the syntax: a list of four to-dos is four words, not nine.
+  const plain = excerpt(body)
+  const words = plain ? plain.split(/\s+/).length : 0
+
+  const { linkTargets, openLink, backlinks } = useNoteLinks(projectId, data?.notes ?? [], idRef.current, title)
+  const takeImage = useImageDrop(projectId)
 
   if (!data) return <div className="h-full" />
   if (missing) {
@@ -158,17 +177,47 @@ export function NoteWriter(): React.JSX.Element {
             autoFocus={noteId === 'new'}
             onChange={(e) => edit(setTitle)(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') e.preventDefault()
+              // Return in the title is the way down into the note.
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                editor.current?.focus('start')
+              }
             }}
           />
 
           <MarkdownEditor
+            ref={editor}
             value={body}
             onChange={edit(setBody)}
             autoFocus={noteId !== 'new'}
-            placeholder="Write. # for a heading, - for a list, - [ ] for a checkbox, ``` for code."
+            placeholder="Write. # for a heading, - for a list, - [ ] for a checkbox, [[ to link a note, ``` for code."
             className="min-h-[60vh] px-0.5"
+            linkTargets={linkTargets}
+            onOpenLink={openLink}
+            onImage={takeImage}
           />
+
+          {/* The notes that point here. Derived from their text, never stored, so it
+              cannot go stale and there is nothing to maintain. */}
+          {backlinks.length > 0 && (
+            <div className="mt-10 border-t border-base-content/8 pt-4">
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.06em] text-base-content/35">
+                Linked from
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {backlinks.map((n) => (
+                  <Link
+                    key={n.id}
+                    to={`/projects/${projectId}/notes/${n.id}${n.folderId ? `?in=${n.folderId}` : ''}`}
+                    className="hairline flex items-center gap-1.5 rounded-field border bg-base-100 px-2.5 py-1 text-[12px] text-base-content/70 transition hover:border-base-content/20 hover:text-base-content"
+                  >
+                    <Icon name="note" size={12} className="text-base-content/40" />
+                    {n.title || 'Untitled note'}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Sits under the note rather than over it: a short note sees the hints, and
               a long one has stopped needing them by the time it scrolls past. */}
@@ -185,6 +234,16 @@ export function NoteWriter(): React.JSX.Element {
             <span className="flex items-center gap-1.5">
               <Kbd>⇥</Kbd> nest
             </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>⌥↑↓</Kbd> move
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>⌘⏎</Kbd> checkbox
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>[[</Kbd> link a note
+            </span>
+            <span className="flex items-center gap-1.5">drop a picture in</span>
           </div>
         </div>
       </div>

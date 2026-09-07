@@ -17,6 +17,8 @@ import { applyStagedUpdate, pruneStaged, startUpdates, stopUpdates } from './lib
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
 import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
 import { pruneRecordings } from './lib/recording/store'
+import { pruneNoteImages } from './lib/images'
+import { flushMirrors } from './lib/markdown'
 import { stopSystemAudio } from './lib/recording/systemAudio'
 import { registerChatHandlers } from './ipc/chat'
 import { registerContentHandlers } from './ipc/content'
@@ -267,6 +269,8 @@ async function start(): Promise<void> {
   // orphaned some: an hour of a meeting is the largest thing this app writes, and a
   // cascade in the database frees none of it.
   const sweptAudio = await pruneRecordings()
+  const sweptImages = await pruneNoteImages()
+  if (sweptImages > 0) console.log(`Removed ${sweptImages} picture(s) no note refers to any more.`)
   if (sweptAudio > 0) console.log(`Removed ${sweptAudio} recording folder(s) with no recording left.`)
   /*
    * And the same for an update that was downloaded and never applied — a lid closed
@@ -383,6 +387,8 @@ app.on('before-quit', (event) => {
   stopSystemAudio()
   void stopBridge()
     .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
+    // A note saved in the last two seconds has its mirror still waiting; write it now.
+    .then(() => flushMirrors())
     .then(() => closeDb())
     .catch((error: unknown) => console.error('Could not close the database cleanly:', error))
     .finally(() => {
@@ -402,6 +408,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     void stopBridge()
       .catch(() => {})
+      .then(() => flushMirrors())
       .then(() => closeDb())
       .finally(() => process.exit(0))
   })

@@ -38,7 +38,9 @@ import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recor
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath } from '../src/main/lib/recording/systemAudio'
-import { addDays, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
+import { addDays, attachmentDir, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
+import { pruneNoteImages } from '../src/main/lib/images'
+import { flushMirrors, mirrorStats } from '../src/main/lib/markdown'
 import {
   adoptExistingRows, allBatches, deviceId, ingest, initOplog, onLocalWrite, pending, replayLog,
   SYNC_ORDER
@@ -539,6 +541,56 @@ async function main(): Promise<void> {
      afterOther.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
   await call('note:delete', { id: draft.id })
   await call('note:delete', { id: other.id })
+
+  /* ----------------------------------------------------------- pictures in notes */
+
+  // One transparent pixel. The bytes go to attachments/, the row to the log, and
+  // the note carries only the URL — which is what the mirror later turns into a path.
+  const PIXEL =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const picture = await call('noteImage:save', {
+    projectId: checkout.id,
+    file: { name: 'shot.png', mime: 'image/png', data: PIXEL }
+  })
+  ok('a picture dropped into a note is stored and given an app URL',
+     picture.url === `neo-media://image/${picture.path}` && existsSync(join(attachmentDir(), picture.path)),
+     picture.url)
+  ok('anything that is not a picture is refused',
+     await threw(() => call('noteImage:save', {
+       projectId: checkout.id, file: { name: 'x.txt', mime: 'text/plain', data: 'aGk=' }
+     }), 'pictures'))
+  const illustrated = await call('note:save', {
+    projectId: checkout.id, title: 'With a picture', body: `Look:\n\n![shot|300](${picture.url})\n`
+  })
+  const unused = await call('noteImage:save', {
+    projectId: checkout.id,
+    file: { name: 'unused.png', mime: 'image/png', data: PIXEL }
+  })
+  ok('a picture nothing refers to yet is left alone', (await pruneNoteImages()) === 0)
+  await exec("UPDATE note_image SET created_at = now() - interval '2 days' WHERE id = $1", [unused.id])
+  ok('after a day it is swept, and the one a note shows is kept',
+     (await pruneNoteImages()) === 1 &&
+       !existsSync(join(attachmentDir(), unused.path)) &&
+       existsSync(join(attachmentDir(), picture.path)))
+
+  // The note page saves every 800 ms of typing; the mirror must not be torn down and
+  // rebuilt on every one of them. It waits for the burst to end, and quitting flushes it.
+  await flushMirrors()
+  const writesBefore = mirrorStats.writes
+  await call('note:save', { id: illustrated.id, body: `Look again:\n\n![shot|300](${picture.url})\n` })
+  await call('note:save', { id: illustrated.id, body: `Look once more:\n\n![shot|300](${picture.url})\n` })
+  ok('a burst of saves does not rewrite the mirror on each one', mirrorStats.writes === writesBefore)
+  await flushMirrors()
+  ok('the rewrite happens once the burst is over', mirrorStats.writes === writesBefore + 1,
+     `${writesBefore} -> ${mirrorStats.writes}`)
+  {
+    const projectDir = join((await call('settings:get')).markdownDir, 'Day job', 'Checkout rewrite')
+    const noteFile = join(projectDir, 'notes', `with-a-picture-${illustrated.id.slice(0, 8)}.md`)
+    ok('the mirror copies the picture beside the notes and points the note at it',
+       existsSync(join(projectDir, 'media', picture.path)) &&
+         readFileSync(noteFile, 'utf8').includes(`![shot|300](../media/${picture.path})`),
+       noteFile)
+  }
 
   const flow = await call('canvas:save', {
     projectId: checkout.id,
@@ -1102,6 +1154,7 @@ async function main(): Promise<void> {
   ok('and finds the helper by looking for the file rather than by asking if it is packaged',
      process.platform !== 'darwin' || existsSync(helperPath()) === (await call('systemAudio:available')).available,
      helperPath() || '(no helper built)')
+
 
   // What a recording listens to is about this machine, not about a working life, so
   // it lives in app settings beside the theme rather than on the workspace.

@@ -90,12 +90,12 @@ export function NotesTab({
       <div className="min-h-[60vh]" onContextMenu={(e) => openMenu(e, pageMenu)}>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="group relative">
-            <Link className="btn btn-primary btn-sm gap-1.5" to={noteHref('new')}>
+            <Link className="btn btn-primary btn-sm gap-1.5 rounded-r-none" to={noteHref('new')}>
               <Icon name="plus" size={13} />
               New note
             </Link>
             <button
-              className="btn btn-primary btn-sm -ml-px rounded-l-none px-1.5"
+              className="btn btn-primary btn-sm rounded-l-none border-l border-l-primary-content/25 px-1.5"
               title="More new options"
               aria-haspopup="menu"
               onClick={(e) => {

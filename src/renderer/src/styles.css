@@ -377,16 +377,15 @@ summary,
 /*
  * A bullet, a number and a checkbox are the marker drawn properly rather than a label
  * beside it, so they are empty elements with their content in CSS — nothing they show
- * is part of the note's text.
+ * is part of the note's text. The editor sets the line's padding and each figure's
+ * `left` from how deep the line is nested, so a nested item steps in and its marker
+ * steps in with it; a guide runs down from each level to what is nested under it.
  */
-.mde .ln[data-b='bullet'],
-.mde .ln[data-b='number'],
-.mde .ln[data-b='task'] {
-  padding-left: 1.5em;
-}
 .mde .bul,
 .mde .num,
-.mde .box {
+.mde .box,
+.mde .gd,
+.mde .ci {
   position: absolute;
   left: 0;
   user-select: none;
@@ -395,9 +394,14 @@ summary,
   content: '•';
   color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
 }
+.mde .num {
+  width: 1.45em;
+  text-align: right;
+}
 .mde .num::before {
   content: attr(data-n);
   font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
   color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
 }
 .mde .box {
@@ -423,6 +427,12 @@ summary,
   border-width: 0 1.6px 1.6px 0;
   transform: rotate(43deg);
 }
+.mde .gd {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in oklch, var(--color-base-content) 9%, transparent);
+}
 
 .mde .ln[data-b='quote'] {
   padding-left: 0.9em;
@@ -430,13 +440,116 @@ summary,
   color: color-mix(in oklch, var(--color-base-content) 62%, transparent);
 }
 /* A rule keeps its line height so there is still somewhere to put the cursor. */
-.mde .ln[data-b='rule']::after {
+.mde .ln[data-b='rule']:not([data-on])::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   top: 50%;
   border-top: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+.mde .ln[data-b='rule'][data-on] {
+  color: color-mix(in oklch, var(--color-base-content) 28%, transparent);
+}
+
+/*
+ * A callout is a quote that says what it is. The colour is the type's, from the
+ * semantic tokens rather than any hue that means identity elsewhere in the app, and
+ * the whole thing stays a run of `> ` lines underneath — the editor only tints them.
+ */
+.mde .ln[data-callout] {
+  --co: var(--color-base-content);
+  border-left-color: color-mix(in oklch, var(--co) 55%, transparent);
+  background: color-mix(in oklch, var(--co) 6%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
+  padding-right: 0.9em;
+}
+.mde .ln[data-callout][data-head] {
+  padding-left: 2.3em;
+  padding-top: 0.15em;
+  border-top-right-radius: var(--radius-field);
+  font-weight: 600;
+  color: color-mix(in oklch, var(--co) 85%, var(--color-base-content));
+}
+.mde .ln[data-callout][data-head] .ci {
+  left: 0.75em;
+  top: 0.45em;
+  color: var(--co);
+}
+.mde .ln[data-callout][data-head][data-on] .ci {
+  display: none;
+}
+.mde .ln[data-callout][data-head][data-on] {
+  padding-left: 0.9em;
+}
+.mde .ln[data-callout='info'],
+.mde .ln[data-callout='note'],
+.mde .ln[data-callout='abstract'],
+.mde .ln[data-callout='todo'] {
+  --co: var(--color-info);
+}
+.mde .ln[data-callout='tip'],
+.mde .ln[data-callout='success'] {
+  --co: var(--color-success);
+}
+.mde .ln[data-callout='warning'],
+.mde .ln[data-callout='question'] {
+  --co: var(--color-warning);
+}
+.mde .ln[data-callout='danger'],
+.mde .ln[data-callout='failure'],
+.mde .ln[data-callout='bug'] {
+  --co: var(--color-error);
+}
+
+/*
+ * A table is drawn a row per line on a grid every row of it shares — the editor
+ * works the column widths out from the whole table and sets them on each row, so
+ * the columns line up without the rows knowing about each other. The pipes stay in
+ * the text and out of sight; the divider row is a rule.
+ */
+.mde .ln[data-b='table'] {
+  display: grid;
+  column-gap: 0;
+  font-size: 0.94em;
+  border-left: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  border-right: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+}
+.mde .ln[data-b='table'][data-head] {
+  background: var(--color-base-200);
+  font-weight: 600;
+  border-top: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  border-top-left-radius: var(--radius-field);
+  border-top-right-radius: var(--radius-field);
+}
+.mde .ln[data-b='table'] .cell {
+  display: block;
+  min-width: 0;
+  padding: 0.1em 0.7em;
+  border-right: 1px solid color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  overflow-wrap: anywhere;
+}
+.mde .ln[data-b='table'] .cell:last-child {
+  border-right: none;
+}
+.mde .ln[data-b='table'][data-div] {
+  min-height: 0;
+  line-height: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+.mde .ln[data-b='table'][data-div] .cell {
+  padding: 0 0.7em;
+  min-height: 3px;
+}
+.mde .ln[data-b='table'][data-div][data-on] {
+  line-height: 1.75;
+  min-height: 1.75em;
+  color: color-mix(in oklch, var(--color-base-content) 28%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.mde .ln[data-b='table'] + .ln:not([data-b='table']) {
+  margin-top: 0.4em;
 }
 
 .mde .ln[data-b='code'],
@@ -450,6 +563,9 @@ summary,
 }
 .mde .ln[data-b='fence'] {
   color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+}
+.mde .ln[data-b='fence'] .mk {
+  color: inherit;
 }
 
 .mde b {
@@ -474,6 +590,50 @@ summary,
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+}
+/* A link to a note that does not exist yet: still a link, drawn as a promise. */
+.mde .lk.missing {
+  color: color-mix(in oklch, var(--color-primary) 60%, var(--color-base-content));
+  text-decoration-style: dashed;
+}
+
+/*
+ * A picture in a note. It sits on the line the Markdown for it is on and shows
+ * nothing of that Markdown unless the caret is there; the corner drags, and letting
+ * go writes the width into the text as `|300`, the way Obsidian writes one.
+ */
+.mde .pic {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin: 0.35em 0;
+  vertical-align: top;
+  line-height: 0;
+}
+.mde .pic img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-field);
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  background: var(--color-base-200);
+}
+.mde .pic .grab {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid var(--color-primary);
+  background: var(--color-base-100);
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.mde .pic:hover .grab,
+.mde .ln[data-on] .pic .grab {
+  opacity: 1;
 }
 
 /*
@@ -606,6 +766,52 @@ summary,
  * The hairline and the rounded corner are what keep a screenshot of the app from
  * dissolving into the page it is being read on, since the two are the same colours.
  */
+.md .wk {
+  color: var(--color-primary);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+}
+
+/* A callout, read: the same tint the editor gives it, closed into a box. */
+.md .callout {
+  --co: var(--color-base-content);
+  margin: 0.7em 0;
+  padding: 0.55em 0.85em;
+  border-left: 2px solid color-mix(in oklch, var(--co) 55%, transparent);
+  border-radius: 0 var(--radius-field) var(--radius-field) 0;
+  background: color-mix(in oklch, var(--co) 6%, transparent);
+}
+.md .callout-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  font-weight: 600;
+  color: color-mix(in oklch, var(--co) 85%, var(--color-base-content));
+}
+.md .callout-head + .md {
+  margin-top: 0.35em;
+}
+.md .callout[data-callout='info'],
+.md .callout[data-callout='note'],
+.md .callout[data-callout='abstract'],
+.md .callout[data-callout='todo'] {
+  --co: var(--color-info);
+}
+.md .callout[data-callout='tip'],
+.md .callout[data-callout='success'] {
+  --co: var(--color-success);
+}
+.md .callout[data-callout='warning'],
+.md .callout[data-callout='question'] {
+  --co: var(--color-warning);
+}
+.md .callout[data-callout='danger'],
+.md .callout[data-callout='failure'],
+.md .callout[data-callout='bug'] {
+  --co: var(--color-error);
+}
+
 .md-figure {
   margin: 1.1em 0;
 }

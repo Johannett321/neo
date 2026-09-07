@@ -1,6 +1,6 @@
 import type { SyncBilling, SyncStatus } from './sync'
 import type {
-  Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, Conversation,
+  Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, Conversation, NoteImage,
   Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
@@ -162,6 +162,11 @@ export interface ApiMap {
 
   'note:save': { in: Draft<Note>; out: Note }
   'note:delete': { in: { id: string }; out: void }
+  /**
+   * A picture dropped or pasted into a note, written to disk and given the URL the
+   * note will carry. Only PNG, JPEG, WebP and GIF; anything else is refused.
+   */
+  'noteImage:save': { in: { projectId: string; file: AttachmentUpload }; out: NoteImage }
 
   /**
    * A visual canvas in the open JSON Canvas format. Saved as a `.canvas` file in the

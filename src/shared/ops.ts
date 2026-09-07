@@ -61,7 +61,7 @@ export interface Batch {
 export type SyncedTable =
   | 'workspace' | 'workspace_link' | 'project_folder' | 'project_collapsible' | 'project'
   | 'board_column' | 'person' | 'membership' | 'task' | 'content_folder' | 'note'
-  | 'canvas' | 'meeting' | 'meeting_attendee' | 'meeting_todo' | 'decision' | 'link'
+  | 'canvas' | 'note_image' | 'meeting' | 'meeting_attendee' | 'meeting_todo' | 'decision' | 'link'
   | 'journal_entry' | 'activity' | 'notification' | 'conversation' | 'chat_message'
   | 'chat_attachment' | 'recording' | 'recording_segment' | 'transcript_cue'
 
@@ -118,6 +118,7 @@ export const TABLES: Record<SyncedTable, TableMeta> = {
   content_folder:      { owner: { column: 'project_id', table: 'project' } },
   note:                { owner: { column: 'project_id', table: 'project' }, references: ['content_folder'] },
   canvas:              { owner: { column: 'project_id', table: 'project' }, references: ['content_folder'] },
+  note_image:          { owner: { column: 'project_id', table: 'project' } },
   meeting:             { owner: { column: 'project_id', table: 'project' }, references: ['content_folder'] },
   decision:            { owner: { column: 'project_id', table: 'project' } },
   link:                { owner: { column: 'project_id', table: 'project' } },
