@@ -86,7 +86,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
 
   const filedIn = await folderPaths(project.id)
 
-  const [links, cast, notes, decisions, journal, tasks, meetings] = await Promise.all([
+  const [links, cast, notes, canvases, decisions, journal, tasks, meetings] = await Promise.all([
     q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order', [project.id]),
     q<any>(
       `SELECT m.role, m.note, p.name, p.org, p.how_to_work_with
@@ -95,6 +95,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
       [project.id]
     ),
     q<any>('SELECT * FROM note WHERE project_id = $1 ORDER BY created_at DESC', [project.id]),
+    q<any>('SELECT * FROM canvas WHERE project_id = $1 ORDER BY updated_at DESC', [project.id]),
     q<any>('SELECT * FROM decision WHERE project_id = $1 ORDER BY decided_on DESC', [project.id]),
     q<any>('SELECT * FROM journal_entry WHERE project_id = $1 ORDER BY occurred_on DESC', [project.id]),
     q<any>("SELECT * FROM task WHERE project_id = $1 AND status = 'open' ORDER BY due_date NULLS LAST", [
@@ -168,6 +169,19 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
       await mkdir(into, { recursive: true })
       const body = `# ${n.title || 'Untitled note'}\n\n_${new Date(n.created_at).toISOString().slice(0, 10)}_\n\n${n.body}\n`
       await writeFile(join(into, `${slug(n.title || 'note')}-${String(n.id).slice(0, 8)}.md`), body, 'utf8')
+      files++
+    }
+  }
+
+  if (canvases.length) {
+    for (const c of canvases) {
+      const into = join(dir, 'notes', ...(filedIn.get(c.folder_id) ?? []))
+      await mkdir(into, { recursive: true })
+      await writeFile(
+        join(into, `${slug(c.title || 'canvas')}-${String(c.id).slice(0, 8)}.canvas`),
+        JSON.stringify(c.data, null, 2),
+        'utf8'
+      )
       files++
     }
   }

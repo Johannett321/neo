@@ -63,6 +63,12 @@ app.setAppUserModelId('com.svartdal.neo')
 // given a file path it could read anything else with.
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES])
 
+// Allow a test or a second dev run to use its own profile so the single-instance lock
+// and the data folder do not collide with an already-running copy.
+if (process.env.NEO_USER_DATA) {
+  app.setPath('userData', process.env.NEO_USER_DATA)
+}
+
 /**
  * Two copies of the app writing the same database directory will corrupt it — PGlite
  * is an in-process engine with no lock of its own. A second launch focuses the window

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { ContentFolderView, Note } from '@shared/types'
+import type { Canvas, ContentFolderView, Note } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
@@ -24,27 +24,46 @@ import {
  * across the top is the way back out — and the way to take a note back out with you.
  * With no folders at all the page is precisely the list it has always been.
  */
+type NoteItem = { kind: 'note'; item: Note }
+type CanvasItem = { kind: 'canvas'; item: Canvas }
+type ListItem = NoteItem | CanvasItem
+type FiledItem = { kind: 'note'; item: Note; folderId: string | null } | { kind: 'canvas'; item: Canvas; folderId: string | null }
+
 export function NotesTab({
   projectId,
   notes,
+  canvases,
   folders
 }: {
   projectId: string
   notes: Note[]
+  canvases: Canvas[]
   folders: ContentFolderView[]
 }): React.JSX.Element {
   const navigate = useNavigate()
-  const save = useApiMutation('note:save')
-  const remove = useApiMutation('note:delete')
   const openMenu = useContextMenu()
   const filing = useFiling('note', folders)
-  const [moving, setMoving] = useState<Note | null>(null)
+  const [moving, setMoving] = useState<ListItem | null>(null)
+  const [newOpen, setNewOpen] = useState(false)
 
-  // A note started inside a folder is filed there, so the URL carries where you are.
-  const href = (noteId: string): string =>
+  // A note or canvas started inside a folder is filed there, so the URL carries where you are.
+  const noteHref = (noteId: string): string =>
     `/projects/${projectId}/notes/${noteId}${filing.openFolderId ? `?in=${filing.openFolderId}` : ''}`
+  const canvasHref = (canvasId: string): string =>
+    `/projects/${projectId}/canvas/${canvasId}${filing.openFolderId ? `?in=${filing.openFolderId}` : ''}`
 
-  const here = filing.here(notes)
+  const items: ListItem[] = [
+    ...notes.map((n) => ({ kind: 'note' as const, item: n })),
+    ...canvases.map((c) => ({ kind: 'canvas' as const, item: c }))
+  ].sort((a, b) => {
+    // Pinned first, then by updated time, with canvases and notes interleaved.
+    const pinDiff = Number(b.item.isPinned) - Number(a.item.isPinned)
+    if (pinDiff) return pinDiff
+    return new Date(b.item.updatedAt).getTime() - new Date(a.item.updatedAt).getTime()
+  })
+
+  const filedItems: FiledItem[] = items.map(({ kind, item }) => ({ kind, item, folderId: item.folderId } as FiledItem))
+  const here = filing.here(filedItems)
 
   /*
    * Right-clicking the list itself. The button above offers a note; this is the other
@@ -56,7 +75,8 @@ export function NotesTab({
       label: 'New',
       icon: 'plus',
       items: [
-        { label: 'Note', icon: 'note', onSelect: () => navigate(href('new')) },
+        { label: 'Note', icon: 'note', onSelect: () => navigate(noteHref('new')) },
+        { label: 'Canvas', icon: 'canvas', onSelect: () => navigate(canvasHref('new')) },
         filing.newFolderItem
       ]
     }
@@ -69,10 +89,27 @@ export function NotesTab({
           event at their own menu on the way up. */}
       <div className="min-h-[60vh]" onContextMenu={(e) => openMenu(e, pageMenu)}>
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <Link className="btn btn-primary btn-sm gap-1.5" to={href('new')}>
-            <Icon name="plus" size={13} />
-            New note
-          </Link>
+          <div className="group relative">
+            <Link className="btn btn-primary btn-sm gap-1.5" to={noteHref('new')}>
+              <Icon name="plus" size={13} />
+              New note
+            </Link>
+            <button
+              className="btn btn-primary btn-sm -ml-px rounded-l-none px-1.5"
+              title="More new options"
+              aria-haspopup="menu"
+              onClick={(e) => {
+                setNewOpen(true)
+                openMenu(e, [
+                  { label: 'New note', icon: 'note', onSelect: () => navigate(noteHref('new')) },
+                  { label: 'New canvas', icon: 'canvas', onSelect: () => navigate(canvasHref('new')) }
+                ])
+              }}
+              onBlur={() => setNewOpen(false)}
+            >
+              <Icon name={newOpen ? 'chevronUp' : 'chevronDown'} size={13} />
+            </button>
+          </div>
           <button
             className="btn btn-ghost btn-sm gap-1.5"
             onClick={() => filing.setNewFolderIn(filing.openFolderId)}
@@ -116,49 +153,25 @@ export function NotesTab({
           />
         ) : (
           <div className="space-y-2.5">
-            {here.map((note) => (
-              <CarryableRow key={note.id} id={note.id} filing={filing}>
-                <Link
-                  to={href(note.id)}
-                  draggable={false}
-                  className="hairline row-hover block w-full rounded-box border bg-base-100 px-4 py-3 text-left"
-                  onContextMenu={(e) =>
-                    openMenu(e, [
-                      { label: 'Open', icon: 'edit', onSelect: () => navigate(href(note.id)) },
-                      {
-                        label: note.isPinned ? 'Unpin' : 'Pin',
-                        icon: 'pin',
-                        onSelect: () => save.mutate({ id: note.id, isPinned: !note.isPinned })
-                      },
-                      { label: 'Move to…', icon: 'folder', onSelect: () => setMoving(note) },
-                      'separator',
-                      {
-                        label: 'Delete note',
-                        icon: 'trash',
-                        danger: true,
-                        onSelect: () => remove.mutate({ id: note.id }),
-                        confirm: { title: 'Delete this note?', body: note.title || 'Untitled note' }
-                      }
-                    ])
-                  }
-                >
-                  <div className="flex items-center gap-2">
-                    {note.isPinned && <Icon name="pin" size={12} className="text-warning" />}
-                    <span className="flex-1 truncate text-[13px] font-medium">
-                      {note.title || 'Untitled note'}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-base-content/35">
-                      {relativeFromIso(note.updatedAt)}
-                    </span>
-                  </div>
-                  {note.body && (
-                    <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[12px] leading-relaxed text-base-content/55">
-                      {excerpt(note.body)}
-                    </p>
-                  )}
-                </Link>
-              </CarryableRow>
-            ))}
+            {here.map(({ kind, item }) =>
+              kind === 'note' ? (
+                <NoteRow
+                  key={item.id}
+                  note={item}
+                  filing={filing}
+                  href={noteHref(item.id)}
+                  onMove={() => setMoving({ kind: 'note', item })}
+                />
+              ) : (
+                <CanvasRow
+                  key={item.id}
+                  canvas={item}
+                  filing={filing}
+                  href={canvasHref(item.id)}
+                  onMove={() => setMoving({ kind: 'canvas', item })}
+                />
+              )
+            )}
           </div>
         )}
       </div>
@@ -168,16 +181,129 @@ export function NotesTab({
 
       {moving && (
         <MoveToFolderModal
-          key={moving.id}
+          key={moving.item.id}
           open
           onClose={() => setMoving(null)}
           folders={filing.pickable}
-          title={`Move ${moving.title || 'this note'}`}
-          description="Filing only. Nothing about the note itself changes."
-          current={moving.folderId}
-          onMove={(folderId) => filing.file(moving.id, folderId)}
+          title={`Move ${moving.item.title || `this ${moving.kind}`}`}
+          description="Filing only. Nothing about the item itself changes."
+          current={moving.item.folderId}
+          onMove={(folderId) => filing.file(moving.item.id, folderId, moving.kind === 'canvas' ? 'canvas' : 'note')}
         />
       )}
     </>
+  )
+}
+
+function NoteRow({
+  note,
+  filing,
+  href,
+  onMove
+}: {
+  note: Note
+  filing: ReturnType<typeof useFiling>
+  href: string
+  onMove: () => void
+}): React.JSX.Element {
+  const navigate = useNavigate()
+  const save = useApiMutation('note:save')
+  const remove = useApiMutation('note:delete')
+  const openMenu = useContextMenu()
+
+  return (
+    <CarryableRow id={note.id} filing={filing} type="note">
+      <Link
+        to={href}
+        draggable={false}
+        className="hairline row-hover block w-full rounded-box border bg-base-100 px-4 py-3 text-left"
+        onContextMenu={(e) =>
+          openMenu(e, [
+            { label: 'Open', icon: 'edit', onSelect: () => navigate(href) },
+            {
+              label: note.isPinned ? 'Unpin' : 'Pin',
+              icon: 'pin',
+              onSelect: () => save.mutate({ id: note.id, isPinned: !note.isPinned })
+            },
+            { label: 'Move to…', icon: 'folder', onSelect: onMove },
+            'separator',
+            {
+              label: 'Delete note',
+              icon: 'trash',
+              danger: true,
+              onSelect: () => remove.mutate({ id: note.id }),
+              confirm: { title: 'Delete this note?', body: note.title || 'Untitled note' }
+            }
+          ])
+        }
+      >
+        <div className="flex items-center gap-2">
+          {note.isPinned && <Icon name="pin" size={12} className="text-warning" />}
+          <span className="flex-1 truncate text-[13px] font-medium">{note.title || 'Untitled note'}</span>
+          <span className="shrink-0 text-[11px] text-base-content/35">{relativeFromIso(note.updatedAt)}</span>
+        </div>
+        {note.body && (
+          <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[12px] leading-relaxed text-base-content/55">
+            {excerpt(note.body)}
+          </p>
+        )}
+      </Link>
+    </CarryableRow>
+  )
+}
+
+function CanvasRow({
+  canvas,
+  filing,
+  href,
+  onMove
+}: {
+  canvas: Canvas
+  filing: ReturnType<typeof useFiling>
+  href: string
+  onMove: () => void
+}): React.JSX.Element {
+  const navigate = useNavigate()
+  const save = useApiMutation('canvas:save')
+  const remove = useApiMutation('canvas:delete')
+  const openMenu = useContextMenu()
+  const nodeCount = canvas.data.nodes.filter((n) => n.type === 'text').length
+
+  return (
+    <CarryableRow id={canvas.id} filing={filing} type="canvas">
+      <Link
+        to={href}
+        draggable={false}
+        className="hairline row-hover block w-full rounded-box border bg-base-100 px-4 py-3 text-left"
+        onContextMenu={(e) =>
+          openMenu(e, [
+            { label: 'Open', icon: 'canvas', onSelect: () => navigate(href) },
+            {
+              label: canvas.isPinned ? 'Unpin' : 'Pin',
+              icon: 'pin',
+              onSelect: () => save.mutate({ id: canvas.id, isPinned: !canvas.isPinned })
+            },
+            { label: 'Move to…', icon: 'folder', onSelect: onMove },
+            'separator',
+            {
+              label: 'Delete canvas',
+              icon: 'trash',
+              danger: true,
+              onSelect: () => remove.mutate({ id: canvas.id }),
+              confirm: { title: 'Delete this canvas?', body: canvas.title || 'Untitled canvas' }
+            }
+          ])
+        }
+      >
+        <div className="flex items-center gap-2">
+          {canvas.isPinned && <Icon name="pin" size={12} className="text-warning" />}
+          <Icon name="canvas" size={14} className="text-base-content/40" />
+          <span className="flex-1 truncate text-[13px] font-medium">{canvas.title || 'Untitled canvas'}</span>
+          <span className="shrink-0 text-[11px] text-base-content/35">
+            {nodeCount} card{nodeCount === 1 ? '' : 's'} · {relativeFromIso(canvas.updatedAt)}
+          </span>
+        </div>
+      </Link>
+    </CarryableRow>
   )
 }

@@ -27,6 +27,13 @@ let root = ''
  */
 export function dataRoot(): string {
   if (root) return root
+
+  if (process.env.NEO_DATA_ROOT) {
+    root = process.env.NEO_DATA_ROOT
+    mkdirSync(root, { recursive: true })
+    return root
+  }
+
   let home: string
   try {
     home = app.getPath('home')

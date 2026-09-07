@@ -87,6 +87,14 @@ async function main(): Promise<void> {
     await call('note:save', {
       projectId: project.id, title: 'A note', body: 'With a body worth checking.'
     })
+    await call('canvas:save', {
+      projectId: project.id,
+      title: 'A canvas',
+      data: {
+        nodes: [{ id: 's1', type: 'text', text: 'Synced card', x: 0, y: 0, width: 250, height: 60 }],
+        edges: []
+      }
+    })
 
     /*
      * A real file, put where an icon goes and pointed at by a row. The bytes are
@@ -148,6 +156,13 @@ async function main(): Promise<void> {
     )
     ok('pull: the note arrived with its body',
        note?.body === 'With a body worth checking.', note?.body ?? 'missing')
+
+    const canvas = await q1<{ title: string; data: any }>(
+      'SELECT title, data FROM canvas WHERE project_id = $1', [projectId]
+    )
+    ok('pull: the canvas arrived',
+       canvas?.title === 'A canvas' && canvas?.data?.nodes?.length === 1,
+       canvas?.title ?? 'missing')
 
     // The board is created by the project handler, not sent as content — so its
     // presence here proves the ops were *applied* rather than merely copied.

@@ -30,6 +30,8 @@ export interface Nested {
 export interface Dragged {
   kind: 'item' | 'folder'
   id: string
+  /** What kind of item is being dragged, when kind is 'item'. */
+  type?: 'note' | 'meeting' | 'canvas'
 }
 
 /** The folders sitting directly inside `parentId` — null for the top level. */

@@ -337,15 +337,23 @@ export async function replayLog(): Promise<{ batches: number; ops: number; dropp
 }
 
 /**
- * Parents before children. Derived from the owner chain rather than written out, so
- * a new table joins the order by declaring where it hangs rather than by someone
- * remembering to add it here in the right place.
+ * Parents before children. Derived from the owner chain and from explicit
+ * cross-table references, so a new table joins the order by declaring what it
+ * hangs off rather than by someone remembering to add it here in the right place.
+ *
+ * References matter for adoption: a project adopted before its folder arrives on
+ * another machine as a foreign-key violation, gets deferred, and is dropped because
+ * the folder lives in a later batch.
  */
 export const SYNC_ORDER: SyncedTable[] = (() => {
   const names = Object.keys(TABLES) as SyncedTable[]
   const depth = (t: SyncedTable, guard = 0): number => {
+    if (guard > 8) return 0
     const owner = TABLES[t].owner
-    return !owner || guard > 8 ? 0 : depth(owner.table, guard + 1) + 1
+    const ownerDepth = !owner ? 0 : depth(owner.table, guard + 1) + 1
+    const refs = TABLES[t].references ?? []
+    const refDepth = refs.length > 0 ? Math.max(...refs.map((r) => depth(r, guard + 1))) + 1 : 0
+    return Math.max(ownerDepth, refDepth)
   }
   return names.sort((a, b) => depth(a) - depth(b) || a.localeCompare(b))
 })()

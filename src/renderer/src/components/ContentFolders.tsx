@@ -45,7 +45,7 @@ export interface Filing {
   /** File whatever is in the air into a folder, or out to the level above it. */
   moveHere: (dragged: Dragged, folderId: string | null) => void
   /** Move one thing, by id, from a menu rather than by dragging. */
-  file: (id: string, folderId: string | null) => void
+  file: (id: string, folderId: string | null, type?: Dragged['type']) => void
   /** Whatever is filed at the level you are looking at, and nothing else. */
   here: <T extends { folderId: string | null }>(items: T[]) => T[]
   newFolderIn: string | null | undefined
@@ -73,6 +73,7 @@ export function useFiling(kind: ContentKind, folders: ContentFolderView[]): Fili
   const [movingFolder, setMovingFolder] = useState<ContentFolderView | null>(null)
 
   const saveNote = useApiMutation('note:save')
+  const saveCanvas = useApiMutation('canvas:save')
   const saveMeeting = useApiMutation('meeting:save')
   const saveFolder = useApiMutation('contentFolder:save')
 
@@ -88,14 +89,15 @@ export function useFiling(kind: ContentKind, folders: ContentFolderView[]): Fili
     setParams(folderId ? { in: folderId } : {})
   }
 
-  /** The write that files one note or one meeting. The only thing `kind` decides. */
-  const file = (id: string, folderId: string | null): void => {
-    if (kind === 'note') saveNote.mutate({ id, folderId })
+  /** The write that files one note, canvas or meeting. The item type decides. */
+  const file = (id: string, folderId: string | null, type?: Dragged['type']): void => {
+    if (type === 'canvas') saveCanvas.mutate({ id, folderId })
+    else if (kind === 'note') saveNote.mutate({ id, folderId })
     else saveMeeting.mutate({ id, folderId })
   }
 
   const moveHere = (item: Dragged, folderId: string | null): void => {
-    if (item.kind === 'item') file(item.id, folderId)
+    if (item.kind === 'item') file(item.id, folderId, item.type)
     else if (item.id !== folderId) saveFolder.mutate({ id: item.id, parentId: folderId })
     setDragged(null)
   }
@@ -188,6 +190,7 @@ export function ContentFolderRow({
 
   const inside = [
     folder.itemCount > 0 ? plural(folder.itemCount, noun) : '',
+    folder.canvasCount > 0 ? plural(folder.canvasCount, 'canvas') : '',
     folder.folderCount > 0 ? plural(folder.folderCount, 'folder') : ''
   ].filter(Boolean)
 
@@ -268,10 +271,13 @@ export function ContentFolderRow({
 export function CarryableRow({
   id,
   filing,
+  type,
   children
 }: {
   id: string
   filing: Filing
+  /** What kind of item this row is, so filing knows which channel to use. */
+  type?: Dragged['type']
   children: React.ReactNode
 }): React.JSX.Element {
   const reduced = useReducedMotion()
@@ -291,7 +297,7 @@ export function CarryableRow({
         className="cursor-grab active:cursor-grabbing"
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = 'move'
-          filing.setDragged({ kind: 'item', id })
+          filing.setDragged({ kind: 'item', id, type })
           requestAnimationFrame(() => setLifted(true))
         }}
         onDragEnd={() => {

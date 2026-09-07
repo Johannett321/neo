@@ -355,6 +355,45 @@ async function main(): Promise<void> {
   ok('and the workspace is back to no collapsibles at all',
      (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
 
+  /* -------------------------------------------------------------- adoption order */
+
+  /*
+   * A project can reference its folder and collapsible. When existing rows are taken
+   * into the log, the referenced rows must be emitted first: a project batch applied
+   * before its folder batch defers, and because sync applies one batch at a time the
+   * deferral becomes a drop.
+   */
+  const adoptWsId = randomUUID()
+  const adoptFolderId = randomUUID()
+  const adoptProjectId = randomUUID()
+  await exec(
+    `INSERT INTO workspace (id, name, color) VALUES ($1, 'Adopt order', '#6366f1')`,
+    [adoptWsId]
+  )
+  await exec(
+    `INSERT INTO project_folder (id, workspace_id, name, sort_order) VALUES ($1, $2, 'Adopted folder', 0)`,
+    [adoptFolderId, adoptWsId]
+  )
+  await exec(
+    `INSERT INTO project (id, workspace_id, name, folder_id, status, summary) VALUES ($1, $2, 'Adopted project', $3, 'active', '')`,
+    [adoptProjectId, adoptWsId, adoptFolderId]
+  )
+  await adoptExistingRows()
+  const folderSeq = await q1<{ seq: string }>(
+    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project_folder'
+     ORDER BY seq DESC LIMIT 1`
+  )
+  const projectSeq = await q1<{ seq: string }>(
+    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project'
+     ORDER BY seq DESC LIMIT 1`
+  )
+  ok('adoption emits folders before the projects that point at them',
+     folderSeq !== undefined && projectSeq !== undefined && Number(folderSeq.seq) < Number(projectSeq.seq),
+     `folder=${folderSeq?.seq} project=${projectSeq?.seq}`)
+
+  // Clean up so later workspace-counting tests are not thrown off.
+  await call('workspace:delete', { id: adoptWsId })
+
   /*
    * Arranging the cards by hand. Zero means nobody has said, so a workspace nobody
    * has dragged anything in is ordered exactly as it always was; the first drop is
@@ -500,6 +539,35 @@ async function main(): Promise<void> {
      afterOther.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
   await call('note:delete', { id: draft.id })
   await call('note:delete', { id: other.id })
+
+  const flow = await call('canvas:save', {
+    projectId: checkout.id,
+    title: 'Flow',
+    data: {
+      nodes: [
+        { id: 'a', type: 'text', text: 'Start', x: 0, y: 0, width: 250, height: 60, color: 'red' },
+        { id: 'b', type: 'text', text: 'End', x: 300, y: 0, width: 250, height: 60 },
+        { id: 'g', type: 'group', label: 'Scope', x: -20, y: -20, width: 600, height: 120, color: 'blue' }
+      ],
+      edges: [{ id: 'e1', fromNode: 'a', fromSide: 'right', toNode: 'b', toSide: 'left', label: 'Next' }]
+    }
+  })
+  ok('a canvas can be saved', flow.title === 'Flow' && flow.data.nodes.length === 3)
+  const group = flow.data.nodes.find((n: any) => n.type === 'group')
+  const edge = flow.data.edges[0]
+  ok('canvas nodes keep their color and edges keep their labels',
+     flow.data.nodes[0].color === 'red' && group?.color === 'blue' && edge?.label === 'Next')
+  const withCanvas = await call('project:get', { id: checkout.id })
+  ok('it appears on the project', withCanvas.canvases.some((c: any) => c.id === flow.id))
+  ok('creating a canvas logs it',
+     withCanvas.activity.some((a: any) => a.kind === 'canvas' && a.summary === 'Canvas: Flow'))
+  await call('canvas:save', { id: flow.id, title: 'Flowchart', data: flow.data })
+  const afterRename = await call('project:get', { id: checkout.id })
+  ok('renaming a canvas updates the existing activity line',
+     afterRename.activity.filter((a: any) => a.kind === 'canvas').length === 1 &&
+     afterRename.activity.some((a: any) => a.summary === 'Canvas: Flowchart'))
+  await call('canvas:delete', { id: flow.id })
+  ok('a canvas can be deleted', !(await call('project:get', { id: checkout.id })).canvases.some((c: any) => c.id === flow.id))
 
   const todoColumn = detail.columns[0]
   const doingColumn = detail.columns[1]
@@ -650,6 +718,18 @@ async function main(): Promise<void> {
   ok('and the folder counts what is filed in it',
      (await call('project:get', { id: filingProject.id })).noteFolders
        .find((f: any) => f.id === interviews.id).itemCount === 1)
+
+  const filedCanvas = await call('canvas:save', {
+    projectId: filingProject.id,
+    title: 'Interview map',
+    data: { nodes: [{ id: 'c1', type: 'text', text: 'Topic', x: 0, y: 0, width: 250, height: 60 }], edges: [] },
+    folderId: interviews.id
+  })
+  ok('a canvas can be filed in a note folder', filedCanvas.folderId === interviews.id)
+  const folderCounts = (await call('project:get', { id: filingProject.id })).noteFolders
+    .find((f: any) => f.id === interviews.id)
+  ok('and the folder counts it separately from notes',
+     folderCounts.itemCount === 1 && folderCounts.canvasCount === 1)
 
   const filedMeeting = await call('meeting:save', {
     projectId: filingProject.id, title: 'Steering #1', folderId: steering.id
@@ -1738,11 +1818,24 @@ async function main(): Promise<void> {
      await threw(() => tool('update_folder').summary({ folder: 'Somewhere else' }, dayJobCtx),
                  'No folder in this workspace'))
 
+  const mirrorCanvas = await call('canvas:save', {
+    projectId: checkout.id,
+    title: 'Process flow',
+    data: {
+      nodes: [{ id: 'm1', type: 'text', text: 'Step one', x: 0, y: 0, width: 250, height: 60 }],
+      edges: []
+    }
+  })
+
   const md = await call('settings:exportMarkdown')
   ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
   const filedOverview = join((await call('settings:get')).markdownDir,
                              'Day job', 'Clients', 'Acme', 'Internal tooling', '_overview.md')
   ok('a filed project is mirrored inside its folders on disk', existsSync(filedOverview), filedOverview)
+  const canvasFile = join((await call('settings:get')).markdownDir,
+                          'Day job', 'Checkout rewrite', 'notes',
+                          `process-flow-${mirrorCanvas.id.slice(0, 8)}.canvas`)
+  ok('a canvas is mirrored as a .canvas file', existsSync(canvasFile), canvasFile)
   const json = await call('settings:exportJson')
   ok('json export writes', typeof json.path === 'string', json.path)
 

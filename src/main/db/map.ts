@@ -1,5 +1,5 @@
 import type {
-  Activity, Attachment, BoardColumn, CastMember, ChatMessage, ContentFolder, ContentFolderView,
+  Activity, Attachment, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, ContentFolderView,
   Conversation, Decision,
   JournalEntry, Link, Membership, MeetingTodo, MeetingView, Note, Person, PersonProject,
   Project, ProjectCollapsible, ProjectCollapsibleView, ProjectFolder, ProjectFolderView, ProjectStatus, Recap, RecordingSegment, RecordingView, SpeakerName, Task,
@@ -126,6 +126,7 @@ export const mapContentFolderView = (r: Row): ContentFolderView => ({
   path: r.path ?? [r.name],
   depth: r.depth ?? 0,
   itemCount: r.item_count ?? 0,
+  canvasCount: r.canvas_count ?? 0,
   folderCount: r.folder_count ?? 0
 })
 
@@ -236,6 +237,17 @@ export const mapNote = (r: Row): Note => ({
   projectId: r.project_id,
   title: r.title,
   body: r.body,
+  folderId: r.folder_id ?? null,
+  isPinned: r.is_pinned,
+  createdAt: iso(r.created_at),
+  updatedAt: iso(r.updated_at)
+})
+
+export const mapCanvas = (r: Row): Canvas => ({
+  id: r.id,
+  projectId: r.project_id,
+  title: r.title,
+  data: json<Canvas['data']>(r.data, { nodes: [], edges: [] }),
   folderId: r.folder_id ?? null,
   isPinned: r.is_pinned,
   createdAt: iso(r.created_at),

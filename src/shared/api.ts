@@ -1,6 +1,6 @@
 import type { SyncBilling, SyncStatus } from './sync'
 import type {
-  Activity, AttachmentUpload, BoardColumn, CastMember, ChatMessage, ContentFolder, Conversation,
+  Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, Conversation,
   Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
@@ -162,6 +162,14 @@ export interface ApiMap {
 
   'note:save': { in: Draft<Note>; out: Note }
   'note:delete': { in: { id: string }; out: void }
+
+  /**
+   * A visual canvas in the open JSON Canvas format. Saved as a `.canvas` file in the
+   * Markdown mirror so it can be opened in Obsidian; stored in the database so it
+   * syncs and can be edited inside Neo.
+   */
+  'canvas:save': { in: Draft<Canvas>; out: Canvas }
+  'canvas:delete': { in: { id: string }; out: void }
 
   /*
    * ------------------------------------------------- filing notes and meetings

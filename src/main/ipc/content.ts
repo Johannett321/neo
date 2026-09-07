@@ -1,6 +1,6 @@
-import type { ContentFolder, ContentKind, Decision, JournalEntry, Link, Note } from '@shared/types'
+import type { Canvas, ContentFolder, ContentKind, Decision, JournalEntry, Link, Note } from '@shared/types'
 import { q1, today } from '../db/client'
-import { mapContentFolder, mapDecision, mapJournal, mapLink, mapNote } from '../db/map'
+import { mapCanvas, mapContentFolder, mapDecision, mapJournal, mapLink, mapNote } from '../db/map'
 import { logActivity } from '../lib/activity'
 import {
   checkContentFolder, contentFolderBranch, isContentKind
@@ -32,6 +32,29 @@ export function registerContentHandlers(): void {
 
   handle('note:delete', async ({ id }) => {
     await remove('note', id)
+  })
+
+  handle('canvas:save', async (draft) => {
+    const fields = pick(draft as Partial<Canvas>, ['projectId', 'title', 'data', 'folderId', 'isPinned'])
+
+    if (fields.folderId !== undefined) {
+      const current = draft.id
+        ? await q1<any>('SELECT project_id FROM canvas WHERE id = $1', [draft.id])
+        : null
+      const projectId = String((fields.projectId as string | undefined) ?? current?.project_id ?? '')
+      // Canvases live beside notes and use the same folders.
+      await checkContentFolder(fields.folderId, projectId, 'note')
+    }
+
+    const row = await upsert<any>('canvas', fields, draft.id, 'updated_at = now()')
+    const canvas = mapCanvas(row)
+    await logActivity(canvas.projectId, 'canvas', `Canvas: ${canvas.title || 'Untitled'}`, canvas.id)
+    await mirrorProject(canvas.projectId)
+    return canvas
+  })
+
+  handle('canvas:delete', async ({ id }) => {
+    await remove('canvas', id)
   })
 
   /*
