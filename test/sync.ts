@@ -115,6 +115,21 @@ async function main(): Promise<void> {
     await call('project:save', { id: project.id, iconPath: iconName })
     console.log(`ICON=${iconName}`)
 
+    /*
+     * An empty file, referenced by a row, and it is not a contrivance: a recording
+     * segment that captured nothing is a real thing to find in a data folder.
+     *
+     * It used to travel because sealing added a nonce and a tag, so nothing was ever
+     * zero bytes on the wire. With the encryption gone it arrives as what it is, the
+     * server refused a size of zero, and — because the client only tolerated being
+     * out of space — that one file stopped *every* file from syncing. This is that
+     * bug, kept.
+     */
+    const emptyName = `${randomUUID()}.png`
+    await writeFile(join(iconDir(), emptyName), Buffer.alloc(0))
+    await call('workspace:save', { id: workspace.id, iconPath: emptyName })
+    console.log(`EMPTY=${emptyName}`)
+
     const before = await engine.status()
     ok('push: there is something waiting to go out', before.pending > 0, `${before.pending} rows`)
 
@@ -203,6 +218,12 @@ async function main(): Promise<void> {
     ok('pull: and the bytes arrived, byte for byte',
        landed?.toString('utf8') === 'not really a png, but bytes',
        landed ? `${landed.length} bytes` : 'file missing')
+
+    const emptyName = need('NEO_SYNC_EMPTY')
+    const empty = await readFile(join(iconDir(), emptyName)).catch(() => null)
+    ok('pull: an empty file travels as an empty file rather than stopping the pass',
+       empty !== null && empty.length === 0,
+       empty === null ? 'missing' : `${empty.length} bytes`)
 
     // Nothing this device pulled may be pushed back: that would be an echo, and two
     // devices echoing each other never stop.

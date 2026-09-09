@@ -157,11 +157,17 @@ export async function pushBlobs(client: Relay): Promise<{ uploaded: number; skip
       uploaded += 1
     } catch (error) {
       /*
-       * Being out of space is not a failure to retry into: it will be out of space
-       * next time too. It is recorded as a skip and the pass carries on, so one
-       * oversized recording does not stop every icon behind it.
+       * A file this server will not take is not a failure to retry into: it will
+       * refuse the same file next time. It is counted as a skip and the pass carries
+       * on, so one impossible file does not stop every icon behind it.
+       *
+       * 507 is being out of space. 400 is the file itself — too large for this
+       * server, or something about it the server will not have. Both are permanent
+       * for that file and harmless for every other, and the difference between
+       * counting them and throwing is the difference between one recording not
+       * syncing and *nothing* syncing, which is how this was found.
        */
-      if (error instanceof RelayError && error.status === 507) {
+      if (error instanceof RelayError && (error.status === 507 || error.status === 400)) {
         skipped += 1
         continue
       }
