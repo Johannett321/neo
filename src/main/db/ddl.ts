@@ -807,38 +807,57 @@ export const MIGRATIONS: string[] = [
   // somebody's account was one table of opaque blobs.
   //
   // The rows are the record now, and `sync_dirty` says which of them still have to go.
-  // Dropping these is safe in a way it looks like it should not be: `op_batch` was
-  // never the state, only an account of how the state got here, and the state is in
-  // the domain tables where it always was.
+  //
+  // **Some of this may only happen once, and that is the hard part.** These run on
+  // every launch. Dropping a table that is already gone costs nothing; signing
+  // somebody out costs them their account every time they open the app, which is
+  // exactly what it did. So the once-only statements are guarded on a marker, and the
+  // marker is set from a fact rather than assumed: a database that still has
+  // `op_batch` has never been through this, and one that does not either is new or
+  // has been through it already. Both of those want to be left alone.
+  //
+  // Which is why this line comes before the drop below, and must stay there.
+  `INSERT INTO setting (key, value)
+     SELECT 'rowSyncMigratedAt', now()::text
+      WHERE NOT EXISTS (SELECT 1 FROM information_schema.tables
+                         WHERE table_schema = 'public' AND table_name = 'op_batch')
+   ON CONFLICT (key) DO NOTHING`,
+
+  // Safe to repeat: the state was always in the domain tables, and `op_batch` was
+  // only an account of how it got there.
   `DROP TABLE IF EXISTS op_batch`,
   `DROP TABLE IF EXISTS sync_row`,
 
-  // A cursor into a stream that no longer exists. The column goes with it, and the
-  // rows with the column: a device that had read to sequence 4,000 of the old log has
-  // read nothing at all of the new one, and must start from the beginning.
-  //
-  // The replacement has to be added here rather than left to the DDL above, and this
-  // is the trap: `CREATE TABLE IF NOT EXISTS sync_state` does nothing at all on a
-  // machine that already has the table, so a column added to that definition never
-  // reaches an upgraded database. It reaches a fresh one, which is why it looks fine
-  // everywhere except on the installs that matter.
+  // A cursor into a stream that no longer exists. The column goes with it — and the
+  // replacement has to be added here rather than left to the DDL above, because
+  // `CREATE TABLE IF NOT EXISTS` does nothing at all on a machine that already has
+  // the table, so a column added to that definition never reaches an upgraded
+  // database. It reaches a fresh one, which is why it looks fine everywhere except on
+  // the installs that matter.
   `ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS remote_rev bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE sync_state DROP COLUMN IF EXISTS remote_seq`,
-  `DELETE FROM sync_state`,
+
+  /* ---------------------------------------------------------------- once only */
 
   // The push cursor and the cached master key. One counted batches that are gone; the
-  // other opened them.
-  //
-  // The device token goes with them, which signs this machine out. That looks heavy
-  // handed and is the kind thing to do: the endpoints it was issued for no longer
-  // exist, so keeping it would mean the first pass after the upgrade failing against
-  // a server that cannot answer, and an error banner nobody can act on without
-  // finding the Disconnect button first. Signed out, the app is Local — which is a
-  // state it is designed for — and signing back in hands over everything at once.
-  `DELETE FROM setting WHERE key IN ('syncPushedSeq', 'syncCachedKey', 'syncToken')`,
+  // other opened them. The device token goes too, which signs this machine out: the
+  // endpoints it was issued for no longer exist, so keeping it would mean the first
+  // pass after the upgrade failing against a server that cannot answer.
+  `DELETE FROM setting
+    WHERE key IN ('syncPushedSeq', 'syncCachedKey', 'syncToken')
+      AND NOT EXISTS (SELECT 1 FROM setting m WHERE m.key = 'rowSyncMigratedAt')`,
 
-  // Everything on this machine is now something the server has not been given, which
-  // is exactly true and is the whole of the upgrade: the first pass after signing in
-  // hands over the lot. See `adoptExistingRows()`.
-  `DELETE FROM blob_sync`
+  // A device that had read to sequence 4,000 of the old log has read nothing at all
+  // of the new one, and must start from the beginning.
+  `DELETE FROM sync_state
+    WHERE NOT EXISTS (SELECT 1 FROM setting WHERE key = 'rowSyncMigratedAt')`,
+
+  // Files were stored under an HMAC of their name, so nothing already up there can be
+  // found again. Everything is offered afresh.
+  `DELETE FROM blob_sync
+    WHERE NOT EXISTS (SELECT 1 FROM setting WHERE key = 'rowSyncMigratedAt')`,
+
+  // And now it has happened, whichever way it went.
+  `INSERT INTO setting (key, value) VALUES ('rowSyncMigratedAt', now()::text)
+   ON CONFLICT (key) DO NOTHING`
 ]

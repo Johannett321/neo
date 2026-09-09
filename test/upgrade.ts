@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
 import { dataRoot, exec, initDb, orphanedForeignKeys, q } from '../src/main/db/client'
+import { db as pg } from '../src/main/db/client'
+import { DDL, MIGRATIONS } from '../src/main/db/ddl'
 import { adoptExistingRows, changeFor, initSync, SYNC_ORDER } from '../src/main/db/dirty'
 import { applyRun } from '../src/main/db/apply'
 import type { RowChange } from '@shared/tables'
@@ -691,6 +693,44 @@ async function main(): Promise<void> {
   ok('the sync pane can be drawn on an upgraded database',
      pane.serverUrl === 'https://sync.neomoon.io' && pane.pending >= 0,
      `${pane.phase}, ${pane.pending} waiting, ${pane.workspaces.length} workspace(s)`)
+
+  /* ------------------------------------------------------------------ *
+   * Opening the app twice
+   *
+   * `MIGRATIONS` run on every launch, and the header of that file says every one is
+   * written to be safe to run repeatedly. Three of them were not: the upgrade signed
+   * the machine out, cleared its pull cursors and forgot which files it had already
+   * uploaded — all correct exactly once, and all of it happening again every single
+   * time the app was opened. Signing in worked; quitting undid it.
+   *
+   * So this is the general assertion rather than one about those three: sign in,
+   * relaunch, and everything a signed-in machine holds is still there. Anything
+   * once-only added later has to pass this too.
+   * ------------------------------------------------------------------ */
+
+  await exec(
+    `INSERT INTO setting (key, value) VALUES ('syncToken', 'signed in after upgrading')
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`)
+  await exec(`INSERT INTO sync_state (workspace_id, remote_rev) VALUES (gen_random_uuid(), 42)`)
+  await exec(
+    `INSERT INTO blob_sync (kind, ref, workspace_id, uploaded_at)
+     VALUES ('icon', 'already-up.png', gen_random_uuid(), now())`)
+  const dirtyBefore = (await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_dirty'))[0]?.n
+
+  // Exactly what opening the app again does.
+  await pg().exec(DDL)
+  for (const statement of MIGRATIONS) await pg().query(statement)
+
+  ok('opening the app again leaves this machine signed in',
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM setting WHERE key = 'syncToken'`))[0]?.n === 1)
+  ok('and remembers how far it had read',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_state'))[0]?.n === 1)
+  ok('and which files it had already handed over',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM blob_sync'))[0]?.n === 1)
+  ok('and does not offer everything up all over again',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_dirty'))[0]?.n === dirtyBefore,
+     `${dirtyBefore} waiting`)
 
   /*
    * The same gate verify.ts holds new work to, held here against work that was
