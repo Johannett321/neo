@@ -1,9 +1,8 @@
 /**
  * What the renderer is allowed to know about syncing.
  *
- * Deliberately small, and deliberately without a single key in it. The passphrase
- * goes one way — into main, once — and nothing that could open anything ever comes
- * back out.
+ * Deliberately small: a status line, a plan, and the list of workspaces with how far
+ * each has got. Everything that decides anything lives in the main process.
  */
 
 export type SyncTier = 'local' | 'neo' | 'self'
@@ -19,11 +18,19 @@ export interface SyncConfig {
 export type SyncPhase =
   /** No server configured. The whole of Local. */
   | 'off'
-  /** Configured, but the passphrase has not been given since this app started. */
-  | 'locked'
+  /**
+   * Configured, and the server cannot be reached.
+   *
+   * Deliberately not an error, and the distinction is the point: a laptop on a train
+   * is working exactly as designed. Everything on this machine still reads and writes
+   * at full speed, what is written is marked to go, and the badge says only that it
+   * has not gone yet.
+   */
+  | 'offline'
   | 'connecting'
   | 'idle'
   | 'syncing'
+  /** Something the server refused, or a fault worth showing. Not being unreachable. */
   | 'error'
 
 /**
@@ -63,7 +70,7 @@ export interface SyncStatus {
   error: string
   /** ISO timestamp of the last completed pass, or empty for never. */
   lastSyncedAt: string
-  /** Batches this device has written and not yet handed over. */
+  /** Rows this device has changed and not yet handed over. */
   pending: number
   /** Whether the live stream is attached, rather than only polling. */
   live: boolean
@@ -74,21 +81,13 @@ export interface SyncStatus {
   /** File storage, in bytes. Zero quota means the server has not said yet. */
   usedBytes: number
   quotaBytes: number
-  /**
-   * Whether this machine is the one setting the passphrase rather than typing an
-   * existing one. Answered by asking the server whether the account has any wrapped
-   * key material — the only honest way to know, and not the same question as "does
-   * this Mac have workspaces on it", which is what it used to guess from.
-   */
-  firstDevice: boolean
   billing: SyncBilling
-  workspaces: { workspaceId: string; name: string; remoteSeq: number }[]
+  workspaces: { workspaceId: string; name: string; remoteRev: number }[]
 }
 
-/** What a sign-in needs. The passphrase is used and dropped; it is never stored. */
+/** What a sign-in needs, which is now only where to sign in. */
 export interface SyncConnect {
   serverUrl: string
-  passphrase: string
   /** Blank on the machine that already has the work; typed on the second one. */
   deviceName: string
 }
@@ -108,3 +107,12 @@ export const NUDGE_AFTER_PROJECTS = 3
 
 /** Long enough that a flaky network is not a spinner, short enough to feel live. */
 export const POLL_INTERVAL_MS = 60_000
+
+/**
+ * How long an unreachable server is retried at before the badge appears.
+ *
+ * A moment's grace, so that closing a laptop lid or walking between two access points
+ * does not flash "Offline" across the window. Beyond it the badge is the honest
+ * answer and hiding it would be worse.
+ */
+export const OFFLINE_AFTER_MS = 20_000

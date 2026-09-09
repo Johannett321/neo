@@ -151,8 +151,45 @@ export function Sidebar(): React.JSX.Element {
           </NavLink>
         </div>
       )}
+      <OfflineBadge />
       <WorkspaceSwitcher />
     </aside>
+  )
+}
+
+/**
+ * A quiet line above the workspace switcher, drawn only when the sync server cannot
+ * be reached.
+ *
+ * Absent the rest of the time, and that is the whole design: a badge that is always
+ * there saying "online" is furniture nobody reads, and the one moment it matters is
+ * the moment somebody is about to wonder whether their work is safe. So it says the
+ * answer — it is here, it is waiting, nothing is lost — rather than only the state.
+ *
+ * Never drawn for a machine with no account. Local is not offline; it is the app
+ * working exactly as it is meant to, and telling somebody who has never signed in
+ * that they are disconnected would be inventing a problem.
+ */
+function OfflineBadge(): React.JSX.Element | null {
+  // Polled rather than pushed: the status is a handful of columns, the sidebar is
+  // always mounted, and half a minute is well inside how long anybody takes to
+  // notice a network has gone.
+  const { data: status } = useApi('sync:status', undefined, { refetchInterval: 30_000 })
+  if (!status || status.phase !== 'offline') return null
+
+  return (
+    <div
+      className="hairline flex items-start gap-2 border-t px-3.5 py-2.5 text-[11.5px] leading-snug text-base-content/55"
+      title="Neo cannot reach the sync server. Everything still works; changes go up when it can."
+    >
+      <Icon name="cloudOff" size={13} className="mt-px shrink-0 opacity-60" />
+      <span>
+        <span className="font-medium text-base-content/75">Offline.</span>{' '}
+        {status.pending > 0
+          ? `${status.pending} change${status.pending === 1 ? '' : 's'} waiting.`
+          : 'Everything still works.'}
+      </span>
+    </div>
   )
 }
 

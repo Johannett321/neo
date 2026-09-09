@@ -6,13 +6,15 @@
 # README. It seeds a device token directly, because a passkey needs an authenticator
 # and a headless test does not have one; everything after that is the real path.
 #
+# Signing in is a passkey and nothing else now, so the seeded token *is* the whole of
+# what a device holds — there is no passphrase step to skip.
+#
 #   NEO_SYNC_URL=http://localhost:18080 test/sync.sh
 
 set -uo pipefail
 
 URL="${NEO_SYNC_URL:-http://localhost:18080}"
 PG="${PG:-neo-sync-pg}"
-PASSPHRASE="a passphrase worth typing"
 STAMP=$(date +%s)
 HANDLE="sync-test-$STAMP@example.com"
 TOKEN="sync-test-token-$STAMP"
@@ -31,8 +33,7 @@ npx --no-install esbuild test/sync.ts --bundle --platform=node --format=esm --ta
 
 ONE=$(mktemp -d)/one
 TWO=$(mktemp -d)/two
-export NEO_SYNC_URL="$URL" NEO_SYNC_TOKEN="$TOKEN" NEO_SYNC_ACCOUNT="$ACCOUNT" \
-       NEO_SYNC_PASSPHRASE="$PASSPHRASE"
+export NEO_SYNC_URL="$URL" NEO_SYNC_TOKEN="$TOKEN" NEO_SYNC_ACCOUNT="$ACCOUNT"
 
 echo "--- device one: writes and pushes ---"
 PUSHED=$(PM_TEST_DIR="$ONE" node out/sync.mjs push)

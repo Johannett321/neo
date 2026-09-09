@@ -9,16 +9,14 @@ import { DEFAULT_SYNC_SERVER, type SyncBilling, type SyncStatus } from '@shared/
  *
  * Deliberately not in onboarding. Asking somebody to price syncing before they have
  * made a workspace is asking them to value something they have not used, and it is
- * only safe to defer because the device is the source of truth: turning this on
- * attaches a transport to a log that was already being written, so there is nothing
- * to migrate and no decision to regret.
+ * only safe to defer because everything is already here: every row this Mac has ever
+ * written is marked as something to hand over from the moment it was written, so
+ * turning this on is a first push rather than a migration.
  *
- * The pane has three states and each one asks exactly one question. Nothing off — one
- * button. Signed in but locked — the passphrase, and whether this machine is choosing
- * it or typing one that exists is answered by the *server*, not guessed from whether
- * this Mac happens to have workspaces on it. Connected — what is happening, what it
- * costs, and how to add the second Mac, which is the thing somebody who has just
- * turned this on is about to want and used to have to work out.
+ * Two states now, where there used to be three. Nothing off — one button. Connected —
+ * what is happening, what it costs, and how to add the second Mac, which is the thing
+ * somebody who has just turned this on is about to want. The passphrase step in
+ * between is gone with the encryption it existed for.
  *
  * Self-hosting is a plain link at the bottom rather than a third button. Quiet is
  * fine — three equal choices here is a decision nobody wants to make. Grey would not
@@ -27,13 +25,10 @@ import { DEFAULT_SYNC_SERVER, type SyncBilling, type SyncStatus } from '@shared/
 export function SyncPane(): React.JSX.Element {
   const { data: status, refetch } = useApi('sync:status')
   const [server, setServer] = useState('')
-  const [passphrase, setPassphrase] = useState('')
-  const [again, setAgain] = useState('')
   const [problem, setProblem] = useState('')
   const [ownServer, setOwnServer] = useState(false)
 
   const signIn = useApiMutation('sync:signIn')
-  const unlock = useApiMutation('sync:unlock')
   const syncNow = useApiMutation('sync:now')
   const disconnect = useApiMutation('sync:disconnect')
 
@@ -52,33 +47,16 @@ export function SyncPane(): React.JSX.Element {
     }
   }
 
-  const open = async (): Promise<void> => {
-    setProblem('')
-    // Asked twice on the first device only. Everywhere else the account already has
-    // a passphrase, and typing it wrong says so rather than silently making a second.
-    if (status.firstDevice && passphrase !== again) {
-      setProblem('Those two do not match.')
-      return
-    }
-    const result = await unlock.mutateAsync({ passphrase })
-    if (!result.ok) {
-      setProblem(result.reason)
-      return
-    }
-    setPassphrase('')
-    setAgain('')
-    await refetch()
-  }
-
   /* ---------------------------------------------------------------- off */
 
   if (status.phase === 'off') {
     return (
       <Panel>
         <p className="max-w-xl text-[13px] leading-relaxed text-base-content/70">
-          Neo keeps everything on this Mac. Connecting it to a sync server keeps your
-          other machines in step and gives your work an off-site backup that is
-          encrypted before it leaves this app — the server holds bytes it cannot read.
+          Neo keeps everything on this Mac and works perfectly well that way. Connecting
+          it to a sync server keeps your other machines in step and gives your work an
+          off-site copy — and when two machines disagree, the server&rsquo;s answer is
+          the one that stands.
         </p>
 
         {/*
@@ -89,10 +67,8 @@ export function SyncPane(): React.JSX.Element {
         <ol className="mt-4 flex max-w-xl flex-col gap-2 text-[12.5px] leading-relaxed text-base-content/60">
           <Step n={1}>Your browser opens, and you sign in with a passkey — Touch ID,
             or your phone. There is no password to choose.</Step>
-          <Step n={2}>Back here, you pick a passphrase. That is what encrypts your
-            work, and it never reaches the server.</Step>
-          <Step n={3}>Everything already on this Mac goes up, encrypted, and stays in
-            step from then on.</Step>
+          <Step n={2}>Everything already on this Mac goes up, and stays in step from
+            then on. Nothing else to set.</Step>
         </ol>
 
         {ownServer ? (
@@ -132,70 +108,6 @@ export function SyncPane(): React.JSX.Element {
             Use your own server
           </button>
         )}
-      </Panel>
-    )
-  }
-
-  /* ------------------------------------------------------------- locked */
-
-  if (status.phase === 'locked') {
-    return (
-      <Panel>
-        <p className="max-w-xl text-[13px] leading-relaxed text-base-content/70">
-          Signed in as <span className="font-medium text-base-content">{status.accountHandle}</span>.
-          {status.firstDevice
-            ? ' Now choose a passphrase. It encrypts everything before it leaves this Mac, and it never reaches the sync server.'
-            : ' Type the passphrase you chose when you set this account up. It never reaches the sync server, which is why it has to be typed on each machine.'}
-        </p>
-
-        <div className="mt-4 max-w-xs">
-          <Field label={status.firstDevice ? 'Choose a passphrase' : 'Passphrase'}>
-            <input
-              className="input input-bordered input-sm w-full"
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              autoFocus
-            />
-          </Field>
-
-          {status.firstDevice ? (
-            <div className="mt-3">
-              <Field label="And again">
-                <input
-                  className="input input-bordered input-sm w-full"
-                  type="password"
-                  value={again}
-                  onChange={(e) => setAgain(e.target.value)}
-                />
-              </Field>
-            </div>
-          ) : null}
-        </div>
-
-        <p className="mt-3 max-w-lg text-[11.5px] leading-relaxed text-base-content/45">
-          {status.firstDevice
-            ? 'Nobody can reset this. If it is lost, so is everything the server holds — which is the same sentence as “the server cannot read it”, said from the other side. Your own Macs keep their copies either way.'
-            : 'If it does not work, it is the passphrase rather than the passkey: the passkey has already been accepted.'}
-        </p>
-
-        {problem ? <div className="mt-3"><Notice tone="error">{problem}</Notice></div> : null}
-
-        <div className="mt-4 flex gap-2">
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => void open()}
-            disabled={unlock.isPending || passphrase.length === 0}
-          >
-            {unlock.isPending ? 'Unlocking…' : status.firstDevice ? 'Set it and start syncing' : 'Unlock'}
-          </button>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => void disconnect.mutateAsync().then(() => refetch())}
-          >
-            Sign out
-          </button>
-        </div>
       </Panel>
     )
   }
@@ -292,8 +204,8 @@ export function SyncPane(): React.JSX.Element {
           <Step n={1}>Install Neo there and let it finish setting itself up.</Step>
           <Step n={2}>Open app settings, Sync, and press Connect with a passkey — the
             same passkey, offered by the browser. There is nothing to type.</Step>
-          <Step n={3}>Type this account&rsquo;s passphrase. Everything arrives on its
-            own from there.</Step>
+          <Step n={3}>Everything arrives on its own from there. Anything that Mac had
+            already goes up at the same time.</Step>
         </ol>
       </details>
 
@@ -563,19 +475,31 @@ function Step({ n, children }: { n: number; children: React.ReactNode }): React.
 }
 
 /** One sentence about what is happening, in the same register as an attention line. */
+/**
+ * One sentence for what is going on, and offline is deliberately not one of the bad
+ * ones. A laptop away from a network is working exactly as designed: everything reads
+ * and writes at full speed and what is written is waiting its turn.
+ */
 function Line({ status }: { status: SyncStatus }): React.JSX.Element {
   const [icon, words] =
-    !status.billing.mayWrite
-      ? (['alert', 'Receiving, but not sending — this account is not subscribed.'] as const)
-      : status.phase === 'error'
-        ? (['alert', status.error || 'Something went wrong.'] as const)
-        : status.phase === 'syncing'
-          ? (['refresh', 'Syncing now.'] as const)
-          : status.pending > 0
-            ? (['clock', 'Some changes are still to go out.'] as const)
-            : status.live
-              ? (['check', 'Up to date. Changes on your other Macs appear here in seconds.'] as const)
-              : (['check', 'Up to date.'] as const)
+    status.phase === 'offline'
+      ? ([
+          'cloudOff',
+          status.pending > 0
+            ? `Offline. ${status.pending} change${status.pending === 1 ? '' : 's'} will go up when you are back.`
+            : 'Offline. Everything here still works.'
+        ] as const)
+      : !status.billing.mayWrite
+        ? (['alert', 'Receiving, but not sending — this account is not subscribed.'] as const)
+        : status.phase === 'error'
+          ? (['alert', status.error || 'Something went wrong.'] as const)
+          : status.phase === 'syncing'
+            ? (['refresh', 'Syncing now.'] as const)
+            : status.pending > 0
+              ? (['clock', 'Some changes are still to go out.'] as const)
+              : status.live
+                ? (['check', 'Up to date. Changes on your other Macs appear here in seconds.'] as const)
+                : (['check', 'Up to date.'] as const)
 
   const bad = status.phase === 'error' || !status.billing.mayWrite
   const tone = bad ? 'text-error' : icon === 'check' ? 'text-success' : 'text-base-content/50'

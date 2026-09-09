@@ -5,3 +5,4 @@ dist/
 *.log
 *.tsbuildinfo
 .playwright-cli/
+.idea/

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, powerMonitor, protocol, session, shell } from 'electron'
 import { closeDb, dataRoot, initDb, q } from './db/client'
-import { adoptExistingRows, initOplog } from './db/oplog'
+import { adoptExistingRows, initSync, sweepTombstones } from './db/dirty'
 import { registerSyncHandlers } from './ipc/sync'
 import * as sync from './lib/sync/engine'
 import { buildAppMenu } from './menu'
@@ -238,20 +238,21 @@ async function start(): Promise<void> {
 
   await initDb()
   /*
-   * The log comes up before anything writes to it, and the adoption pass comes before
-   * the housekeeping below — `ensureMeEverywhere()` and friends all write, and they
-   * must write *as themselves* rather than being swept up as rows that were always
-   * here. On an install that predates the log this is the launch that gives years of
-   * work its history; on every launch after it, it finds nothing and costs one query
-   * per table.
+   * The device knows who it is before anything writes, and the adoption pass comes
+   * before the housekeeping below — `ensureMeEverywhere()` and friends all write, and
+   * they must write *as themselves* rather than being swept up as rows that were
+   * always here. On an install that has never synced, this is the launch that marks
+   * years of work as something to hand over; on every launch after it, it finds
+   * nothing and costs one query per table.
    */
-  await initOplog()
+  await initSync()
   const adopted = await adoptExistingRows()
-  if (adopted.rows > 0) console.log(`Took ${adopted.rows} existing row(s) into the operation log.`)
+  if (adopted.rows > 0) console.log(`Marked ${adopted.rows} existing row(s) to be synced.`)
+  await sweepTombstones()
   /*
-   * Syncing starts after adoption, never before it. A device that pushed its log
-   * before taking its own existing rows into it would hand the other Mac an account
-   * of a working life that begins today.
+   * Syncing starts after adoption, never before it. A device that pushed before
+   * taking its own existing rows into the queue would hand the other Mac a working
+   * life that begins today.
    */
   void sync.start()
   await ensureMeEverywhere()

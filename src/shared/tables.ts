@@ -1,62 +1,35 @@
 /**
- * The operation log's contract, the way `api.ts` is IPC's and `mcp.ts` is the socket's.
+ * What syncs, and how each table reaches the workspace it belongs to.
  *
- * Every write in the application becomes one or more `Op`s inside a `Batch`, and
- * `apply()` is the only thing that touches a domain table. That equivalence is the
- * whole correctness argument for syncing: a batch that arrives over a transport
- * travels the identical path as a click, so there is no second set of writes beside
- * the real ones that can drift — the same reason the assistant's tools are the app's
- * own channels rather than their own SQL.
+ * This boundary's contract, the way `api.ts` is IPC's and `mcp.ts` is the socket's.
+ * `db/apply.ts` is the only thing in the application that writes a domain table, and
+ * this is the declaration it reads: a click, an assistant tool call, a task created
+ * from Claude Desktop and a row arriving from the sync server all converge there,
+ * which is what makes them the same write rather than four that resemble each other.
  *
- * Nothing here imports from main or the renderer. The phone will replay these same
- * batches without a Postgres anywhere near it.
+ * Nothing here imports from main or the renderer. The phone reads the same
+ * declaration without a Postgres anywhere near it.
  */
 
 /**
- * The schema the ops in a batch were written against.
+ * One row, as it travels.
  *
- * It travels *with* the batch rather than being assumed by whoever receives it,
- * because the Mac that has not been updated yet keeps emitting the old shape and the
- * one that has must still understand it. Bump this whenever a column that appears in
- * an op is renamed, dropped or changes meaning — adding a column needs no bump,
- * because an op that never mentions it leaves it at its default.
- *
- * See `db/upcast.ts`. The chain is empty today and costs nothing while it is; it
- * exists from the first version so that no op is ever written unversioned.
+ * A whole row rather than the columns that changed, which is the difference between
+ * this and what it replaces. It costs the case where two devices edit different
+ * fields of the same row while both are offline — one of the two edits is lost — and
+ * it buys a server that stores rows in columns, a protocol anybody can read off the
+ * wire, and no per-field bookkeeping table beside every write.
  */
-export const SCHEMA_VERSION = 1
-
-export type OpKind = 'put' | 'delete'
-
-export interface Op {
+export interface RowChange {
   table: SyncedTable
-  /** Text rather than uuid so key-addressed rows (settings) can use this too. */
-  rowId: string
-  kind: OpKind
-  /** Changed columns only, snake_case, exactly as they are named in the database. */
-  fields?: Record<string, unknown>
-  hlc: string
-}
-
-export interface Batch {
+  /** Text rather than uuid so key-addressed rows (settings) could use this too. */
   id: string
-  /**
-   * The stream this belongs to. Null only for a row that belongs to no workspace,
-   * which today means nothing — every synced table reaches a workspace through the
-   * chain below, and that is enforced rather than assumed.
-   */
-  workspaceId: string | null
-  deviceId: string
-  /** Null until accounts exist. Then: who, not merely which machine. */
-  actorId: string | null
-  schema: number
-  hlc: string
-  ops: Op[]
+  deleted: boolean
+  /** When the device that wrote it last changed it. The whole of the conflict rule. */
+  changedAt: string
+  /** snake_case, exactly as the columns are named in the database. */
+  fields: Record<string, unknown>
 }
-
-/* ------------------------------------------------------------------ *
- * What syncs
- * ------------------------------------------------------------------ */
 
 export type SyncedTable =
   | 'workspace' | 'workspace_link' | 'project_folder' | 'project_collapsible' | 'project'
@@ -77,19 +50,18 @@ interface TableMeta {
   /**
    * Columns that are true of *this machine* and must never leave it.
    *
-   * The recording pipeline is the whole of it, and it matters: sync
-   * `transcript_state` and both Macs pick the same segment up, transcribe it, and
-   * both pay for it. Results are content and do sync; the runner's own bookkeeping
-   * is not.
+   * Mostly the recording pipeline, and it matters: sync `transcript_state` and both
+   * Macs pick the same segment up, transcribe it, and both pay for it. Results are
+   * content and do sync; the runner's own bookkeeping is not.
    */
   deviceOnly?: readonly string[]
   /**
    * Other synced tables this table references outside its owner chain.
    *
-   * Used when taking existing rows into the log so a referenced row is emitted
-   * before the row that points at it; otherwise a project adopted before its folder
-   * arrives on another machine as a foreign-key violation, gets deferred, and is
-   * dropped because the folder lives in a later batch.
+   * Used to order a push, so a referenced row is handed over before the row that
+   * points at it; otherwise a project sent before its folder arrives on another
+   * machine as a foreign-key violation and has to wait for the next page to be
+   * placed.
    */
   references?: readonly SyncedTable[]
 }
@@ -103,6 +75,16 @@ const RECORDING_PIPELINE = [
 ] as const
 
 export const TABLES: Record<SyncedTable, TableMeta> = {
+  /*
+   * `ai_api_key` travels with the rest of the workspace, and it is worth being clear
+   * about what that means: it is an API key, and it is stored in plaintext on the
+   * sync server, so whoever runs that server can read it. It is here because a
+   * workspace's assistant should work on every device you own without setting it up
+   * again on each one, and holding one column back to avoid that was a poor trade.
+   *
+   * It is the obvious first thing for selective encryption to carry. Until there is
+   * some, a self-hosted server is the answer for anybody this does not suit.
+   */
   workspace:           { owner: null },
   workspace_link:      { owner: { column: 'workspace_id', table: 'workspace' } },
   project_folder:      { owner: { column: 'workspace_id', table: 'workspace' } },
@@ -186,17 +168,17 @@ export const DEVICE_TABLES = ['summary_part', 'setting'] as const
 export const SYNCED_SETTINGS = ['horizonDays', 'staleAfterDays'] as const
 
 /**
- * Every column the log deliberately does not carry, across all tables.
+ * Every column that deliberately does not leave the machine, across all tables.
  *
- * Exported so a test asking "did replay reproduce this?" reads the answer off the
- * same declaration the applier does, rather than keeping a list beside it that goes
- * stale the first time a column changes sides.
+ * Exported so a test asking "did this row survive a round trip?" reads the answer off
+ * the same declaration the applier does, rather than keeping a list beside it that
+ * goes stale the first time a column changes sides.
  */
 export const DEVICE_ONLY_COLUMNS: string[] = [
   ...new Set(Object.values(TABLES).flatMap((meta) => [...(meta.deviceOnly ?? [])]))
 ]
 
-/** Fields that are never written from an op, whoever sent it. */
+/** Fields that are never written from an incoming row, whoever sent it. */
 export const IMMUTABLE_FIELDS = ['id'] as const
 
 export function syncableFields(

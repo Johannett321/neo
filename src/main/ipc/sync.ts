@@ -4,23 +4,22 @@ import type { SyncStatus } from '@shared/sync'
 import { NUDGE_AFTER_DAYS, NUDGE_AFTER_PROJECTS } from '@shared/sync'
 import { exec, q1 } from '../db/client'
 import * as engine from '../lib/sync/engine'
-import { passphraseComplaint } from '../lib/sync/crypto'
 import { signInWithPasskey } from '../lib/sync/signin'
 import { Relay } from '../lib/sync/relay'
 
 /**
- * Syncing, as the screen sees it.
- *
- * The passphrase goes one way through here and is never returned, logged or stored.
- * Everything else is a status line.
+ * Syncing, as the screen sees it. A status line, a sign-in, and two links to Stripe.
  */
 export function registerSyncHandlers(): void {
   handle('sync:status', async (): Promise<SyncStatus> => engine.status())
 
   /**
-   * Sign in, then ask for the passphrase. Two steps because they are two different
-   * questions — who this account belongs to, which the server answers, and what
-   * opens it, which only this machine ever knows.
+   * Sign in, and that is the whole of it.
+   *
+   * There used to be a second step: a passphrase, which never left this process and
+   * was the only thing that could open anything on the server. There is nothing to
+   * open now, so a passkey and the token it comes back with are all a device needs —
+   * and the first pass afterwards hands over everything already on this machine.
    */
   handle('sync:signIn', async ({ serverUrl }) => {
     const url = serverUrl.trim().replace(/\/+$/, '')
@@ -41,16 +40,8 @@ export function registerSyncHandlers(): void {
     const account = await new Relay(url, signedIn.token).account()
     await engine.saveConnection(url, signedIn.token, account.accountId, account.handle,
       `Neo on ${process.platform === 'darwin' ? 'this Mac' : process.platform}`)
+    void engine.start()
     return { connected: true, handle: account.handle }
-  })
-
-  handle('sync:unlock', async ({ passphrase }) => {
-    const complaint = passphraseComplaint(passphrase)
-    if (complaint) return { ok: false, reason: complaint }
-
-    const result = await engine.unlock(passphrase)
-    if (result.ok) void engine.start()
-    return { ok: result.ok, reason: result.reason ?? '' }
   })
 
   /**

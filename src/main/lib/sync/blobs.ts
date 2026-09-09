@@ -1,18 +1,17 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { attachmentDir, dataRoot, exec, iconDir, q } from '../../db/client'
 import { forgetIcon } from '../icons'
-import { blobKey, openBytes, sealBytes, SEAL_OVERHEAD, workspaceKey } from './crypto'
 import type { Relay } from './relay'
 import { RelayError } from './relay'
 
 /**
- * The files, which the log deliberately does not carry.
+ * The files, which do not travel as rows.
  *
- * An operation is a sentence about the work; a photograph is not. Icons, banners,
- * avatars, attachments and recording audio move separately, lazily, and never
- * through the sync server's own process — the client is handed a signed URL and
- * talks to object storage directly.
+ * A row is a sentence about the work; a photograph is not. Icons, banners, avatars,
+ * attachments and recording audio move separately, lazily, and never through the sync
+ * server's own process — the client is handed a signed URL and talks to object
+ * storage directly.
  *
  * This is a **reconciler, not a queue**. It asks two questions of what the rows
  * already say, and answers them:
@@ -23,6 +22,11 @@ import { RelayError } from './relay'
  * There is nothing to enqueue, nothing to drain, and nothing that can be lost by
  * crashing half way. It is the shape the recording pipeline already uses, for the
  * same reason: state in rows rather than in memory means a restart costs a pass.
+ *
+ * The bytes go up as they are. They used to be sealed under the workspace key and
+ * named by an HMAC of the filename, so that the server could not recognise a file it
+ * had seen elsewhere; with the rows themselves readable there, that bought nothing
+ * but a bucket nobody could look inside.
  */
 
 export type BlobKind = 'icon' | 'attachment' | 'segment'
@@ -90,6 +94,31 @@ function localPath(kind: BlobKind, ref: string): string {
   return join(dataRoot(), 'recordings', ref)
 }
 
+/**
+ * What the file is called in the bucket.
+ *
+ * The name the rows already carry, with the one slash a segment needs turned into a
+ * colon: a key may not contain a path, because the workspace's prefix is the whole of
+ * the separation between one account's files and another's.
+ */
+const objectKey = (blob: Blob): string => blob.ref.replace(/\//g, ':')
+
+/**
+ * Enough of a content type that a browser opening a presigned URL does something
+ * sensible with it, and no more. The extension is all there is to go on, and guessing
+ * wrongly costs a download that says `application/octet-stream`.
+ */
+function contentTypeOf(ref: string): string {
+  const ext = extname(ref).toLowerCase()
+  const known: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.heic': 'image/heic',
+    '.webm': 'audio/webm', '.m4a': 'audio/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+    '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown'
+  }
+  return known[ext] ?? 'application/octet-stream'
+}
+
 const exists = async (path: string): Promise<boolean> =>
   stat(path).then(() => true).catch(() => false)
 
@@ -97,9 +126,7 @@ const exists = async (path: string): Promise<boolean> =>
  * Out
  * ------------------------------------------------------------------ */
 
-export async function pushBlobs(
-  client: Relay, master: Buffer
-): Promise<{ uploaded: number; skipped: number }> {
+export async function pushBlobs(client: Relay): Promise<{ uploaded: number; skipped: number }> {
   const done = new Set(
     (await q<{ kind: string; ref: string }>(
       'SELECT kind, ref FROM blob_sync WHERE uploaded_at IS NOT NULL'
@@ -114,16 +141,18 @@ export async function pushBlobs(
     if (!(await exists(blob.path))) continue
 
     try {
-      const sealed = sealBytes(workspaceKey(master, blob.workspaceId), await readFile(blob.path))
-      const key = blobKey(master, blob.workspaceId, blob.ref)
-      const { uploadUrl } = await client.blobUpload(blob.workspaceId, key, sealed.length)
-      await client.putBytes(uploadUrl, sealed)
+      const bytes = await readFile(blob.path)
+      const type = contentTypeOf(blob.ref)
+      const { uploadUrl } = await client.blobUpload(
+        blob.workspaceId, objectKey(blob), bytes.length, type
+      )
+      await client.putBytes(uploadUrl, bytes, type)
 
       await exec(
         `INSERT INTO blob_sync (kind, ref, workspace_id, bytes, uploaded_at)
               VALUES ($1, $2, $3, $4, now())
          ON CONFLICT (kind, ref) DO UPDATE SET uploaded_at = now(), bytes = EXCLUDED.bytes`,
-        [blob.kind, blob.ref, blob.workspaceId, sealed.length]
+        [blob.kind, blob.ref, blob.workspaceId, bytes.length]
       )
       uploaded += 1
     } catch (error) {
@@ -146,9 +175,7 @@ export async function pushBlobs(
  * In
  * ------------------------------------------------------------------ */
 
-export async function pullBlobs(
-  client: Relay, master: Buffer
-): Promise<{ fetched: number; missing: number }> {
+export async function pullBlobs(client: Relay): Promise<{ fetched: number; missing: number }> {
   let fetched = 0
   let missing = 0
 
@@ -156,13 +183,10 @@ export async function pullBlobs(
     if (await exists(blob.path)) continue
 
     try {
-      const key = blobKey(master, blob.workspaceId, blob.ref)
-      const { downloadUrl } = await client.blobDownload(blob.workspaceId, key)
-      const opened = openBytes(
-        workspaceKey(master, blob.workspaceId), await client.getBytes(downloadUrl)
-      )
+      const { downloadUrl } = await client.blobDownload(blob.workspaceId, objectKey(blob))
+      const bytes = await client.getBytes(downloadUrl)
       await mkdir(dirname(blob.path), { recursive: true })
-      await writeFile(blob.path, opened)
+      await writeFile(blob.path, bytes)
 
       /*
        * The icon cache remembers that this file was absent, and would go on saying so
@@ -186,6 +210,3 @@ export async function pullBlobs(
   }
   return { fetched, missing }
 }
-
-/** What a sealed copy of a file costs, for the settings pane's arithmetic. */
-export const sealedSize = (bytes: number): number => bytes + SEAL_OVERHEAD

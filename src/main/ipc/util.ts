@@ -1,10 +1,9 @@
 import { ipcMain } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
-import { isSynced } from '@shared/ops'
-import type { SyncedTable } from '@shared/ops'
+import { isSynced } from '@shared/tables'
+import type { SyncedTable } from '@shared/tables'
 import { q, q1, writeCount } from '../db/client'
 import { deleteLocal, putLocal, stampExisting } from '../db/apply'
-import { collect, withBatch } from '../db/oplog'
 import { announceChange } from '../lib/changes'
 
 /**
@@ -18,17 +17,21 @@ import { announceChange } from '../lib/changes'
 const registry = new Map<string, (input: unknown) => Promise<unknown>>()
 
 /**
- * Registered once and called two ways, and both are wrapped in `withBatch` so that
- * one call — however many rows it moves — becomes one operation batch. Saving a task
- * writes the task and the activity line describing it, and those belong together:
- * apart, a device could receive half of what happened.
+ * Registered once and called two ways: from the renderer over IPC, and from inside
+ * this process by `invokeChannel()`.
+ *
+ * It used to wrap each call in `withBatch()`, so that saving a task and the activity
+ * line describing it became one atomic unit on the wire. Rows travel on their own
+ * now, which loses that guarantee and is worth being honest about: a device can see
+ * the task a moment before the line that says who made it. Both arrive in the same
+ * page and in dependency order, so what it costs is a fraction of a second of a
+ * partial story rather than a lasting one.
  */
 export function handle<C extends Channel>(
   channel: C,
   fn: (input: Input<C>) => Promise<Output<C>> | Output<C>
 ): void {
-  const run = async (input: unknown): Promise<Output<C>> =>
-    withBatch(async () => fn(input as Input<C>))
+  const run = async (input: unknown): Promise<Output<C>> => fn(input as Input<C>)
   registry.set(channel, run as (input: unknown) => Promise<unknown>)
   ipcMain.handle(channel, async (_event, input) => run(input))
 }
@@ -81,14 +84,12 @@ export function pick<T extends object, K extends keyof T>(src: T, keys: K[]): Re
 /**
  * Insert or update by id, returning the resulting row.
  *
- * Still the one place a handler writes through, and still taking the same arguments
- * — but it now goes via `putLocal()`, which puts the row down *and* records what it
- * did. That is the whole of Stage 0 from a handler's point of view: nothing above
- * this line changed, and every write became an operation.
+ * The one place a handler writes through. It goes via `putLocal()`, which puts the
+ * row down *and* marks it as something the sync server has not been given — so
+ * nothing above this line has to know that syncing exists.
  *
- * A table that is not synced (`recording_segment`, `setting`) takes the old path
- * unchanged. Those hold facts about this machine, and a fact about this machine is
- * not an event in anybody's history.
+ * A table that is not synced (`summary_part`, `setting`) takes the plain path. Those
+ * hold facts about this machine, and a fact about this machine is nobody else's.
  */
 export async function upsert<R>(
   table: string,
@@ -114,12 +115,11 @@ export async function upsert<R>(
   }
 
   const write = await putLocal(table as SyncedTable, id, columns)
-  await collect(write)
   if (!write.row) throw new Error(id ? `${table} ${id} not found` : `Could not insert into ${table}`)
   return write.row as R
 }
 
-/** The pre-log path, kept for the tables that deliberately produce no ops. */
+/** The plain path, for the tables that deliberately never leave this machine. */
 async function upsertRaw<R>(
   table: string,
   fields: Record<string, unknown>,
@@ -158,16 +158,16 @@ async function upsertRaw<R>(
  */
 export async function noteWrite(table: string, id: string): Promise<void> {
   if (!isSynced(table)) return
-  await collect(await stampExisting(table as SyncedTable, id))
+  await stampExisting(table as SyncedTable, id)
 }
 
 /**
  * Update every row matching a column, one row at a time.
  *
  * The bulk `UPDATE … WHERE folder_id = $1` statements this replaces moved several
- * rows in one go and produced one undifferentiated write. A row's new value has to
- * carry its own stamp — otherwise two Macs tidying different folders would resolve
- * as one edit and one of them would lose everything it did.
+ * rows in one go and left no record of which. Each row has to be marked on its own —
+ * otherwise two Macs tidying different folders would hand over one undifferentiated
+ * change and one of them would lose everything it did.
  *
  * These are all small sets: the projects in a folder, the columns on a board, the
  * notes filed in one place.
@@ -209,8 +209,7 @@ export async function remove(table: string, id: string): Promise<void> {
     await q1(`DELETE FROM ${table} WHERE id = $1`, [id])
     return
   }
-  const write = await deleteLocal(table as SyncedTable, id)
-  await collect(write)
+  await deleteLocal(table as SyncedTable, id)
 }
 
 /**
@@ -237,14 +236,13 @@ export async function reorder(table: string, ids: string[]): Promise<void> {
 
   /*
    * A row at a time rather than the one statement it used to be. A position only
-   * means anything among its neighbours, so a drag has to travel as the whole
-   * visible set — and each row's new number has to carry its own stamp, or two Macs
-   * rearranging different folders would clobber one another's ordering wholesale.
+   * means anything among its neighbours, so a drag has to travel as the whole visible
+   * set — and each row has to be marked on its own, or two Macs rearranging different
+   * folders would clobber one another's ordering wholesale.
    *
    * These are cards on one page: a dozen rows, not a table scan.
    */
   for (const [index, id] of ids.entries()) {
-    const write = await putLocal(table as SyncedTable, id, { sort_order: index + 1 })
-    await collect(write)
+    await putLocal(table as SyncedTable, id, { sort_order: index + 1 })
   }
 }

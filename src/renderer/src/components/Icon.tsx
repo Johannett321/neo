@@ -46,6 +46,9 @@ const PATHS = {
   filter: 'M4 6h16M7 12h10M10 18h4',
   inbox: 'M4 13h4l1.5 3h5L16 13h4M4 13l2.2-7.3A2 2 0 018.1 4.3h7.8a2 2 0 011.9 1.4L20 13v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5z',
   refresh: 'M20 11.5A8 8 0 006 6.2M4 12.5A8 8 0 0018 17.8M18 3.5v3h-3M6 20.5v-3h3',
+  // A cloud with a line through it. Offline, and only ever offline — the app draws
+  // this when the sync server cannot be reached, which is not a fault.
+  cloudOff: 'M7.5 18.5h9a4 4 0 00.9-7.9A6 6 0 007 8.6M4 4l16 16',
   monitor: 'M4 5.5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1v-9a1 1 0 011-1zM9 20.5h6M12 16.5v4',
   droplet: 'M12 3.2c3.4 3.9 5.6 6.6 5.6 9.3a5.6 5.6 0 11-11.2 0c0-2.7 2.2-5.4 5.6-9.3zM9.3 13.7a2.8 2.8 0 002.2 2.7',
   checkbox: 'M5.5 7A1.5 1.5 0 017 5.5h10A1.5 1.5 0 0118.5 7v10a1.5 1.5 0 01-1.5 1.5H7A1.5 1.5 0 015.5 17V7z',

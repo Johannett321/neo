@@ -2,9 +2,11 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { __dataDir } from 'electron'
-import { dataRoot, initDb, orphanedForeignKeys, q } from '../src/main/db/client'
-import { adoptExistingRows, initOplog, replayLog, SYNC_ORDER } from '../src/main/db/oplog'
-import { DEVICE_ONLY_COLUMNS } from '@shared/ops'
+import { dataRoot, exec, initDb, orphanedForeignKeys, q } from '../src/main/db/client'
+import { adoptExistingRows, changeFor, initSync, SYNC_ORDER } from '../src/main/db/dirty'
+import { applyRun } from '../src/main/db/apply'
+import type { RowChange } from '@shared/tables'
+import { DEVICE_ONLY_COLUMNS } from '@shared/tables'
 import { mapWorkspace } from '../src/main/db/map'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
@@ -126,6 +128,41 @@ CREATE TABLE meeting_attendee (
 );
 
 CREATE TABLE setting (key text PRIMARY KEY, value text NOT NULL);
+
+-- The operation log, and the per-row bookkeeping beside it. Every install that has
+-- ever synced has these, so opening one is the migration that actually matters.
+CREATE TABLE op_batch (
+  seq            bigserial PRIMARY KEY,
+  id             uuid NOT NULL UNIQUE,
+  workspace_id   uuid,
+  device_id      text NOT NULL,
+  actor_id       uuid,
+  schema_version integer NOT NULL,
+  hlc            text NOT NULL,
+  origin         text NOT NULL DEFAULT 'local',
+  ops            jsonb NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sync_row (
+  table_name  text NOT NULL,
+  row_id      text NOT NULL,
+  field_hlc   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  deleted_hlc text,
+  PRIMARY KEY (table_name, row_id)
+);
+CREATE TABLE sync_state (
+  workspace_id uuid PRIMARY KEY,
+  remote_seq   bigint NOT NULL DEFAULT 0,
+  synced_at    timestamptz
+);
+CREATE TABLE blob_sync (
+  kind         text NOT NULL,
+  ref          text NOT NULL,
+  workspace_id uuid NOT NULL,
+  bytes        bigint NOT NULL DEFAULT 0,
+  uploaded_at  timestamptz,
+  PRIMARY KEY (kind, ref)
+);
 `
 
 
@@ -177,12 +214,44 @@ async function main(): Promise<void> {
              'Me: chase the ruling' || chr(10) || '- Priya: error states' || chr(10) || '')`,
     [projectRow.rows[0]!.id]
   )
+  /*
+   * A log of the size these actually reach, the stamps beside it, and the settings a
+   * machine that has synced is holding: a pull cursor into a stream that is about to
+   * stop existing, a token for an account on a server whose database is being
+   * recreated, and a sealed copy of a master key nothing can use any more.
+   */
+  for (let i = 0; i < 200; i += 1) {
+    await legacy.query(
+      `INSERT INTO op_batch (id, workspace_id, device_id, schema_version, hlc, origin, ops)
+       VALUES (gen_random_uuid(), $1, 'old-mac', 1, $2, 'local', '[]'::jsonb)`,
+      [workspaceId, `${String(Date.now() + i).padStart(15, '0')}.00000.old-mac`]
+    )
+  }
+  for (const table of ['workspace', 'project', 'task']) {
+    await legacy.query(
+      `INSERT INTO sync_row (table_name, row_id, field_hlc)
+       SELECT $1, id::text, '{"name":"000000000000001.00000.old-mac"}'::jsonb FROM ${table}`,
+      [table]
+    )
+  }
+  await legacy.query(
+    `INSERT INTO sync_state (workspace_id, remote_seq) VALUES ($1, 412)`, [workspaceId])
+  await legacy.query(
+    `INSERT INTO blob_sync (kind, ref, workspace_id, uploaded_at)
+     VALUES ('icon', 'an-old-icon.png', $1, now())`, [workspaceId])
+  await legacy.query(
+    `INSERT INTO setting (key, value) VALUES
+       ('syncPushedSeq', '412'), ('syncCachedKey', 'a sealed master key'),
+       ('syncToken', 'a token for an account that is about to be recreated'),
+       ('syncServerUrl', 'https://sync.neomoon.io'),
+       ('syncHandle', 'me@example.com')`)
+
   await legacy.close()
-  console.log('Built a database in the pre-workspace shape.\n')
+  console.log('Built a database in the pre-workspace shape, with an operation log in it.\n')
 
   // The real thing: open that database with the current code.
   await initDb()
-  await initOplog()
+  await initSync()
   await adoptExistingRows()
 
   /*
@@ -518,7 +587,7 @@ async function main(): Promise<void> {
 
   // Running it a second time must be a no-op, not a failure.
   await initDb()
-  await initOplog()
+  await initSync()
   await adoptExistingRows()
   await ensureMeEverywhere()
   ok('dropping columns leaves every foreign key with its constraint',
@@ -544,15 +613,15 @@ async function main(): Promise<void> {
       WHERE table_name = 'meeting_attendee' AND column_name = 'id'`)
   ok('the one join table gains an id of its own', joinTableId[0]?.n === 1)
 
-  ok('an old database ends up with a log describing everything that was already in it',
-     (await q<{ n: number }>('SELECT count(*)::int AS n FROM op_batch'))[0]?.n > 0)
+  ok('an old database ends up knowing everything in it is still to be handed over',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_dirty'))[0]?.n > 0)
 
   const orphans: string[] = []
   for (const table of SYNC_ORDER) {
     const gap = await q<{ n: number }>(
       `SELECT count(*)::int AS n FROM ${table} t
         WHERE NOT EXISTS (
-          SELECT 1 FROM sync_row s WHERE s.table_name = $1 AND s.row_id = t.id::text
+          SELECT 1 FROM sync_dirty d WHERE d.table_name = $1 AND d.row_id = t.id::text
         )`, [table])
     if ((gap[0]?.n ?? 0) > 0) orphans.push(`${table}:${gap[0]?.n}`)
   }
@@ -561,10 +630,52 @@ async function main(): Promise<void> {
   ok('a second launch adopts nothing, so years of work are not re-announced every morning',
      (await adoptExistingRows()).rows === 0)
 
+  /* ------------------------------------------------------------------ *
+   * Leaving the operation log behind
+   *
+   * The migration every install that has ever synced is about to run. The work is in
+   * the domain tables and always was — the log was an account of how it got there,
+   * not the state — so dropping it loses nothing. Asserted rather than assumed,
+   * because it looks exactly like the sort of change that quietly loses everything.
+   * ------------------------------------------------------------------ */
+
+  const missingTable = async (name: string): Promise<boolean> =>
+    (await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM information_schema.tables WHERE table_name = $1`,
+      [name]))[0]?.n === 0
+
+  ok('the operation log is dropped', await missingTable('op_batch'))
+  ok('and the per-field stamps beside it', await missingTable('sync_row'))
+
+  ok('the pull cursor is cleared, because it pointed into a stream that is gone',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_state'))[0]?.n === 0 &&
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM information_schema.columns
+         WHERE table_name = 'sync_state' AND column_name = 'remote_seq'`))[0]?.n === 0)
+
+  ok('the cached master key is forgotten, because nothing can use it',
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM setting WHERE key = 'syncCachedKey'`))[0]?.n === 0)
+
+  /*
+   * Signed out rather than left holding a token for endpoints that no longer exist.
+   * The server address stays, so the Sync pane still knows where this machine was
+   * pointed and signing back in is one press.
+   */
+  ok('the machine is signed out, rather than left failing against a server it cannot talk to',
+     (await q<{ n: number }>(
+       `SELECT count(*)::int AS n FROM setting WHERE key = 'syncToken'`))[0]?.n === 0 &&
+     (await q<{ value: string }>(
+       `SELECT value FROM setting WHERE key = 'syncServerUrl'`))[0]?.value ===
+       'https://sync.neomoon.io')
+
+  ok('and what had already been uploaded is forgotten, so the files are offered again',
+     (await q<{ n: number }>('SELECT count(*)::int AS n FROM blob_sync'))[0]?.n === 0)
+
   /*
    * The same gate verify.ts holds new work to, held here against work that was
-   * written before the log existed. If this fails, an upgrade silently loses the
-   * thing it was supposed to protect.
+   * written years before any of this existed. If it fails, an upgrade silently loses
+   * the thing it was supposed to protect.
    */
   const shape = async (): Promise<string> => {
     const out: string[] = []
@@ -579,11 +690,21 @@ async function main(): Promise<void> {
     }
     return out.join('\n')
   }
+  const onTheWire: RowChange[] = []
+  for (const table of SYNC_ORDER) {
+    for (const row of await q<{ id: string }>(`SELECT id FROM ${table} ORDER BY id`)) {
+      const change = await changeFor(table, row.id, new Date(), false)
+      if (change) onTheWire.push(change)
+    }
+  }
   const wasThere = await shape()
-  await replayLog()
+  for (const table of [...SYNC_ORDER].reverse()) await exec(`DELETE FROM ${table}`)
+  await exec('DELETE FROM sync_tombstone')
+  await exec('DELETE FROM sync_dirty')
+  await applyRun(onTheWire)
   const nowThere = await shape()
   const firstGap = wasThere.split('\n').find((line, i) => line !== nowThere.split('\n')[i]) ?? ''
-  ok('replaying an upgraded database reproduces it exactly',
+  ok('syncing an upgraded database to a machine that had none reproduces it exactly',
      wasThere === nowThere, firstGap.slice(0, 200))
 }
 

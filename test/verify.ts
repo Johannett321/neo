@@ -42,13 +42,16 @@ import { addDays, attachmentDir, exec, iconDir, q, q1, today as todayDate } from
 import { pruneNoteImages } from '../src/main/lib/images'
 import { flushMirrors, mirrorStats } from '../src/main/lib/markdown'
 import {
-  adoptExistingRows, allBatches, deviceId, ingest, initOplog, onLocalWrite, pending, replayLog,
-  SYNC_ORDER
-} from '../src/main/db/oplog'
-import { DEVICE_ONLY_COLUMNS, DEVICE_TABLES, SCHEMA_VERSION } from '@shared/ops'
+  adoptExistingRows, changeFor, deviceId, initSync, pendingCount, settle, SYNC_ORDER,
+  sweepTombstones, waiting, workspacesWaiting
+} from '../src/main/db/dirty'
+import { applyRemote, applyRun } from '../src/main/db/apply'
+import { onLocalWrite } from '../src/main/db/wake'
+import type { RowChange } from '@shared/tables'
+import { DEVICE_ONLY_COLUMNS, DEVICE_TABLES } from '@shared/tables'
 import { randomUUID } from 'node:crypto'
 import {
-  blobKey, newMasterKey, open, passphraseComplaint, seal, unwrapMasterKey, workspaceKey, wrapMasterKey
+  newMasterKey, open, passphraseComplaint, seal, unwrapMasterKey, wrapMasterKey
 } from '../src/main/lib/sync/crypto'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -116,7 +119,7 @@ const ok = (label: string, cond: boolean, extra = ''): void => {
 
 async function main(): Promise<void> {
   await initDb()
-  await initOplog()
+  await initSync()
   void ipcMain
   registerWorkspaceHandlers()
   registerProjectHandlers()
@@ -381,17 +384,18 @@ async function main(): Promise<void> {
     [adoptProjectId, adoptWsId, adoptFolderId]
   )
   await adoptExistingRows()
-  const folderSeq = await q1<{ seq: string }>(
-    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project_folder'
-     ORDER BY seq DESC LIMIT 1`
-  )
-  const projectSeq = await q1<{ seq: string }>(
-    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project'
-     ORDER BY seq DESC LIMIT 1`
-  )
-  ok('adoption emits folders before the projects that point at them',
-     folderSeq !== undefined && projectSeq !== undefined && Number(folderSeq.seq) < Number(projectSeq.seq),
-     `folder=${folderSeq?.seq} project=${projectSeq?.seq}`)
+  /*
+   * The order rows go up in is the order every other device receives them in, so a
+   * project must leave after the folder it points at. Nothing on the server would
+   * refuse it — there are no foreign keys there — but the Mac at the other end has
+   * them, and would have to defer the project and try again.
+   */
+  const queued = await waiting(adoptWsId, 5000)
+  const queuedAt = (table: string): number => queued.findIndex((c) => c.table === table)
+  ok('what is handed over is ordered parents before children',
+     queuedAt('workspace') >= 0 && queuedAt('workspace') < queuedAt('project_folder') &&
+     queuedAt('project_folder') < queuedAt('project'),
+     `workspace=${queuedAt('workspace')} folder=${queuedAt('project_folder')} project=${queuedAt('project')}`)
 
   // Clean up so later workspace-counting tests are not thrown off.
   await call('workspace:delete', { id: adoptWsId })
@@ -2407,47 +2411,61 @@ async function main(): Promise<void> {
      (await call('settings:save', { updates: 'nonsense' })).updates === 'automatic')
 
   /* ------------------------------------------------------------------ *
-   * The operation log
+   * What is waiting to be synced
    *
-   * The gate for the whole of Stage 0. Everything above this point has been
-   * writing through the same handlers the app uses, so by now the log holds a
-   * complete account of a working session — which is exactly the claim being
-   * tested.
+   * The gate for the whole of this layer. Everything above this point has been
+   * writing through the same handlers the app uses, so by now the queue holds a
+   * complete account of a working session — which is exactly the claim being tested.
    * ------------------------------------------------------------------ */
 
-  const unlogged: string[] = []
+  const unmarked: string[] = []
   for (const table of SYNC_ORDER) {
     const gap = await q1<{ n: number }>(
       `SELECT count(*)::int AS n FROM ${table} t
         WHERE NOT EXISTS (
-          SELECT 1 FROM sync_row s WHERE s.table_name = $1 AND s.row_id = t.id::text
+          SELECT 1 FROM sync_dirty d WHERE d.table_name = $1 AND d.row_id = t.id::text
         )`,
       [table]
     )
-    if ((gap?.n ?? 0) > 0) unlogged.push(`${table}:${gap?.n}`)
+    if ((gap?.n ?? 0) > 0) unmarked.push(`${table}:${gap?.n}`)
   }
-  ok('every row in a synced table is accounted for in the log', unlogged.length === 0,
-     unlogged.join(', '))
+  ok('every row in a synced table is marked as something to hand over',
+     unmarked.length === 0, unmarked.join(', '))
 
-  ok('the log is not empty and every batch carries its schema version',
-     (await allBatches()).length > 0 &&
-     (await allBatches()).every((b) => b.schema === SCHEMA_VERSION && b.hlc.length > 20))
+  ok('and the count the status line shows agrees with the table it reads',
+     (await pendingCount()) === (await q1<{ n: number }>(
+       'SELECT count(*)::int AS n FROM sync_dirty'))?.n)
 
-  ok('a batch belongs to exactly one workspace',
-     (await allBatches()).filter((b) => b.origin === 'local' && b.ops.length > 0)
-       .every((b) => b.workspaceId !== null || b.ops.every((o) => o.table === 'workspace')))
+  const everything: RowChange[] = []
+  for (const workspaceId of await workspacesWaiting()) {
+    everything.push(...(await waiting(workspaceId, 20_000)))
+  }
+  ok('every row waiting knows which workspace it belongs to',
+     everything.length > 0 &&
+     (await q1<{ n: number }>(
+       'SELECT count(*)::int AS n FROM sync_dirty WHERE workspace_id IS NULL'))?.n === 0)
 
-  ok('device-only columns never reach an op',
-     (await allBatches()).every((b) =>
-       b.ops.every((o) =>
-         o.table !== 'recording' ||
-         !Object.keys(o.fields ?? {}).some((f) =>
-           ['transcript_state', 'speaker_state', 'summary_state', 'next_attempt_at',
-            'capture_state', 'heartbeat_at'].includes(f)))))
+  ok('device-only columns never reach the wire',
+     everything.every((change) =>
+       !Object.keys(change.fields).some((f) => DEVICE_ONLY_COLUMNS.includes(f))),
+     DEVICE_ONLY_COLUMNS.join(', '))
 
-  ok('a device-local table produces no ops at all',
-     (await allBatches()).every((b) =>
-       b.ops.every((o) => !(DEVICE_TABLES as readonly string[]).includes(o.table))),
+  /*
+   * The workspace's API key travels with the rest of it, so the assistant works on
+   * every device without being set up again on each one. It is a credential in
+   * plaintext on the server, which is a deliberate trade and the reason self-hosting
+   * is a first-class path — and the obvious first thing to encrypt when there is
+   * something to encrypt it with.
+   */
+  await call('chat:setKey', { workspaceId: dayJob, apiKey: 'sk-travels-with-the-workspace' })
+  const wsChange = (await waiting(dayJob, 20_000)).find((c) => c.table === 'workspace')
+  ok('the workspace API key goes with the workspace',
+     wsChange?.fields.ai_api_key === 'sk-travels-with-the-workspace' &&
+     (await q1<{ ai_api_key: string }>('SELECT ai_api_key FROM workspace WHERE id = $1',
+       [dayJob]))?.ai_api_key === 'sk-travels-with-the-workspace')
+
+  ok('a device-local table is never offered at all',
+     everything.every((c) => !(DEVICE_TABLES as readonly string[]).includes(c.table)),
      `device tables: ${DEVICE_TABLES.join(', ')}`)
 
   // A delete has to leave something behind, or a device that still holds the row
@@ -2457,86 +2475,90 @@ async function main(): Promise<void> {
   const doomedTask = (await q<{ id: string }>(
     'SELECT id FROM task WHERE project_id = $1', [doomedProject.id]))[0]
   await call('project:delete', { id: doomedProject.id })
-  const graveA = await q1<{ deleted_hlc: string }>(
-    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'project' AND row_id = $1`,
+  const graveA = await q1<{ deleted_at: Date }>(
+    `SELECT deleted_at FROM sync_tombstone WHERE table_name = 'project' AND row_id = $1`,
     [doomedProject.id])
-  const graveB = await q1<{ deleted_hlc: string }>(
-    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'task' AND row_id = $1`,
+  const graveB = await q1<{ deleted_at: Date }>(
+    `SELECT deleted_at FROM sync_tombstone WHERE table_name = 'task' AND row_id = $1`,
     [doomedTask.id])
   ok('deleting a project tombstones it and everything the cascade takes with it',
-     Boolean(graveA?.deleted_hlc) && Boolean(graveB?.deleted_hlc))
+     Boolean(graveA?.deleted_at) && Boolean(graveB?.deleted_at))
+
+  ok('and both are offered to the server, so a third device hears about them too',
+     (await waiting(dayJob, 20_000)).filter(
+       (c) => c.deleted && [doomedProject.id, doomedTask.id].includes(c.id)).length === 2)
 
   /*
    * The whole point of the tombstone. The other Mac edited the task before the delete
-   * reached it — so its stamp is older than the delete and newer than the task — and
+   * reached it — so its time is older than the delete and newer than the task — and
    * the row must stay gone.
    */
-  const staleEdit = graveA?.deleted_hlc.replace(/^(\d+)/, (m) => String(Number(m) - 1).padStart(15, '0')) ?? ''
-  await ingest({
-    id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: staleEdit,
-    ops: [{
-      table: 'task', rowId: doomedTask.id, kind: 'put',
-      fields: { project_id: doomedProject.id, title: 'Back from the dead' },
-      hlc: staleEdit
-    }]
+  const staleEdit = new Date(new Date(graveA?.deleted_at ?? new Date()).getTime() - 1000)
+  await applyRemote({
+    table: 'task',
+    id: doomedTask.id,
+    deleted: false,
+    changedAt: staleEdit.toISOString(),
+    fields: { project_id: doomedProject.id, title: 'Back from the dead' }
   })
-  ok('an op from an offline device cannot resurrect a deleted row',
+  ok('a row from an offline device cannot resurrect a deleted one',
      (await q('SELECT id FROM task WHERE id = $1', [doomedTask.id])).length === 0)
 
   /*
-   * Last-write-wins is per field and on the clock, not on arrival order.
-   *
-   * The stamps here are causally ordered — created, then edited on the other Mac,
-   * then edited again here — because that is the only order they can really occur
-   * in: the other Mac cannot have edited a project it had not yet received.
+   * Last-write-wins, per row, on the clock rather than on arrival order — and unsent
+   * local work is the one thing that beats the server. This is the laptop that has
+   * been closed for a week: it has edits nobody has seen, and a pull reaching it must
+   * not discard them before they have had their chance to go.
    */
   const contested = await call('project:save', { name: 'Contested', workspaceId: dayJob })
-  const remoteStamp = `${String(Date.now()).padStart(15, '0')}.00000.another-mac`
-  await ingest({
-    id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: remoteStamp,
-    ops: [{
-      table: 'project', rowId: contested.id, kind: 'put',
-      fields: { name: 'Stale name', summary: 'But a summary nobody else set' },
-      hlc: remoteStamp
-    }]
+  const older = new Date(Date.now() - 60_000).toISOString()
+  await applyRemote({
+    table: 'project',
+    id: contested.id,
+    deleted: false,
+    changedAt: older,
+    fields: { name: 'Stale name', summary: 'Set on the other Mac' }
   })
-  await call('project:save', { id: contested.id, name: 'Contested again' })
+  ok('a row older than what is waiting here loses',
+     (await q1<{ name: string }>('SELECT name FROM project WHERE id = $1',
+       [contested.id]))?.name === 'Contested')
+
+  // And the other way round: once this device has handed its work over, the server
+  // is the authority and a newer row from it stands.
+  await settle(await waiting(dayJob, 20_000))
+  const newer = new Date(Date.now() + 60_000).toISOString()
+  await applyRemote({
+    table: 'project',
+    id: contested.id,
+    deleted: false,
+    changedAt: newer,
+    fields: { name: 'Renamed on the other Mac', summary: 'And a summary' }
+  })
   const afterMerge = await q1<{ name: string; summary: string }>(
     'SELECT name, summary FROM project WHERE id = $1', [contested.id])
-  ok('a remote op wins the field nobody else touched and loses the one edited since',
-     afterMerge?.name === 'Contested again' && afterMerge?.summary === 'But a summary nobody else set')
+  ok('a newer row from the server wins once this device has nothing outstanding',
+     afterMerge?.name === 'Renamed on the other Mac' && afterMerge?.summary === 'And a summary')
 
-  ok('a batch already seen is not applied twice', await (async () => {
-    const stamp = `${String(Date.now() + 1000).padStart(15, '0')}.00000.another-mac`
-    const batch = {
-      id: randomUUID(), workspaceId: dayJob, deviceId: 'another-mac', actorId: null,
-      schema: SCHEMA_VERSION, hlc: stamp,
-      ops: [{
-        table: 'project' as const, rowId: contested.id, kind: 'put' as const,
-        fields: { summary: 'Once' }, hlc: stamp
-      }]
-    }
-    await ingest(batch)
-    const second = await ingest(batch)
-    return second.applied === 0
-  })())
+  ok('applying a row from the server leaves nothing for this device to send back',
+     (await q1<{ n: number }>(
+       `SELECT count(*)::int AS n FROM sync_dirty WHERE table_name = 'project' AND row_id = $1`,
+       [contested.id]))?.n === 0)
 
-  ok('what this device has written is offered to a transport in order', await (async () => {
-    const batches = await pending('0', 5000)
-    return batches.length > 0 &&
-      batches.every((b) => b.origin === 'local') &&
-      batches.every((b, i) => i === 0 || Number(b.seq) > Number(batches[i - 1].seq))
-  })())
+  // A push that landed while the row was being edited again must not clear the mark
+  // the second edit made, or that edit would never be offered to anybody.
+  await call('project:save', { id: contested.id, summary: 'Edited while the push was in flight' })
+  const inFlight = await q1<{ changed_at: Date }>(
+    `SELECT changed_at FROM sync_dirty WHERE table_name = 'project' AND row_id = $1`,
+    [contested.id])
+  await settle([{
+    table: 'project', id: contested.id, deleted: false,
+    changedAt: new Date(new Date(inFlight?.changed_at ?? new Date()).getTime() - 1).toISOString(),
+    fields: {}
+  }])
+  ok('a row edited again while its push was in flight is still waiting to go',
+     (await q1<{ n: number }>(
+       `SELECT count(*)::int AS n FROM sync_dirty WHERE table_name = 'project' AND row_id = $1`,
+       [contested.id]))?.n === 1)
 
   ok('adoption is idempotent — a second pass finds nothing',
      (await adoptExistingRows()).rows === 0)
@@ -2544,11 +2566,24 @@ async function main(): Promise<void> {
   ok('this machine has an identity that survives being asked twice',
      deviceId().length === 36 && deviceId() === deviceId())
 
+  ok('a tombstone is kept while the delete is still waiting to be handed over',
+     (await sweepTombstones()) === 0 &&
+     (await q1<{ n: number }>(
+       `SELECT count(*)::int AS n FROM sync_tombstone WHERE row_id = $1`,
+       [doomedProject.id]))?.n === 1)
+
   /*
-   * And the assertion the rest of it exists for. Throw the whole database away and
-   * rebuild it from what was written down: if that reproduces the state exactly,
-   * then the log is a complete account of the work and every device, restore and
-   * new phone that reads it gets the same answer.
+   * And the assertion the rest of it exists for.
+   *
+   * Turn every row into the change that would go on the wire, throw the whole
+   * database away, and put them back through the same applier a pull uses. If that
+   * reproduces the state exactly, then what leaves this machine is a complete account
+   * of the work, and every device, restore and new phone that reads it gets the same
+   * answer.
+   *
+   * This is the successor to the old replay gate, and it tests the same thing one
+   * layer down: there is no log to replay any more, so what has to be complete is the
+   * rows themselves.
    */
   const shapshot = async (): Promise<string> => {
     const out: string[] = []
@@ -2570,39 +2605,61 @@ async function main(): Promise<void> {
     }
     return out
   }
+
+  const onTheWire: RowChange[] = []
+  for (const table of SYNC_ORDER) {
+    for (const row of await q<{ id: string }>(`SELECT id FROM ${table} ORDER BY id`)) {
+      const change = await changeFor(table, row.id, new Date(), false)
+      if (change) onTheWire.push(change)
+    }
+  }
+
   const countsBefore = await counts()
   const stateBefore = await shapshot()
-  const replayed = await replayLog()
+
+  // Children first, so nothing is removed out from under a foreign key. The
+  // tombstones go too: this is a device that has never seen any of it.
+  for (const table of [...SYNC_ORDER].reverse()) await exec(`DELETE FROM ${table}`)
+  await exec('DELETE FROM sync_tombstone')
+  await exec('DELETE FROM sync_dirty')
+
+  const rebuilt = await applyRun(onTheWire)
   const stateAfter = await shapshot()
   const countsAfter = await counts()
   const missing = Object.keys(countsBefore)
     .filter((t) => countsBefore[t] !== countsAfter[t])
     .map((t) => `${t} ${countsBefore[t]}->${countsAfter[t]}`)
-  ok('replay restores every row', missing.length === 0, missing.join(', '))
-  ok('replaying the log into an empty database reproduces the state exactly',
+  ok('a full sync restores every row', missing.length === 0, missing.join(', '))
+  ok('what goes on the wire reproduces the state exactly on a device that had none',
      stateBefore === stateAfter && stateBefore.length > 0,
      stateBefore === stateAfter
-       ? `${replayed.batches} batches, ${replayed.ops} ops`
+       ? `${rebuilt.applied} rows, ${rebuilt.dropped} dropped`
        : firstDifference(stateBefore, stateAfter))
 
+  ok('and nothing arriving from the server is offered straight back to it, which would echo',
+     (await pendingCount()) === 0)
+
   /* ------------------------------------------------------------------ *
-   * Sealing what leaves the machine
+   * The primitives kept for the encryption still to come
+   *
+   * Nothing in the application calls these today — rows are stored as rows and the
+   * server reads them. They are tested because the next step is selective, and a
+   * primitive that has quietly stopped working is worse than one that is absent.
    * ------------------------------------------------------------------ */
 
   const master = newMasterKey()
   ok('a master key is 256 bits', master.length === 32)
 
-  const wsKey = workspaceKey(master, dayJob)
   ok('sealing and opening returns exactly what went in',
-     open(wsKey, seal(wsKey, 'the quick brown fox')).toString('utf8') === 'the quick brown fox')
+     open(master, seal(master, 'the quick brown fox')).toString('utf8') === 'the quick brown fox')
 
   ok('the same plaintext seals differently every time',
-     seal(wsKey, 'same') !== seal(wsKey, 'same'),
-     'a repeated nonce would leak that two batches are identical')
+     seal(master, 'same') !== seal(master, 'same'),
+     'a repeated nonce would leak that two messages are identical')
 
-  ok('another workspace key cannot open it', await (async () => {
+  ok('another key cannot open it', await (async () => {
     try {
-      open(workspaceKey(master, own), seal(wsKey, 'private'))
+      open(newMasterKey(), seal(master, 'private'))
       return false
     } catch {
       return true
@@ -2610,25 +2667,15 @@ async function main(): Promise<void> {
   })())
 
   ok('a single altered byte is refused rather than half-opened', await (async () => {
-    const sealed = Buffer.from(seal(wsKey, 'do not change me'), 'base64')
+    const sealed = Buffer.from(seal(master, 'do not change me'), 'base64')
     sealed[sealed.length - 20] ^= 0x01
     try {
-      open(wsKey, sealed.toString('base64'))
+      open(master, sealed.toString('base64'))
       return false
     } catch {
       return true
     }
   })())
-
-  // The workspace is the unit of encryption because it is already the unit of
-  // isolation. Two workspaces must never share a key.
-  ok('a workspace key is derived, not stored, and is its own',
-     workspaceKey(master, dayJob).equals(workspaceKey(master, dayJob)) &&
-     !workspaceKey(master, dayJob).equals(workspaceKey(master, own)))
-
-  ok('a file is named the same way on every device, and differently in every workspace',
-     blobKey(master, dayJob, 'abc123') === blobKey(master, dayJob, 'abc123') &&
-     blobKey(master, dayJob, 'abc123') !== blobKey(master, own, 'abc123'))
 
   const wrapped = wrapMasterKey(master, 'a passphrase worth typing')
   ok('the master key comes back from its wrapping',
@@ -2676,36 +2723,27 @@ async function main(): Promise<void> {
    * ------------------------------------------------------------------ */
 
   /*
-   * The log tells whoever is listening that this device wrote something, and that is
-   * the whole mechanism behind a change reaching the other Mac in about a second
+   * A write tells whoever is listening that this device changed something, and that
+   * is the whole mechanism behind a change reaching the other Mac in about a second
    * rather than on the next minute's poll. It is a listener rather than a call so the
-   * log still knows nothing about a network: with nothing attached — Local — this
+   * database still knows nothing about a network: with nothing attached — Local — this
    * fires into an empty set and costs nothing.
    */
   let woke = 0
   const stopListening = onLocalWrite(() => { woke += 1 })
 
   await call('task:save', { projectId: contested.id, title: 'Written while somebody is listening' })
-  ok('the log says when this device has written, so a push does not wait for the poll',
-     woke > 0, `${woke} signals`)
+  ok('a write says so, so a push does not wait for the poll', woke > 0, `${woke} signals`)
 
   // The other direction must not: a device that pushed everything it received would
   // echo, and two devices echoing each other never stop.
   const quietSoFar = woke
-  const fromAway = (await allBatches()).slice(-1)[0].hlc.replace(
-    /^(\d+)/, (m) => String(Number(m) + 1000).padStart(15, '0'))
-  await ingest({
+  await applyRemote({
+    table: 'task',
     id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: fromAway,
-    ops: [{
-      table: 'task', rowId: randomUUID(), kind: 'put',
-      fields: { project_id: contested.id, title: 'Written on the other Mac' },
-      hlc: fromAway
-    }]
+    deleted: false,
+    changedAt: new Date(Date.now() + 1000).toISOString(),
+    fields: { project_id: contested.id, title: 'Written on the other Mac' }
   })
   ok('and stays quiet about what arrived from somewhere else, which would be an echo',
      woke === quietSoFar, `${woke - quietSoFar} signals`)
@@ -2714,11 +2752,11 @@ async function main(): Promise<void> {
   await call('task:save', { projectId: contested.id, title: 'Written after nobody is listening' })
   ok('a listener that has gone stops being called', woke === quietSoFar)
 
-  // A server that does not charge for anything, and a machine that has never been
-  // asked for a passphrase: the pane has to be able to draw both without guessing.
+  // A machine with no account is not a machine with a problem: nothing is charged
+  // for, nothing is refused, and the pane has to draw that without guessing.
   const off = await call('sync:status')
-  ok('with nothing connected there is no plan to speak of and no passphrase yet set',
-     off.billing.billed === false && off.billing.mayWrite && off.firstDevice)
+  ok('with nothing connected there is no plan to speak of and nothing is refused',
+     off.billing.billed === false && off.billing.mayWrite && off.phase === 'off')
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })

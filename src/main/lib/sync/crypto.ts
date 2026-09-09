@@ -1,26 +1,30 @@
-import {
-  createCipheriv, createDecipheriv, hkdfSync, randomBytes, scryptSync, timingSafeEqual
-} from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 
 /**
- * The whole of the encryption, and the reason the sync server can be trusted with
- * somebody's working life without being trusted at all.
+ * The encryption primitives, and **nothing in the application calls them today.**
  *
- * Everything here runs in the main process. No key, and no passphrase, is ever handed
+ * That is deliberate and worth stating plainly rather than leaving somebody to
+ * discover it. Neo used to seal every change under a key the sync server never had.
+ * It was a strong promise and it made everything else harder: nothing on the server
+ * could be queried, joined, indexed or repaired, and every question about the data
+ * had to be answered on a machine that could open it. So the rows are stored as rows
+ * now, and the server can read them.
+ *
+ * These are kept because the next step is selective: some columns are worth the cost
+ * and most are not. `workspace.ai_api_key` is the obvious first one — it is a
+ * credential, and it currently travels and is stored in plaintext like everything
+ * else, so that the assistant works on every device without being set up again.
+ *
+ * Everything here runs in the main process. No key and no passphrase is ever handed
  * to a renderer, written to the database in the clear, or sent anywhere.
  *
- * **Why a passphrase rather than a passkey's PRF secret.** The design called for
- * deriving the key-wrapping key from the WebAuthn `prf` extension. On desktop that
- * cannot be done honestly. An Electron renderer is loaded from `file://`, so it
- * cannot run a ceremony against the server's domain — the origin will not match the
- * relying party id — and the only way to get one is a window loading a page the
- * *server* serves. A server that serves the JavaScript which handles the PRF secret
- * can take the master key whenever it decides to, and the end-to-end claim is then
- * decoration.
- *
- * So the two are split. A passkey proves who you are and comes back with a device
- * token, which is a thing the server issued itself and learns nothing by seeing. The
- * passphrase never leaves this process, and is what actually opens anything.
+ * **Why a passphrase rather than a passkey's PRF secret.** An Electron renderer is
+ * loaded from `file://`, so it cannot run a WebAuthn ceremony against the server's
+ * domain — the origin will not match the relying party id — and the only way to get
+ * one is a window loading a page the *server* serves. A server that serves the
+ * JavaScript which handles the PRF secret can take the key whenever it decides to,
+ * and the end-to-end claim is then decoration. So a passkey proves who you are, and a
+ * passphrase would be what opens anything.
  */
 
 const KEY_BYTES = 32
@@ -77,13 +81,7 @@ export function open(key: Buffer, sealed: string): Buffer {
   return openBytes(key, Buffer.from(sealed, 'base64'))
 }
 
-/**
- * The same, for a file.
- *
- * Bytes rather than base64 because a recording is measured in megabytes and base64
- * would put a third again on the wire and in the bucket, for nothing — a presigned
- * PUT takes bytes perfectly well.
- */
+/** The same, for bytes that are not text. */
 export function openBytes(key: Buffer, raw: Buffer): Buffer {
   if (raw.length < NONCE_BYTES + 16) throw new Error('That is too short to be sealed data.')
 
@@ -135,46 +133,6 @@ export function unwrapMasterKey(wrapped: WrappedKey, passphrase: string): Buffer
   }
 }
 
-/**
- * A workspace's key, derived from the master key rather than stored.
- *
- * HKDF with the workspace id as the info string, so every device that holds the
- * master key arrives at the same key for the same workspace with nothing to fetch,
- * nothing to keep in step, and no keyring that can be out of date on one machine.
- *
- * **This forecloses sharing a single workspace without re-keying it.** Handing
- * somebody the key to one workspace means handing them the master, which is the
- * whole account. When shared workspaces are built they will need explicit random
- * keys wrapped per recipient, and every workspace that exists by then has to be
- * re-encrypted under one. That is a real migration and it is the price of not
- * building a key distribution system before there is anybody to distribute to.
- */
-export function workspaceKey(masterKey: Buffer, workspaceId: string): Buffer {
-  return Buffer.from(
-    hkdfSync('sha256', masterKey, Buffer.from('neo-sync-workspace'), Buffer.from(workspaceId), KEY_BYTES)
-  )
-}
-
-/**
- * What a file is stored under: an HMAC of the name it already has here.
- *
- * The design called for addressing by a hash of the content. It is not needed, and
- * that is worth writing down rather than rediscovering. Neo names every stored file
- * with a uuid at the moment it is saved and never changes it, and the column holding
- * that name *syncs* — so both machines already call the same file by the same name
- * without having to read a byte of it. Hashing would only add dedup between two
- * identical files saved under different names, which does not happen here.
- *
- * Keyed to the workspace, so the server cannot recognise a file it has seen in
- * somebody else's workspace, or tell that two accounts hold the same document.
- */
-export function blobKey(masterKey: Buffer, workspaceId: string, name: string): string {
-  return Buffer.from(
-    hkdfSync('sha256', workspaceKey(masterKey, workspaceId),
-      Buffer.from('neo-sync-blob'), Buffer.from(name), 16)
-  ).toString('hex')
-}
-
 /* ------------------------------------------------------------------ *
  * A passphrase somebody has to be able to type twice
  * ------------------------------------------------------------------ */
@@ -191,6 +149,3 @@ export function passphraseComplaint(passphrase: string): string | null {
   return null
 }
 
-/** Constant time, because this compares things derived from a secret. */
-export const sameBytes = (a: Buffer, b: Buffer): boolean =>
-  a.length === b.length && timingSafeEqual(a, b)

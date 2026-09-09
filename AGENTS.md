@@ -98,150 +98,161 @@ mode. `routes/` are screens, `components/` the shared pieces, `lib/` the app-wid
 
 Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer only.
 
-### The operation log
+### Rows, and what is waiting to go
 
-`src/shared/ops.ts` is this boundary's contract, the way `api.ts` is IPC's and
-`mcp.ts` is the socket's. **Every write in the application is an operation**, and
-`db/apply.ts` is the only thing that touches a domain table. A click, an assistant
-tool call, a task created from Claude Desktop and a batch arriving from another
-device all converge there — that equivalence is the whole correctness argument, and
-it is the same move `invokeChannel()` already makes so the assistant's tools are the
-app's own channels rather than a second set of writes beside them.
+`src/shared/tables.ts` is this boundary's contract, the way `api.ts` is IPC's and
+`mcp.ts` is the socket's. **`db/apply.ts` is the only thing that touches a domain
+table.** A click, an assistant tool call, a task created from Claude Desktop and a row
+arriving from the sync server all converge there — that equivalence is the whole
+correctness argument, and it is the same move `invokeChannel()` already makes so the
+assistant's tools are the app's own channels rather than a second set of writes beside
+them.
 
-Handlers did not change. `upsert()` still takes what it always took; it now goes via
-`putLocal()`, which puts the row down *and* records what it did. `remove()` replaces
-every bare `DELETE FROM`, `updateWhere()` / `removeWhere()` replace the bulk
+**This replaced an operation log, and the trade is worth knowing.** Every write used
+to become an `Op` in a `Batch`, sealed under a key the sync server never had and
+appended to a per-workspace stream of ciphertext. It was sound and it made everything
+else harder: nothing on the server could be read, queried, joined, indexed, migrated
+or repaired, every schema change needed an upcaster, and each write carried a
+per-field clock and a bookkeeping table beside it. What it bought — a server that
+cannot read your work — is a real thing to have given up, and the plan is to buy back
+the part that matters column by column rather than wholesale. `lib/sync/crypto.ts` is
+kept, unused, for exactly that.
+
+Handlers did not change. `upsert()` still takes what it always took; it goes via
+`putLocal()`, which puts the row down *and* marks it in `sync_dirty`. `remove()`
+replaces every bare `DELETE FROM`, `updateWhere()` / `removeWhere()` replace the bulk
 statements, and `reorder()` writes a row at a time — a position only means anything
-among its neighbours, so each new number needs its own stamp.
+among its neighbours, so each row has to be marked on its own.
 
-`handle()` wraps every channel in `withBatch()`, so one call is one batch however
-many rows it moves. That is what turns *every mutation logs activity* from a
-convention each handler has to remember into something structural: the activity row
-rides inside the batch and cannot arrive without the change it describes.
+**A whole row travels, and conflicts resolve per row on `changed_at`: later wins.**
+That is the client's wall clock, and two devices editing *different columns* of the
+same row while both are offline now costs one of the two edits. The hybrid logical
+clock and the per-field stamps that avoided this are gone with the log; at one person
+with a Mac and a phone it is a price worth paying for a server anybody can read with
+SQL. **The server settles it** — when a device is connected, the server's answer is
+the one that stands.
 
-**Ordering is a hybrid logical clock (`db/hlc.ts`), never wall time.** Two Macs
-disagree about the time and one of them has been asleep. Last-write-wins is resolved
-**per field**, and the stamps live in `sync_row` — one table beside the schema rather
-than a jsonb column on all twenty-five, so nothing above changes shape and a row's
-stamps disappear with it. That table holds the tombstones too.
+**Unsent local work is the one thing that beats the server.** `applyRemote()` skips a
+row whose mark here is newer than what arrived. That is the laptop closed for a week:
+it has edits nobody has seen, and the pull that reaches it must not discard them
+before they have had their chance to be pushed. Hence push before pull.
 
-**A cascade is deterministic, so only the parent delete becomes an op** — every device
-performs the same cascade itself. The tombstones still cover everything it takes, read
-out of `pg_constraint` rather than from a hand-written copy of the foreign keys that
-would drift. Without them a task created on the phone would resurrect a project a Mac
-deleted while the phone was offline.
+**A cascade is deterministic, so every device performs its own** — but the deletes
+that travel cover everything the cascade took, read out of `pg_constraint` rather than
+from a hand-written copy of the foreign keys that would drift. Without them a task
+created on the phone would resurrect a project a Mac deleted while the phone was
+offline. `sync_tombstone` is what makes a late arrival lose, and it is kept for ninety
+days.
 
-**An insert records the row as it was written, an update only what it changed.** A
-column with a volatile default (`started_at`, `now()` inside a CASE) is resolved by
-whichever database runs the statement, so an op that left it out would give the row
-the day of the *replay*. Taking those off the RETURNING row makes this correct by
-construction rather than by remembering to list them.
+`applyRun()` retries rows whose parent has not arrived yet, in passes, until nothing
+more lands. A page is ordered by revision so the parent is normally earlier in it, but
+a first pull can straddle a page boundary; `PM_TRACE_DROPS=1` names whatever is left.
 
-`applyRun()` retries ops whose parent has not arrived yet, in passes, until nothing
-more lands. Streams deliver out of order and an adopted row carries the oldest stamp
-there is even when what it references was written later; `PM_TRACE_DROPS=1` names
-whatever is left.
+**What does not sync is part of the design.** `TABLES` in `tables.ts` carries it:
+`summary_part` and `setting` never travel, and the recording pipeline's own columns —
+states, attempts, errors, `next_attempt_at` — are `deviceOnly`, because syncing them
+means two Macs transcribing the same segment and both paying for it. Results are
+content and do sync.
 
-**What does not sync is part of the design.** `TABLES` in `ops.ts` carries it:
-`recording_segment`, `summary_part` and `setting` produce no ops at all, and the
-recording pipeline's own columns — states, attempts, errors, `next_attempt_at` —
-are `deviceOnly`, because syncing them means two Macs transcribing the same segment
-and both paying for it. Results are content and do sync. `transcript_cue.segment_id`
-is `deviceOnly` for a sharper reason: it points at a device table, so on any other
-machine that row does not exist and never will.
+**`workspace.ai_api_key` syncs, and it is the sharp end of dropping encryption.** It
+is a credential, and it is stored in plaintext on the sync server, so whoever runs
+that server can read it. It travels because a workspace's assistant should work on
+every device you own without being set up again on each one, and holding one column
+back to avoid that was a poor trade. It is the obvious first thing for selective
+encryption to carry; until there is some, a self-hosted server is the answer for
+anybody this does not suit.
 
-**`adoptExistingRows()` is the upgrade.** An install that predates the log has years
-of work in it and not one operation describing any of it; without this, replay would
-produce an empty database and the first sync would offer another device nothing. It
-runs once at startup, stamps everything with a genesis stamp older than any real
-edit, and finds nothing on every launch after. It is also how `sample.ts` works —
-that is a fixture rather than something somebody did, so it is written with plain SQL
-and taken into the log afterwards.
+**`adoptExistingRows()` is the upgrade, and it is also the whole of "sign in on a Mac
+that already has three years of work in it".** Every row with no mark gets one, at the
+row's own age rather than now, so a device that has genuinely edited something since
+still wins on the clock. It runs once at startup and finds nothing on every launch
+after. It is also how `sample.ts` works — a fixture, written with plain SQL, picked up
+afterwards without it needing to know syncing exists.
 
-**The gate is one assertion**, in both `verify.ts` and `upgrade.ts`: *replaying the
-log into an empty database reproduces the state exactly.* If that holds, the log is a
-complete account of the work and every device, restore and new phone reading it gets
-the same answer. It is what found the join table with no id, the notification sweep
-that deleted without a tombstone, and four columns whose defaults were evaluated in
-the wrong database. Do not weaken it; when it fails, something is genuinely lost.
+**The gate is one assertion**, in both `verify.ts` and `upgrade.ts`: *turn every row
+into the change that would go on the wire, throw the database away, and put them back
+through the same applier a pull uses — and the state comes back exactly.* If that
+holds, what leaves this machine is a complete account of the work and every device,
+restore and new phone gets the same answer. It is the successor to the old replay gate
+and it tests the same thing one layer down. Do not weaken it; when it fails, something
+is genuinely lost.
 
-Writing before `initOplog()` throws. `index.ts` brings the log up immediately after
+Writing before `initSync()` throws. `index.ts` brings it up immediately after
 `initDb()` and before any housekeeping, and anything else that opens the database has
-to do the same — a batch from a device with no identity looks fine and orders wrongly
-the moment a second machine appears.
+to do the same.
 
 ### Syncing
 
-`src/main/lib/sync/` and the Sync pane in app settings. The log is the mechanism;
-this is only a transport over it, which is why **Local and synced are the same code
-path with this attached or not attached**. There is deliberately no second way to
-write anything.
+`src/main/lib/sync/` and the Sync pane in app settings. **Local and synced are the
+same code path with this attached or not attached** — the marks accumulate whether or
+not a server was ever named, which is why signing in is a first push rather than a
+migration. There is deliberately no second way to write anything.
 
-**The device is the source of truth and the server is a relay.** A write made offline
-is committed here the moment it happens and is never provisional. `engine.ts` pushes
-before it pulls — what this machine has already written is the thing most at risk —
-and the cursors only advance behind work that actually landed, so a pass that fails
-half way has still moved everything it moved.
+**Neo works with no account at all, and that is not a fallback.** Every read comes out
+of the database in `~/.neo`. Connecting adds a canonical copy: the server is the
+authority on a conflict and is where a lost Mac is restored from, but nothing on the
+screen ever waits on it.
 
-**A passkey authenticates; a passphrase decrypts.** This is a change from the design
-document and it is not a preference. An Electron renderer is loaded from `file://`,
-so it cannot run a WebAuthn ceremony against the sync server's domain — the origin
-will not match the relying party id — and the only way to get one is a page *the
-server serves*. A server that serves the JavaScript handling a PRF secret can take the
-master key whenever it likes, and the end-to-end claim is then decoration.
+**Offline is a state, not an error.** `isOffline()` in `relay.ts` separates "never got
+an answer" from "was refused", because a laptop on a train is working exactly as
+designed. After `OFFLINE_AFTER_MS` of not reaching the server the phase becomes
+`offline` and a badge appears — in the desktop sidebar above the workspace switcher,
+and as a strip under the bar on the phone. Both say what is happening to the work
+("3 changes waiting"), not merely that there is no network, because that is the
+question somebody actually has. Neither is drawn for a machine with no account.
 
-**And it happens in the real browser rather than a window Neo owns.** Electron will
-service a ceremony once `app.configureWebAuthn()` has been called, but only with Touch
-ID credentials bound to that Mac's Secure Enclave, **which iCloud Keychain does not
-sync** — a passkey made that way exists on one laptop and nowhere else, so the second
-Mac could never sign in, which is the whole reason any of this is being built. So
-`lib/sync/signin.ts` opens the server's page with `shell.openExternal` and listens on a
-loopback port for the answer: RFC 8252's arrangement, and `gh auth login`'s. Exactly one
-thing crosses back — a device token, which the server issued itself — guarded by a
-`state` nonce compared in constant time. The passphrase is typed in Neo's own window,
-stretched with scrypt in the main process, and never leaves it.
+**A passkey is the whole of signing in.** There used to be a second secret — a
+passphrase, typed into Neo's own window and never sent — because the server held
+ciphertext nobody else could open. There is nothing to open now, so a token the server
+issued itself is all a device needs.
+
+**The ceremony happens in the real browser rather than a window Neo owns.** An
+Electron renderer is loaded from `file://`, so it cannot run WebAuthn against the
+server's domain — the origin will not match the relying party id. Electron will
+service one after `app.configureWebAuthn()`, but only with Touch ID credentials bound
+to that Mac's Secure Enclave, **which iCloud Keychain does not sync** — a passkey made
+that way exists on one laptop and nowhere else, which is the whole reason any of this
+is being built. So `lib/sync/signin.ts` opens the server's page with
+`shell.openExternal` and listens on a loopback port for the answer: RFC 8252's
+arrangement, and `gh auth login`'s. Exactly one thing crosses back — a device token —
+guarded by a `state` nonce compared in constant time.
 
 Signing in asks for **no handle at all**: the passkey is discoverable, so the browser
 offers whichever Neo passkey it holds. The second Mac is one press and a fingerprint.
 Only making an account asks for an email, and that is the once-ever case, so it is the
-quiet button. Whether the passphrase box appears once or twice is answered by asking the
-server whether the account has key material — not guessed from whether this Mac has
-workspaces, which is a different question with the same answer on exactly one machine.
+quiet button.
 
-`crypto.ts` is the whole of it. AES-256-GCM rather than XChaCha20-Poly1305 because
-the latter is not in Node and reaching for a dependency to hold the one primitive
-everything rests on is a poor trade; scrypt rather than Argon2id because Argon2 is a
-native module, and a native module here is a compile against one Electron's headers
-plus a crash that takes the main process with it — the same reasoning that keeps the
-audio tap a child process.
+**The protocol is two calls.** `POST /v1/workspaces/{id}/rows` hands over what
+changed; `GET .../rows?since=` asks what has moved. There is no third — a first sync
+is the same push with everything marked, and a brand new machine is the same pull from
+revision zero, which keeps the case that matters most from being its own code path
+with its own bugs.
 
-**A workspace key is derived from the master key, not stored.** HKDF with the
-workspace id, so every device holding the master arrives at the same key with nothing
-to fetch and no keyring to be out of date on one machine. **This forecloses sharing a
-single workspace without re-keying it**: handing somebody one workspace's key means
-handing them the account. Shared workspaces will need explicit random keys wrapped
-per recipient, and everything that exists by then has to be re-encrypted under one.
-That is a real migration and it is the price of not building key distribution before
-there is anybody to distribute to.
+`rev` is a delivery cursor, per workspace, assigned by the server; `changed_at` is
+when the work happened, on the device that did it. Keeping them apart is what lets a
+device's cursor not depend on a clock it does not own. A pull is **one ordered stream
+across every table**, not a page per table, and that is what makes deletes work: a
+device applies a project's delete and its own foreign keys take the tasks with it,
+which is only correct if the delete cannot arrive before the rows it supersedes.
 
-The master key is cached through `safeStorage`, so the passphrase is asked for once
-per install rather than once per launch — a passphrase typed every morning is a
-passphrase chosen for speed. A copied `~/.neo` on somebody else's machine opens
-nothing, because the cache is behind their login keychain and not in the folder.
+**The server has no foreign keys between the data tables**, only from each table to
+its workspace. The client has the real ones and enforces them; the server's job is to
+accept whatever a device hands it, because a row refused there is a device that can
+never finish a push and never syncs again.
 
-**A batch that cannot be opened does not stop the stream.** It means a different
-passphrase wrote it, or it is damaged; either way every batch behind it is still
-readable and refusing to move past it would strand the whole workspace on one bad
-row. It is logged and the cursor advances.
+**A push spends a revision only on a row that actually lands.** A retry of a push
+already made moves nothing and wakes nobody — the counter is wound back inside the
+same transaction, under the lock `reserve()` took.
 
-`sync_state` holds only the *pull* cursor, one row per workspace, because a stream
-that cannot be reached must not hold up the others. What has been pushed is a single
-number in `setting`: batches leave in the order they were written, so one that fails
-stops the queue behind it on purpose.
+`sync_state` holds only the *pull* cursor, one row per workspace, because a workspace
+that cannot be reached must not hold up the others. There is no push cursor: what is
+waiting is whatever is still in `sync_dirty`, which is a fact about the rows rather
+than a number that can get out of step with them. `settle()` is guarded on
+`changed_at`, so a row edited again while its push was in flight is still waiting.
 
 The engine starts **after** `adoptExistingRows()`, never before. A device that pushed
-its log before taking its own existing rows into it would hand the other Mac an
-account of a working life that begins today.
+before taking its own existing rows into the queue would hand the other Mac a working
+life that begins today.
 
 **Files move separately, and after the rows.** `lib/sync/blobs.ts` is a *reconciler,
 not a queue*: it asks what the rows refer to, uploads what is here and not yet handed
@@ -250,16 +261,22 @@ drain, nothing lost by crashing half way — the recording pipeline's shape, for
 same reason. Rows first in both directions, because a file is only worth moving
 because something refers to it and the reference is in the log.
 
-The object key is `HMAC(workspace key, the name the file already has)`. The design
-called for hashing the content; it is not needed, and that is worth knowing rather
-than rediscovering — Neo names every stored file with a uuid when it saves it and
-never changes it, and the column holding that name syncs, so both machines already
-call the same file by the same name without reading a byte. `blob_sync` records only
-what has been *uploaded*: a download needs no row, because the file is either on this
-disk or it is not.
+The object key is the name the file already has, with a segment's one slash turned
+into a colon — a key may never contain a path, because the workspace's prefix is the
+whole of the separation between one account's files and another's. Neo names every
+stored file with a uuid when it saves it and never changes it, and the column holding
+that name syncs, so both machines call the same file by the same name without reading
+a byte. It used to be an HMAC of that name under the workspace key; with the rows
+readable on the server, that bought nothing but a bucket nobody could look inside.
+`blob_sync` records only what has been *uploaded*: a download needs no row, because
+the file is either on this disk or it is not.
 
-`recording_segment` had to move from device-local to synced for audio to work at all
-— without its rows the other Mac does not know a segment exists. Its `path`, `bytes`
+**A server with no bucket still syncs rows.** A 503 from the file pass is noted and
+the pass succeeds — the rows are the whole of syncing, and somebody self-hosting for
+text alone should not see every pass report a failure.
+
+`recording_segment` is synced for audio to work at all — without its rows the other
+Mac does not know a segment exists. Its `path`, `bytes`
 and offsets travel; `state`, `error` and `attempts` stay, so only the machine that
 recorded it transcribes it. `workspace.sync_recordings` is the per-workspace switch,
 on by default, and off means the bytes are never uploaded rather than uploaded and
@@ -276,10 +293,10 @@ looks exactly like one that never arrived.
 is a floor — what makes a change appear *at all* when a proxy has quietly eaten the
 connection — and on its own it meant a change waited up to a minute at each end.
 
-Outbound: `oplog.ts` has `onLocalWrite`, a listener the engine subscribes to, so writing
-here schedules a push instead of waiting for the clock. The log still knows nothing about
-a network — with nothing attached the set is empty and `commit()` ends where it always
-did. `wake()` gathers a burst behind 400ms of quiet with a two-second cap, because a note
+Outbound: `db/wake.ts` has `onLocalWrite`, a listener the engine subscribes to, so
+writing here schedules a push instead of waiting for the clock. The database still
+knows nothing about a network — with nothing attached the set is empty and a write ends
+where it always did. `wake()` gathers a burst behind 400ms of quiet with a two-second cap, because a note
 being typed autosaves repeatedly and a plain debounce under continuous typing never
 fires. A local-write wake pushes and does **not** pull or reconcile files: nobody else
 has said anything, so a round trip per workspace and a `stat()` per file behind every
@@ -459,6 +476,25 @@ content: their presence is what proves the ops were *applied* and not merely cop
   workspace the flow creates falsifies its own condition: without the latch the screen
   unmounts mid-save and the app appears behind it. Nothing is written until the last
   button, so abandoning the flow leaves nothing behind.
+- **A picture in a note is a row and a file, and nothing points at the row.**
+  `note_image` is scoped to the *project* — a note being written for the first time has
+  no id yet — and holds the uuid filename the bytes were stored under in `attachments/`,
+  which is what makes it a blob the sync reconciler can name. The note's Markdown refers
+  to it by `neo-media://image/<file>`, served by `recording/media.ts` only for a file a
+  row names. Because the reference lives in prose, `lib/images.ts`'s launch sweep is
+  what deletes: a row no note or meeting in its project mentions, after a day's grace
+  for a row that synced ahead of the note that mentions it. The mirror copies the file
+  into the project's `media/` and rewrites the address to a relative path, so Obsidian
+  shows it. `![alt|300](…)` is the width, Obsidian's way, and the only size there is.
+- **`[[Links]]` between notes resolve by title, inside one project, and are never
+  stored.** Backlinks are computed in the renderer from the bodies `project:get` already
+  returns (`lib/noteLinks.ts`); there is no link table to keep right. The editor is
+  handed the titles it may complete to and a callback for ⌘-click, and knows nothing
+  about notes otherwise.
+- **The mirror is coalesced, not immediate.** `mirrorProject()` waits `MIRROR_DELAY_MS`
+  for a burst of autosaves to end; `flushMirrors()` runs on the way out, and
+  `settings:exportMarkdown` still rebuilds everything at once. `verify.ts` counts
+  rewrites through `mirrorStats`.
 - **Every side panel resizes through one hook.** `lib/resize.tsx` — `useResizablePanel`
   and `PanelResizeHandle` — and the bounds for each one live in `src/shared/panels.ts`,
   never in the component. The panel's own edge is what a drag measures from, not the
@@ -707,6 +743,23 @@ A **child process, not a native module**, deliberately: a module is compiled aga
 one Electron's headers and a crash in it takes the app down. Stopping is done by
 closing its stdin, never by killing it, because it has to hand the private aggregate
 device back to Core Audio — verify asserts nothing is left behind.
+
+**The microphone is opened before the tap, and the order is load-bearing.** A
+Bluetooth headset is one device in two modes — playback at 48 kHz, and a 24 kHz
+headset link that is the only mode with a microphone — and opening the microphone
+is what makes it switch. It cannot switch while the tap's aggregate device holds its
+output side at the playback rate: started tap-first, the AirPods' microphone track
+ended the instant it opened, the `AudioContext` clock stood still, and the recorder
+wrote nothing until another application played sound and shook the device loose. So
+a meeting recorded fine and a note dictated alone was empty. Two consequences. The
+helper labels its bytes with the *aggregate's* rate read after it has started, not
+the tap's format, and emits a `format` line when that rate moves under it (the
+switch finishes a beat after the aggregate is made); `onSystemAudioFormat` carries
+it to the feed, which stamps each buffer with the rate it arrived at and lets the
+graph resample. And the watchdog checks that `currentTime` has moved since its last
+look, because a stalled graph is the one failure the track states cannot show: the
+mixed track is generated and always "live", and a `MediaRecorder` over it sits at
+`recording` producing nothing.
 
 Two clocks meet in the schedule (the tap runs on the output device, the mic on its
 own), so it is allowed to slip: behind the clock it restarts just ahead of now, and

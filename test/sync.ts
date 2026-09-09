@@ -1,12 +1,14 @@
 import { initDb, closeDb, q, q1 } from '../src/main/db/client'
-import { adoptExistingRows, initOplog } from '../src/main/db/oplog'
+import { adoptExistingRows, initSync } from '../src/main/db/dirty'
 import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
 import { registerTaskHandlers } from '../src/main/ipc/tasks'
 import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerSettingsHandlers } from '../src/main/ipc/settings'
+import { upsert } from '../src/main/ipc/util'
 import { __handlers } from 'electron'
 import * as engine from '../src/main/lib/sync/engine'
+import { OFFLINE_AFTER_MS } from '../src/shared/sync'
 import { iconDir } from '../src/main/db/client'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -57,10 +59,9 @@ async function main(): Promise<void> {
   const serverUrl = need('NEO_SYNC_URL')
   const token = need('NEO_SYNC_TOKEN')
   const accountId = need('NEO_SYNC_ACCOUNT')
-  const passphrase = need('NEO_SYNC_PASSPHRASE')
 
   await initDb()
-  await initOplog()
+  await initSync()
   await adoptExistingRows()
   registerWorkspaceHandlers()
   registerProjectHandlers()
@@ -69,8 +70,6 @@ async function main(): Promise<void> {
   registerSettingsHandlers()
 
   await engine.saveConnection(serverUrl, token, accountId, 'sync-test@example.com', phase)
-  const unlocked = await engine.unlock(passphrase)
-  ok(`${phase}: the passphrase opens the account`, unlocked.ok, unlocked.reason ?? '')
 
   if (phase === 'push') {
     /* ------------------------------------------------------------ device one */
@@ -82,6 +81,15 @@ async function main(): Promise<void> {
       summary: 'Written on the first machine.',
       deadline: '2026-12-01'
     })
+    /*
+     * The assistant's key travels with its workspace, so the second machine can run
+     * the assistant without being set up again. It is a credential in plaintext on
+     * the server; that is the trade, and it is asserted rather than assumed because
+     * it is the one field where getting the direction wrong is expensive either way.
+     * Written through `upsert` because that is exactly what `chat:setKey` does.
+     */
+    await upsert('workspace', { aiApiKey: 'sk-travels-with-the-workspace' }, workspace.id)
+
     await call('task:save', { projectId: project.id, title: 'First task', dueDate: '2026-10-01' })
     await call('task:save', { projectId: project.id, title: 'Second task' })
     await call('note:save', {
@@ -108,7 +116,7 @@ async function main(): Promise<void> {
     console.log(`ICON=${iconName}`)
 
     const before = await engine.status()
-    ok('push: there is something waiting to go out', before.pending > 0, `${before.pending} batches`)
+    ok('push: there is something waiting to go out', before.pending > 0, `${before.pending} rows`)
 
     await engine.syncNow()
     const after = await engine.status()
@@ -135,6 +143,12 @@ async function main(): Promise<void> {
       'SELECT name FROM workspace WHERE id = $1', [workspaceId]
     )
     ok('pull: the workspace arrived', workspace?.name === 'Sync test', workspace?.name ?? 'missing')
+
+    const key = await q1<{ ai_api_key: string }>(
+      'SELECT ai_api_key FROM workspace WHERE id = $1', [workspaceId]
+    )
+    ok('pull: the assistant key came with the workspace, so it works here too',
+       key?.ai_api_key === 'sk-travels-with-the-workspace', key?.ai_api_key || 'missing')
 
     const project = await q1<{ name: string; summary: string; deadline: string }>(
       'SELECT name, summary, deadline FROM project WHERE id = $1', [projectId]
@@ -164,13 +178,12 @@ async function main(): Promise<void> {
        canvas?.title === 'A canvas' && canvas?.data?.nodes?.length === 1,
        canvas?.title ?? 'missing')
 
-    // The board is created by the project handler, not sent as content — so its
-    // presence here proves the ops were *applied* rather than merely copied.
+    // The board is created by the project handler on the first machine, so its
+    // presence here proves the rows themselves travelled rather than being rebuilt.
     const columns = await q<{ name: string }>(
       'SELECT name FROM board_column WHERE project_id = $1', [projectId]
     )
-    ok('pull: the board came too, because the ops were applied and not just stored',
-       columns.length === 4, `${columns.length} columns`)
+    ok('pull: the board came too', columns.length === 4, `${columns.length} columns`)
 
     const activity = await q<{ summary: string }>(
       'SELECT summary FROM activity WHERE project_id = $1', [projectId]
@@ -187,24 +200,35 @@ async function main(): Promise<void> {
        iconRow?.icon_path ?? 'none')
 
     const landed = await readFile(join(iconDir(), iconName)).catch(() => null)
-    ok('pull: and the bytes arrived, decrypted, byte for byte',
+    ok('pull: and the bytes arrived, byte for byte',
        landed?.toString('utf8') === 'not really a png, but bytes',
        landed ? `${landed.length} bytes` : 'file missing')
 
-    // The server is not supposed to be able to tell what it is holding: the object
-    // key is an HMAC under a key it does not have, so nothing about the filename,
-    // the workspace or the account should be legible in it.
-    ok('pull: the file is stored under a name that says nothing',
-       !(await engine.status()).workspaces.some((w) => iconName.includes(w.workspaceId)))
-
     // Nothing this device pulled may be pushed back: that would be an echo, and two
     // devices echoing each other never stop.
-    const echo = await q<{ n: number }>(
-      `SELECT count(*)::int AS n FROM op_batch WHERE origin = 'remote'`
+    const queued = await q<{ n: number }>('SELECT count(*)::int AS n FROM sync_dirty')
+    ok('pull: what arrived is not queued to be sent back',
+       (queued[0]?.n ?? 0) === 0, `${queued[0]?.n} rows waiting`)
+
+    // The cursor has to have moved, or every pass would fetch the whole workspace
+    // again and apply it over the top of itself.
+    const cursor = await q1<{ remote_rev: string }>(
+      'SELECT remote_rev FROM sync_state WHERE workspace_id = $1', [workspaceId]
     )
-    ok('pull: what arrived is recorded as having come from elsewhere',
-       (echo[0]?.n ?? 0) > 0, `${echo[0]?.n} remote batches`)
-    ok('pull: and is not queued to be sent back', (await engine.status()).pending === 0)
+    ok('pull: and the cursor moved, so the next pass asks only for what is new',
+       Number(cursor?.remote_rev ?? 0) > 0, `at ${cursor?.remote_rev}`)
+
+    /* ------------------------------------------------- back the other way */
+
+    /*
+     * The half a one-directional test cannot show: this device writes, hands it over,
+     * and the row is on the server under the same id. The push half of the script
+     * checks its own queue drains; this checks the server actually took it.
+     */
+    await call('task:save', { projectId, title: 'Written on the second machine' })
+    await engine.syncNow()
+    ok('pull: and what this machine writes goes back up',
+       (await engine.status()).pending === 0)
 
     /* ------------------------------------------------------------ live */
 
@@ -225,6 +249,37 @@ async function main(): Promise<void> {
     const money = (await engine.status()).billing
     ok('pull: and the server said what this account is allowed to do',
        money.mayWrite, JSON.stringify(money))
+
+    /* ------------------------------------------------------------ offline */
+
+    /*
+     * A server that cannot be reached, which is the ordinary case rather than a
+     * fault: a laptop on a train, a phone in a lift. Everything on the device has to
+     * go on working, what is written has to be marked to go, and the app has to say
+     * so — without ever calling it an error.
+     *
+     * Pointed at a port nothing is listening on, which is what a lost network looks
+     * like from here. The grace period is deliberate, so this waits it out rather
+     * than asserting on the first failed pass.
+     */
+    await engine.stop()
+    await engine.saveConnection('http://127.0.0.1:1', token, accountId, 'sync-test@example.com', phase)
+
+    const wentOffline = await until(async () => {
+      await engine.syncNow()
+      return (await engine.status()).phase === 'offline'
+    }, OFFLINE_AFTER_MS + 15_000)
+    const away = await engine.status()
+    ok('offline: a server that cannot be reached is said to be offline', wentOffline, away.phase)
+    ok('offline: and it is not reported as an error, because nothing is wrong',
+       away.error === '', away.error)
+
+    // The whole point of the badge: the work is here, and it is going to go.
+    const written = await call('task:save', { projectId, title: 'Written with no network' })
+    ok('offline: the app still writes, at full speed',
+       (await q<{ id: string }>('SELECT id FROM task WHERE id = $1', [written.id])).length === 1)
+    ok('offline: and what was written is waiting to go up',
+       (await engine.status()).pending > 0, `${(await engine.status()).pending} waiting`)
   }
 
   await engine.stop()

@@ -31,8 +31,8 @@ export function SyncNudge(): React.JSX.Element | null {
     <div className="flex items-center gap-3 rounded-lg border border-base-300 px-4 py-3 text-sm">
       <Icon name="refresh" className="opacity-50 shrink-0" />
       <p className="flex-1 opacity-80">
-        Neo can keep your Macs in step and hold an encrypted backup of your work.
-        Everything is sealed on this machine first — the server cannot read any of it.
+        Neo can keep your Macs in step and hold an off-site copy of your work. It
+        carries on working the same way offline — nothing here depends on it.
       </p>
       <button className="btn btn-sm btn-primary" onClick={() => void answer(true)}>
         Have a look

@@ -1,19 +1,34 @@
-import type { Batch } from '@shared/ops'
+import type { RowChange } from '@shared/tables'
 import type { SyncBilling } from '@shared/sync'
 
 /**
  * The sync server, as this process sees it.
  *
- * Everything that crosses this boundary is either already sealed or is something the
- * server issued itself. Nothing here has a key.
+ * Rows go up and rows come down, in the shape the tables already have. Nothing is
+ * transformed on the way through and nothing is sealed: this is a plain JSON API, and
+ * the whole of it can be read off the wire — which is most of the reason for the
+ * change that produced it.
  */
 
-export interface RemoteBatch {
-  seq: number
-  batchId: string
-  deviceId: string | null
-  /** Sealed. Opened by the engine, never here. */
-  ciphertext: string
+/** One row as the server hands it back, with the cursor it arrived at. */
+export interface RemoteChange {
+  rev: number
+  table: string
+  /** The row's columns, exactly as the server stores them. */
+  row: Record<string, unknown>
+}
+
+/**
+ * A server that cannot be reached, as opposed to one that refused.
+ *
+ * `fetch` reports every network failure as a `TypeError` with a message that varies
+ * by platform, so there is nothing better to key on than "it never got an answer".
+ * Keeping this apart from a real error is most of what makes the offline badge
+ * honest: a laptop on a train has nothing wrong with it.
+ */
+export function isOffline(error: unknown): boolean {
+  if (error instanceof RelayError) return false
+  return error instanceof TypeError || (error as { name?: string })?.name === 'AbortError'
 }
 
 export class RelayError extends Error {
@@ -70,7 +85,7 @@ export class Relay {
     quotaBytes: number
     usedBytes: number
     billing?: Partial<SyncBilling>
-    workspaces: { workspaceId: string; head: number; batches: number }[]
+    workspaces: { workspaceId: string; head: number }[]
   }> {
     return this.call('/v1/account')
   }
@@ -98,27 +113,14 @@ export class Relay {
     return this.call('/v1/billing/portal', { method: 'POST' })
   }
 
-  keyMaterial(): Promise<{ keyMaterial: Record<string, string> }> {
-    return this.call('/v1/account/keys')
-  }
-
-  putKeyMaterial(wrappedBy: string, ciphertext: string): Promise<{ stored: boolean }> {
-    return this.call('/v1/account/keys', {
-      method: 'PUT',
-      body: JSON.stringify({ wrappedBy, ciphertext })
-    })
-  }
-
   /* ---------------------------------------------------------------- files */
 
-  blobUpload(workspaceId: string, key: string, sizeBytes: number): Promise<{
-    uploadUrl: string
-  }> {
+  blobUpload(
+    workspaceId: string, key: string, sizeBytes: number, contentType: string
+  ): Promise<{ uploadUrl: string }> {
     return this.call(`/v1/workspaces/${workspaceId}/blobs/${key}/upload`, {
       method: 'POST',
-      // Always the same type: what goes up is ciphertext, and saying more than that
-      // would tell the bucket what kind of file it is holding.
-      body: JSON.stringify({ sizeBytes, contentType: 'application/octet-stream' })
+      body: JSON.stringify({ sizeBytes, contentType })
     })
   }
 
@@ -130,12 +132,13 @@ export class Relay {
    * Straight to object storage, never through the sync server.
    *
    * An hour of meeting audio proxied through that process would tie up a connection
-   * for minutes and put the one thing it is not allowed to read into its heap.
+   * for minutes for nothing: the bytes are the same bytes either way, and a presigned
+   * URL is what object storage is for.
    */
-  async putBytes(url: string, bytes: Buffer): Promise<void> {
+  async putBytes(url: string, bytes: Buffer, contentType: string): Promise<void> {
     const response = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
+      headers: { 'Content-Type': contentType },
       body: new Uint8Array(bytes)
     })
     if (!response.ok) {
@@ -151,26 +154,36 @@ export class Relay {
     return Buffer.from(await response.arrayBuffer())
   }
 
-  push(workspaceId: string, batchId: string, ciphertext: string): Promise<{ seq: number }> {
-    return this.call(`/v1/workspaces/${workspaceId}/ops`, {
+  /** Hand over what this device has changed. One request, one transaction there. */
+  push(workspaceId: string, changes: RowChange[]): Promise<{ applied: number; head: number }> {
+    return this.call(`/v1/workspaces/${workspaceId}/rows`, {
       method: 'POST',
-      body: JSON.stringify({ batchId, ciphertext })
+      body: JSON.stringify({ changes })
     })
   }
 
-  pull(workspaceId: string, since: number, limit = 200): Promise<{
-    batches: RemoteBatch[]
+  /**
+   * Ask what has moved since this device's cursor.
+   *
+   * One ordered stream across every table rather than a page per table, which is what
+   * makes deletes work: a device applies a project's delete and its own foreign keys
+   * take the tasks with it, and that is only correct if the delete cannot arrive
+   * before the rows it supersedes.
+   */
+  pull(workspaceId: string, since: number, limit = 500): Promise<{
+    changes: RemoteChange[]
     head: number
+    more: boolean
   }> {
-    return this.call(`/v1/workspaces/${workspaceId}/ops?since=${since}&limit=${limit}`)
+    return this.call(`/v1/workspaces/${workspaceId}/rows?since=${since}&limit=${limit}`)
   }
 
   /**
    * The live stream: one connection for this device, for as long as the app is open.
    *
-   * An event names a workspace and how far it has moved — never a batch. A client
-   * that hears one reads from its own cursor, so the live path and the catch-up path
-   * are the same code and a dropped connection is only a slower one.
+   * An event names a workspace and how far it has moved — never a row. A client that
+   * hears one reads from its own cursor, so the live path and the catch-up path are
+   * the same code and a dropped connection is only a slower one.
    *
    * One connection rather than one per workspace, and that is not only tidiness: a
    * workspace made on the *other* Mac cannot be subscribed to before it is known
@@ -183,7 +196,7 @@ export class Relay {
      *  arrives — that may be hours away, and the status line should not say the
      *  stream is down for all of them. */
     onOpen: () => void = () => {}
-  ): AsyncGenerator<{ workspaceId: string; seq: number }> {
+  ): AsyncGenerator<{ workspaceId: string; rev: number }> {
     const response = await fetch(this.url('/v1/stream'), {
       headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' },
       signal
@@ -212,10 +225,10 @@ export class Relay {
           try {
             const parsed = JSON.parse(data.slice(5).trim()) as {
               workspaceId?: string
-              seq?: number
+              rev?: number
             }
-            if (parsed.workspaceId && typeof parsed.seq === 'number') {
-              yield { workspaceId: parsed.workspaceId, seq: parsed.seq }
+            if (parsed.workspaceId && typeof parsed.rev === 'number') {
+              yield { workspaceId: parsed.workspaceId, rev: parsed.rev }
             }
           } catch {
             // A malformed event is not worth ending a connection over: the next
@@ -226,15 +239,4 @@ export class Relay {
       }
     }
   }
-}
-
-/** The wire shape of a batch, before it is sealed. */
-export const batchToWire = (batch: Batch): string => JSON.stringify(batch)
-
-export function wireToBatch(json: string): Batch {
-  const parsed = JSON.parse(json) as Batch
-  if (!parsed || !Array.isArray(parsed.ops) || typeof parsed.id !== 'string') {
-    throw new Error('That is not a batch.')
-  }
-  return parsed
 }

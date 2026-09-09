@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS note (
 );
 
 -- A visual canvas in the open JSON Canvas format. The data column is the file
--- contents exactly as Obsidian would write them, so the mirror is a valid \`.canvas\` file
+-- contents exactly as Obsidian would write them, so the mirror is a valid \.canvas\ file
 -- file and a canvas created in Neo opens unchanged elsewhere.
 CREATE TABLE IF NOT EXISTS canvas (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -453,62 +453,63 @@ CREATE TABLE IF NOT EXISTS summary_part (
 );
 
 
--- Every write in the application, as it happened.
+-- What this device has changed and not yet handed to the sync server.
 --
--- Deliberately without a foreign key to workspace: the log outlives the rows it
--- describes, exactly as activity.entity_id does. A batch that deleted a workspace
--- must still be readable afterwards, or the deletion could never be sent anywhere.
+-- One table beside the domain schema rather than a dirty column on all
+-- twenty-seven: nothing above changes shape, pick()'s allowlists keep meaning
+-- exactly what they meant, and a row's dirty mark disappears with the row.
 --
--- seq is a local cursor and nothing more — it says what this machine has yet to
--- hand to a transport. The *ordering* of the data is the hlc, which is the same on
--- every device; the sequence number is only ever "what have I not sent".
-CREATE TABLE IF NOT EXISTS op_batch (
-  seq            bigserial PRIMARY KEY,
-  id             uuid NOT NULL UNIQUE,
-  workspace_id   uuid,
-  device_id      text NOT NULL,
-  actor_id       uuid,
-  schema_version integer NOT NULL,
-  hlc            text NOT NULL,
-  -- local | remote. A remote batch is recorded so that replay reproduces state and
-  -- so a third device can be fed from this one, but it is never sent back.
-  origin         text NOT NULL DEFAULT 'local',
-  ops            jsonb NOT NULL,
-  created_at     timestamptz NOT NULL DEFAULT now()
-);
-
--- Per-row sync metadata, kept beside the domain tables rather than inside them.
+-- changed_at is the whole of the conflict rule. It is this machine's wall clock,
+-- deliberately — the server compares it against the other device's and the later one
+-- wins, so two clocks that disagree resolve wrongly by exactly the amount they
+-- disagree by. That is the price of a plain timestamp over a logical clock, and at
+-- one person with two machines it is a price worth paying for a column anybody can
+-- read.
 --
--- One table instead of a jsonb column on all twenty-five: nothing in the schema
--- above changes shape, pick()'s allowlists keep meaning exactly what they meant,
--- and a row's stamps disappear with it. It holds two things:
---
---   field_hlc   when each column was last written, so last-write-wins is decided per
---               field rather than per row — two devices editing a project's name and
---               its deadline in the same minute must not cost one of them.
---   deleted_hlc the tombstone. A cascade is deterministic, so only the parent delete
---               travels; this is what stops a task created on the phone from
---               resurrecting a project a Mac deleted while the phone was offline.
-CREATE TABLE IF NOT EXISTS sync_row (
-  table_name  text NOT NULL,
-  row_id      text NOT NULL,
-  field_hlc   jsonb NOT NULL DEFAULT '{}'::jsonb,
-  deleted_hlc text,
+-- With no server configured this table still fills up, and that is the point: the
+-- day somebody signs in, everything they have ever made is already marked as
+-- something to hand over.
+CREATE TABLE IF NOT EXISTS sync_dirty (
+  table_name   text NOT NULL,
+  row_id       text NOT NULL,
+  -- Resolved when the write happens, because afterwards a deleted row cannot be
+  -- walked up to the workspace it belonged to.
+  workspace_id uuid,
+  changed_at   timestamptz NOT NULL DEFAULT now(),
+  -- A delete has no row left to send, so what it is has to be recorded here.
+  deleted      boolean NOT NULL DEFAULT false,
   PRIMARY KEY (table_name, row_id)
 );
 
--- How far this device has read each workspace's stream on the server.
+-- Rows this device has deleted, kept until it is sure everyone has heard.
 --
--- Only the *pull* cursor lives here, one row per workspace, because a stream that
--- cannot be reached must not hold up the others. What has been pushed is a single
--- number in setting: batches leave in the order they were written, so one that
--- fails stops the queue behind it on purpose.
+-- A cascade is deterministic, so only the parent delete is *made* — but the
+-- tombstones cover everything the cascade took with it, because a task created on the
+-- phone would otherwise arrive later and resurrect a project this Mac deleted while
+-- the phone was offline. Read out of pg_constraint rather than from a hand-written
+-- copy of the foreign keys that would drift.
 --
--- No foreign key to workspace: a device that has signed in and not yet replayed
+-- Kept after the push, not dropped: it is what makes a late arrival lose. Swept once
+-- it is older than any device could still be behind by.
+CREATE TABLE IF NOT EXISTS sync_tombstone (
+  table_name text NOT NULL,
+  row_id     text NOT NULL,
+  deleted_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (table_name, row_id)
+);
+
+-- How far this device has read each workspace on the server.
+--
+-- Only the *pull* cursor lives here, one row per workspace, because a workspace that
+-- cannot be reached must not hold up the others. There is no push cursor to keep:
+-- what is waiting to go out is whatever is still in sync_dirty, which is a fact about
+-- the rows rather than a number that can get out of step with them.
+--
+-- No foreign key to workspace: a device that has signed in and not yet pulled
 -- anything has a cursor for a workspace whose rows have not arrived.
 CREATE TABLE IF NOT EXISTS sync_state (
   workspace_id uuid PRIMARY KEY,
-  remote_seq   bigint NOT NULL DEFAULT 0,
+  remote_rev   bigint NOT NULL DEFAULT 0,
   synced_at    timestamptz
 );
 
@@ -555,9 +556,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recording_meeting ON recording (meeting_id
 CREATE INDEX IF NOT EXISTS idx_recording_segment ON recording_segment (recording_id, ord);
 CREATE INDEX IF NOT EXISTS idx_transcript_cue    ON transcript_cue (recording_id, ord);
 CREATE INDEX IF NOT EXISTS idx_summary_part      ON summary_part (recording_id, ord);
-CREATE INDEX IF NOT EXISTS idx_op_batch_pending  ON op_batch (origin, seq);
-CREATE INDEX IF NOT EXISTS idx_op_batch_ws       ON op_batch (workspace_id, seq);
-CREATE INDEX IF NOT EXISTS idx_sync_row_dead     ON sync_row (table_name, row_id) WHERE deleted_hlc IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sync_dirty_ws     ON sync_dirty (workspace_id);
 
 `
 
@@ -797,5 +796,42 @@ export const MIGRATIONS: string[] = [
   // Said once, and once only. Not merely a lookup: the insert that claims a day is
   // what decides whether the notification is shown at all, so this index is the
   // guard itself rather than an optimisation over one.
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_once ON notification (workspace_id, kind, on_date)`
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_once ON notification (workspace_id, kind, on_date)`,
+
+  // 5. The operation log, which is gone.
+  //
+  // Every write used to become an `Op` in a `Batch`, sealed under a key the sync
+  // server never had and appended to a per-workspace stream of ciphertext. It was a
+  // sound design and it made everything else harder: nothing on the server could be
+  // read, queried or repaired, an upgrade meant writing an upcaster, and the whole of
+  // somebody's account was one table of opaque blobs.
+  //
+  // The rows are the record now, and `sync_dirty` says which of them still have to go.
+  // Dropping these is safe in a way it looks like it should not be: `op_batch` was
+  // never the state, only an account of how the state got here, and the state is in
+  // the domain tables where it always was.
+  `DROP TABLE IF EXISTS op_batch`,
+  `DROP TABLE IF EXISTS sync_row`,
+
+  // A cursor into a stream that no longer exists. The column goes with it, and the
+  // rows with the column: a device that had read to sequence 4,000 of the old log has
+  // read nothing at all of the new one, and must start from the beginning.
+  `ALTER TABLE sync_state DROP COLUMN IF EXISTS remote_seq`,
+  `DELETE FROM sync_state`,
+
+  // The push cursor and the cached master key. One counted batches that are gone; the
+  // other opened them.
+  //
+  // The device token goes with them, which signs this machine out. That looks heavy
+  // handed and is the kind thing to do: the endpoints it was issued for no longer
+  // exist, so keeping it would mean the first pass after the upgrade failing against
+  // a server that cannot answer, and an error banner nobody can act on without
+  // finding the Disconnect button first. Signed out, the app is Local — which is a
+  // state it is designed for — and signing back in hands over everything at once.
+  `DELETE FROM setting WHERE key IN ('syncPushedSeq', 'syncCachedKey', 'syncToken')`,
+
+  // Everything on this machine is now something the server has not been given, which
+  // is exactly true and is the whole of the upgrade: the first pass after signing in
+  // hands over the lot. See `adoptExistingRows()`.
+  `DELETE FROM blob_sync`
 ]

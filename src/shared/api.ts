@@ -371,7 +371,6 @@ export interface ApiMap {
 
   'sync:status': { in: void; out: SyncStatus }
   'sync:signIn': { in: { serverUrl: string }; out: { connected: boolean; handle: string } }
-  'sync:unlock': { in: { passphrase: string }; out: { ok: boolean; reason: string } }
   'sync:nudge': { in: void; out: { show: boolean } }
   'sync:dismissNudge': { in: void; out: { show: boolean } }
   'sync:now': { in: void; out: SyncStatus }

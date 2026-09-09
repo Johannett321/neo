@@ -1,16 +1,21 @@
 import { randomUUID } from 'node:crypto'
-import type { Op, SyncedTable } from '@shared/ops'
-import { TABLES, isSynced, syncableFields } from '@shared/ops'
+import type { RowChange, SyncedTable } from '@shared/tables'
+import { TABLES, isSynced } from '@shared/tables'
 import { q, q1, exec } from './client'
-import * as hlc from './hlc'
+import { announceWrite } from './wake'
 
 /**
  * The only thing in the application that writes a domain table.
  *
- * A click, an assistant tool call, a task created from Claude Desktop and a batch
- * arriving from another device all end up here, which is what makes them the same
+ * A click, an assistant tool call, a task created from Claude Desktop and a row
+ * arriving from the sync server all end up here, which is what makes them the same
  * write rather than four that resemble each other. Everything above this decides
  * *what* to write; this decides whether it wins and puts it down.
+ *
+ * A local write also records that the row has changed, in `sync_dirty`. That happens
+ * whether or not this machine has ever heard of a sync server — Local and synced are
+ * the same code path, and the day somebody signs in, everything they have ever made
+ * is already marked as something to hand over.
  */
 
 /* ------------------------------------------------------------------ *
@@ -24,9 +29,9 @@ const columnCache = new Map<string, Set<string>>()
  * reason `writeCount()` asks whether a statement wrote instead of consulting a list
  * of "the channels that write": a second description of the truth drifts from it.
  *
- * It also gives forward compatibility for nothing: an op from a newer version of Neo
+ * It also gives forward compatibility for nothing: a row from a newer version of Neo
  * mentioning a column this one has never heard of has that field dropped here rather
- * than failing the whole batch.
+ * than failing the whole page.
  */
 export async function columnsOf(table: string): Promise<Set<string>> {
   const hit = columnCache.get(table)
@@ -86,17 +91,16 @@ export const forgetCascades = (): void => {
 /**
  * Walk a row up to the workspace it belongs to.
  *
- * Every synced table reaches one; the workspace is the unit of sync, of encryption
- * and later of sharing, exactly as it is already the unit of isolation on every
- * scoped channel. Resolved *before* a delete, because afterwards there is nothing
- * left to ask.
+ * Every synced table reaches one; the workspace is the unit of sync and later of
+ * sharing, exactly as it is already the unit of isolation on every scoped channel.
+ * Resolved *before* a delete, because afterwards there is nothing left to ask.
  */
 export async function workspaceOf(table: SyncedTable, rowId: string): Promise<string | null> {
   let current: SyncedTable = table
   let id: string | null = rowId
-  // The chain is four deep at its longest (summary_part → recording → meeting →
-  // project → workspace); the guard is for a schema change that accidentally makes
-  // it circular, which should not cost the app its main process.
+  // The chain is four deep at its longest (transcript_cue → recording → meeting →
+  // project → workspace); the guard is for a schema change that accidentally makes it
+  // circular, which should not cost the app its main process.
   for (let hop = 0; hop < 8 && id; hop += 1) {
     const owner = TABLES[current].owner
     if (!owner) return id
@@ -112,41 +116,56 @@ export async function workspaceOf(table: SyncedTable, rowId: string): Promise<st
 }
 
 /* ------------------------------------------------------------------ *
- * Sync metadata
+ * What is waiting to go, and what has gone
  * ------------------------------------------------------------------ */
 
-interface RowState {
-  field_hlc: Record<string, string>
-  deleted_hlc: string | null
-}
-
-async function stateOf(table: string, rowId: string): Promise<RowState | null> {
-  return q1<RowState>(
-    `SELECT field_hlc, deleted_hlc FROM sync_row WHERE table_name = $1 AND row_id = $2`,
-    [table, rowId]
+/**
+ * Mark a row as something the sync server has not been given.
+ *
+ * `changed_at` is taken here rather than read off the row, because most tables have
+ * no `updated_at` of their own and the ones that do mean something slightly different
+ * by it. It is this machine's wall clock, and it is the whole of the conflict rule.
+ */
+async function markDirty(
+  table: string,
+  rowId: string,
+  workspaceId: string | null,
+  deleted: boolean,
+  at: Date
+): Promise<void> {
+  await exec(
+    `INSERT INTO sync_dirty (table_name, row_id, workspace_id, changed_at, deleted)
+          VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (table_name, row_id) DO UPDATE
+        SET workspace_id = COALESCE(EXCLUDED.workspace_id, sync_dirty.workspace_id),
+            changed_at   = EXCLUDED.changed_at,
+            deleted      = EXCLUDED.deleted`,
+    [table, rowId, workspaceId, at, deleted]
   )
 }
 
-async function stamp(table: string, rowId: string, fields: string[], at: string): Promise<void> {
-  if (fields.length === 0) return
-  const patch = Object.fromEntries(fields.map((f) => [f, at]))
+async function tombstone(table: string, rowId: string, at: Date): Promise<void> {
   await exec(
-    `INSERT INTO sync_row (table_name, row_id, field_hlc)
-          VALUES ($1, $2, $3::jsonb)
-     ON CONFLICT (table_name, row_id)
-     DO UPDATE SET field_hlc = sync_row.field_hlc || EXCLUDED.field_hlc`,
-    [table, rowId, JSON.stringify(patch)]
-  )
-}
-
-async function tombstone(table: string, rowId: string, at: string): Promise<void> {
-  await exec(
-    `INSERT INTO sync_row (table_name, row_id, deleted_hlc)
-          VALUES ($1, $2, $3)
-     ON CONFLICT (table_name, row_id)
-     DO UPDATE SET deleted_hlc = EXCLUDED.deleted_hlc, field_hlc = '{}'::jsonb`,
+    `INSERT INTO sync_tombstone (table_name, row_id, deleted_at) VALUES ($1, $2, $3)
+     ON CONFLICT (table_name, row_id) DO UPDATE SET deleted_at = EXCLUDED.deleted_at`,
     [table, rowId, at]
   )
+}
+
+const tombstoneOf = async (table: string, rowId: string): Promise<Date | null> => {
+  const row = await q1<{ deleted_at: Date }>(
+    `SELECT deleted_at FROM sync_tombstone WHERE table_name = $1 AND row_id = $2`,
+    [table, rowId]
+  )
+  return row?.deleted_at ? new Date(row.deleted_at) : null
+}
+
+const dirtyAt = async (table: string, rowId: string): Promise<Date | null> => {
+  const row = await q1<{ changed_at: Date }>(
+    `SELECT changed_at FROM sync_dirty WHERE table_name = $1 AND row_id = $2`,
+    [table, rowId]
+  )
+  return row?.changed_at ? new Date(row.changed_at) : null
 }
 
 /** Every row the database will remove along with this one. */
@@ -217,7 +236,6 @@ async function writeRow(
  * ------------------------------------------------------------------ */
 
 export interface LocalWrite {
-  op: Op | null
   workspaceId: string | null
   row: Record<string, unknown> | null
 }
@@ -225,10 +243,9 @@ export interface LocalWrite {
 /**
  * Insert or update a row because somebody on this machine asked for it.
  *
- * Local writes always win — their stamp is the newest one this device can issue — so
- * there is no last-write-wins comparison on this path. Device-only columns are
- * written to the row and left out of the op, which is how the recording pipeline
- * keeps its state without two Macs racing to transcribe the same segment.
+ * A local write is unconditional — nothing here compares it against anything, because
+ * what is on this screen is what the person is looking at. It is the *server* that
+ * decides a conflict, later, on the timestamp this records.
  */
 export async function putLocal(
   table: SyncedTable,
@@ -245,44 +262,25 @@ export async function putLocal(
     ? await q1<{ id: string }>(`SELECT id FROM ${table} WHERE id = $1`, [rowId])
     : null
   const id = rowId ?? randomUUID()
-  const at = hlc.tick()
+  const at = new Date()
 
   const row = await writeRow(table, id, known, Boolean(existing))
   // Resolved *after* the write: a row that has just been inserted cannot be walked up
-  // to its workspace before it exists, and a batch with no workspace cannot be sent.
-  const workspaceId = await workspaceOf(table, id).catch(() => null)
+  // to its workspace before it exists, and a change with no workspace cannot be sent.
+  const workspaceId = (await workspaceOf(table, id).catch(() => null))
+    ?? (table === 'workspace' ? id : null)
 
-  /*
-   * An insert records the row as it was actually written, not the fields that were
-   * asked for. Columns with volatile defaults — `started_at`, and anything added
-   * later — are resolved by whichever database runs the statement, so replaying an
-   * op that left them out would give the row the day of the replay instead of the
-   * day it happened. Taking them off the RETURNING row makes that correct by
-   * construction rather than by remembering to list them.
-   *
-   * An update records only what it changed, which is what makes last-write-wins
-   * per field mean anything.
-   */
-  const shared = syncableFields(table, existing ? known : (row ?? known))
-  await stamp(table, id, Object.keys(shared), at)
+  await markDirty(table, id, workspaceId, false, at)
 
   // A row that has been deleted and is now being written again by hand is genuinely
   // being recreated, so the tombstone has to go — otherwise this device would refuse
-  // its own row when it came back around from a peer.
-  if (existing === null) {
-    await exec(
-      `UPDATE sync_row SET deleted_hlc = NULL WHERE table_name = $1 AND row_id = $2`,
-      [table, id]
-    )
+  // its own row when it came back around from the server.
+  if (!existing) {
+    await exec(`DELETE FROM sync_tombstone WHERE table_name = $1 AND row_id = $2`, [table, id])
   }
 
-  return {
-    row,
-    workspaceId: workspaceId ?? (table === 'workspace' ? id : null),
-    op: Object.keys(shared).length > 0 || !existing
-      ? { table, rowId: id, kind: 'put', fields: shared, hlc: at }
-      : null
-  }
+  announceWrite()
+  return { row, workspaceId }
 }
 
 /**
@@ -292,8 +290,8 @@ export async function putLocal(
  * `INSERT … ON CONFLICT DO NOTHING RETURNING id`, and that single statement *is* the
  * claim — splitting it into a read and a write would let two runs both decide they
  * were first, which is the duplicate-notification failure the table exists to
- * prevent. So the write happens as it always did, and the op is taken from the row
- * afterwards rather than built before it.
+ * prevent. So the write happens as it always did, and it is marked afterwards rather
+ * than as part of it.
  *
  * Do not reach for this to avoid converting a call site. It is only correct where
  * atomicity genuinely forbids going through `putLocal()`.
@@ -301,165 +299,164 @@ export async function putLocal(
 export async function stampExisting(
   table: SyncedTable,
   rowId: string,
-  /** Adoption passes the genesis stamp; a real write leaves this off. */
-  stampAt?: string
+  /** Adoption passes the row's own age; a real write leaves this off. */
+  changedAt?: Date
 ): Promise<LocalWrite> {
   const row = await q1<Record<string, unknown>>(`SELECT * FROM ${table} WHERE id = $1`, [rowId])
-  if (!row) return { row: null, workspaceId: null, op: null }
+  if (!row) return { row: null, workspaceId: null }
 
-  const at = stampAt ?? hlc.tick()
-  const shared = syncableFields(table, row)
-  await stamp(table, rowId, Object.keys(shared), at)
-  return {
-    row,
-    workspaceId: await workspaceOf(table, rowId).catch(() => null),
-    op: { table, rowId, kind: 'put', fields: shared, hlc: at }
-  }
+  const workspaceId = (await workspaceOf(table, rowId).catch(() => null))
+    ?? (table === 'workspace' ? rowId : null)
+  await markDirty(table, rowId, workspaceId, false, changedAt ?? new Date())
+  announceWrite()
+  return { row, workspaceId }
 }
 
 /** Delete a row because somebody on this machine asked for it. */
 export async function deleteLocal(table: SyncedTable, rowId: string): Promise<LocalWrite> {
-  const at = hlc.tick()
-  const workspaceId = await workspaceOf(table, rowId).catch(() => null)
+  const at = new Date()
+  const workspaceId = (await workspaceOf(table, rowId).catch(() => null))
+    ?? (table === 'workspace' ? rowId : null)
 
   /*
-   * Only the parent delete becomes an op — a cascade is a deterministic function of
-   * the schema, so every device performs the same one itself. The tombstones,
-   * though, have to cover everything the cascade takes with it: a note created on
-   * the phone while this Mac deleted its project would otherwise arrive later and
-   * fail its foreign key, or worse, be inserted under a project that no longer
-   * exists anywhere else.
+   * A cascade is deterministic, so every device performs the same one itself — but
+   * the deletes that travel have to cover everything it takes with it. A note created
+   * on the phone while this Mac deleted its project would otherwise arrive later and
+   * fail its foreign key, or worse, be inserted under a project that no longer exists
+   * anywhere else.
    */
   const doomed = await descendants(table, rowId)
   await exec(`DELETE FROM ${table} WHERE id = $1`, [rowId])
-  await tombstone(table, rowId, at)
-  for (const child of doomed) await tombstone(child.table, child.id, at)
 
-  return {
-    row: null,
-    workspaceId,
-    op: { table, rowId, kind: 'delete', hlc: at }
+  await tombstone(table, rowId, at)
+  await markDirty(table, rowId, workspaceId, true, at)
+  for (const child of doomed) {
+    await tombstone(child.table, child.id, at)
+    if (isSynced(child.table)) await markDirty(child.table, child.id, workspaceId, true, at)
   }
+
+  announceWrite()
+  return { row: null, workspaceId }
 }
 
 /* ------------------------------------------------------------------ *
- * A write that arrived from somewhere else
+ * A write that arrived from the sync server
  * ------------------------------------------------------------------ */
 
 /**
- * Apply one op that came off a transport.
+ * Apply one row that came off the wire.
  *
  * The differences from a local write are exactly two: it is resolved against what is
- * already here (last-write-wins, per field, on hlc order), and it produces no new op
- * — it is already in the log it arrived on. Everything else, including the derived
- * effects that happen above this, is identical.
+ * already here, and it does not mark anything dirty — the server already has it.
+ * Everything else is identical.
  */
 export type ApplyResult =
   /** Written. */
   | 'applied'
-  /** Correctly ignored: it lost on the clock, or its row is tombstoned. */
+  /** Correctly ignored: this device holds something newer. */
   | 'skipped'
   /**
-   * Its parent is not here. Possibly not yet — a stream can deliver a child before
-   * the row it hangs off, and an adopted row carries the oldest stamp there is even
-   * when what it references was written later. The caller retries these once the
-   * rest of the pass has landed; one that still cannot be placed is describing a
-   * branch that is genuinely gone.
+   * Its parent is not here. Possibly not yet — a page is ordered by revision, so the
+   * row a change refers to is normally earlier in it, but the very first pull of a
+   * workspace can straddle a page boundary. The caller retries these once the rest of
+   * the page has landed; one that still cannot be placed is describing a branch that
+   * is genuinely gone.
    */
   | 'deferred'
 
-export async function applyRemoteOp(op: Op): Promise<ApplyResult> {
-  if (!isSynced(op.table)) return 'skipped'
-  hlc.observe(op.hlc)
+export async function applyRemote(change: RowChange): Promise<ApplyResult> {
+  if (!isSynced(change.table)) return 'skipped'
+  const changedAt = new Date(change.changedAt)
 
-  const state = await stateOf(op.table, op.rowId)
+  /*
+   * Unsent local work is the one thing that beats the server, and only when it is
+   * genuinely newer. This is the case where a laptop has been closed for a week: it
+   * has edits nobody has seen, and the pull that reaches it must not quietly discard
+   * them before they have had their chance to be pushed.
+   */
+  const mine = await dirtyAt(change.table, change.id)
+  if (mine && mine >= changedAt) return 'skipped'
 
-  if (op.kind === 'delete') {
-    // A delete only loses to a write that is genuinely newer than it, which is the
-    // case where somebody edited the row after it was deleted elsewhere.
-    const doomed = await descendants(op.table, op.rowId)
-    await exec(`DELETE FROM ${op.table} WHERE id = $1`, [op.rowId])
-    await tombstone(op.table, op.rowId, op.hlc)
-    for (const child of doomed) await tombstone(child.table, child.id, op.hlc)
+  if (change.deleted) {
+    const doomed = await descendants(change.table, change.id)
+    await exec(`DELETE FROM ${change.table} WHERE id = $1`, [change.id])
+    await tombstone(change.table, change.id, changedAt)
+    for (const child of doomed) await tombstone(child.table, child.id, changedAt)
+    await exec(`DELETE FROM sync_dirty WHERE table_name = $1 AND row_id = $2`,
+      [change.table, change.id])
     return 'applied'
   }
 
-  // The row was deleted after this write was made. Nothing here resurrects it.
-  if (state?.deleted_hlc && state.deleted_hlc > op.hlc) return 'skipped'
+  // The row was deleted here after this write was made. Nothing resurrects it.
+  const dead = await tombstoneOf(change.table, change.id)
+  if (dead && dead > changedAt) return 'skipped'
 
-  const columns = await columnsOf(op.table)
-  const winning: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(op.fields ?? {})) {
+  const columns = await columnsOf(change.table)
+  const fields: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(change.fields)) {
     if (k === 'id' || !columns.has(k)) continue
-    if (hlc.isNewer(op.hlc, state?.field_hlc?.[k])) winning[k] = revive(k, v)
+    fields[k] = revive(k, v)
   }
 
   const exists = await q1<{ id: string }>(
-    `SELECT id FROM ${op.table} WHERE id = $1`,
-    [op.rowId]
+    `SELECT id FROM ${change.table} WHERE id = $1`, [change.id]
   )
-  if (exists && Object.keys(winning).length === 0) return 'skipped'
 
   try {
-    await writeRow(op.table, op.rowId, winning, Boolean(exists))
+    await writeRow(change.table, change.id, fields, Boolean(exists))
   } catch (error) {
     /*
-     * The parent is gone on this device and its delete has not reached us yet — the
-     * op is describing a branch that is already dead. Dropping it is correct; when
-     * the parent's delete arrives the tombstone will make that permanent.
-     */
-    /*
-     * Two ways an op can describe a row that cannot exist here, both of which mean
-     * the same thing: the write it depends on is not here (yet, or ever).
+     * Two ways a row can describe something that cannot exist here, both of which
+     * mean the same thing: the row it depends on is not here (yet, or ever).
      *
      *   23503 — its parent is gone on this device.
-     *   23502 — it is a partial update for a row that was never created here, so
+     *   23502 — it is a partial row for something that was never created here, so
      *           there is nothing to merge it into and its NOT NULL columns are empty.
-     *
-     * Dropping is correct rather than merely convenient. A hybrid logical clock
-     * guarantees the creating op is causally earlier than any edit of it, so an edge
-     * that reaches this line is describing a branch that is already dead.
      */
     if (isForeignKeyViolation(error) || isMissingRequired(error)) return 'deferred'
     throw error
   }
 
-  await stamp(op.table, op.rowId, Object.keys(winning), op.hlc)
-  if (state?.deleted_hlc) {
-    await exec(
-      `UPDATE sync_row SET deleted_hlc = NULL WHERE table_name = $1 AND row_id = $2`,
-      [op.table, op.rowId]
-    )
+  // Applied cleanly, so whatever this device was still holding for that row has been
+  // superseded — and the tombstone, if there was one, has lost.
+  await exec(`DELETE FROM sync_dirty WHERE table_name = $1 AND row_id = $2`,
+    [change.table, change.id])
+  if (dead) {
+    await exec(`DELETE FROM sync_tombstone WHERE table_name = $1 AND row_id = $2`,
+      [change.table, change.id])
   }
   return 'applied'
 }
 
 /**
- * Apply a run of ops, retrying the ones whose parent had not arrived yet.
+ * Apply a page of changes, retrying the ones whose parent had not arrived yet.
  *
  * Passes until nothing more lands. Bounded by the fact that each pass must place at
- * least one op to earn another, so the worst case is the depth of the schema rather
- * than anything unbounded. What is left after that is dropped: an op that cannot be
- * placed once everything else has been is describing a row whose branch is gone.
+ * least one row to earn another, so the worst case is the depth of the schema rather
+ * than anything unbounded. What is left after that is dropped: a row that cannot be
+ * placed once everything else has been is describing a branch that is gone.
  */
-export async function applyRun(ops: Op[]): Promise<{ applied: number; dropped: number }> {
-  let queue = ops
+export async function applyRun(
+  changes: RowChange[]
+): Promise<{ applied: number; dropped: number }> {
+  let queue = changes
   let applied = 0
 
   while (queue.length > 0) {
-    const deferred: Op[] = []
-    for (const op of queue) {
-      const result = await applyRemoteOp(op)
+    const deferred: RowChange[] = []
+    for (const change of queue) {
+      const result = await applyRemote(change)
       if (result === 'applied') applied += 1
-      else if (result === 'deferred') deferred.push(op)
+      else if (result === 'deferred') deferred.push(change)
     }
     if (deferred.length === queue.length) {
-      // `PM_TRACE_DROPS=1` names them. Worth having: an op that cannot be placed
-      // once everything else has been is either a dead branch or a bug in what a
-      // table declares as its owner, and the two look identical from the outside.
+      // `PM_TRACE_DROPS=1` names them. Worth having: a row that cannot be placed once
+      // everything else has been is either a dead branch or a bug in what a table
+      // declares as its owner, and the two look identical from the outside.
       if (process.env.PM_TRACE_DROPS) {
-        for (const op of deferred) {
-          console.error('DROP', op.table, op.rowId, JSON.stringify(op.fields).slice(0, 200))
+        for (const change of deferred) {
+          console.error('DROP', change.table, change.id,
+            JSON.stringify(change.fields).slice(0, 200))
         }
       }
       return { applied, dropped: deferred.length }

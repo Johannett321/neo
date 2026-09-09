@@ -1,6 +1,6 @@
 import { addDays, exec, q1, today } from '../db/client'
 import { mirrorAll } from './markdown'
-import { adoptExistingRows } from '../db/oplog'
+import { adoptExistingRows } from '../db/dirty'
 import { ensureColumns } from './board'
 import { ensureMe } from './profile'
 
