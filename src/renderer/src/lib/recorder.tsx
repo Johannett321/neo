@@ -122,6 +122,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
    */
   const changing = useRef(false)
   const analyser = useRef<AnalyserNode | null>(null)
+  /**
+   * Where the audio graph's clock stood the last time the watchdog looked. A graph
+   * whose clock is not moving is recording nothing, whatever its sources say — the
+   * mixed track is generated and always "live", and a `MediaRecorder` over a stalled
+   * graph sits at `recording` producing no data. It happened: an output device that
+   * would not run left the timer counting and the file at zero bytes.
+   */
+  const clockSeen = useRef(-1)
 
   /**
    * Chunks are appended in the order they were recorded, always. Two overlapping
@@ -329,6 +337,29 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
     const settings = await call('settings:get')
 
     /*
+     * The microphone first, and the order is load-bearing.
+     *
+     * A Bluetooth headset is one device wearing two modes: high-quality playback, and a
+     * lower-rate headset link that is the only mode with a microphone in it. Opening
+     * the microphone is what makes it switch — and it cannot switch while the tap's
+     * aggregate device is holding its output side at the playback rate. Started the
+     * other way round, the microphone track ended the instant it opened, the audio
+     * graph's clock stood still, and the recorder wrote nothing at all until some other
+     * application played sound and shook the device loose; a meeting recorded through
+     * AirPods was fine, and a note dictated alone in a quiet room was empty.
+     */
+    const microphone = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        // Left on for the microphone, and it earns its keep twice over here: it is
+        // what stops the far end coming back a second time through the speakers.
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    })
+    mic.current = microphone
+
+    /*
      * The computer's own sound, by whichever of the two routes works.
      *
      * The native tap is tried first and is the one that needs nothing installed: a
@@ -354,22 +385,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
       }
     }
 
-    const microphone = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        // Left on for the microphone, and it earns its keep twice over here: it is
-        // what stops the far end coming back a second time through the speakers.
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    })
-    mic.current = microphone
     system.current = computer.stream
 
     /*
      * The graph runs at the tap's own rate when there is one, so its samples go in
      * without being resampled — the microphone is resampled into the context by the
-     * browser either way, and of the two it is the one that can afford it.
+     * browser either way, and of the two it is the one that can afford it. The rate
+     * is the one the helper reports once its device has settled, which for a headset
+     * that has just switched mode is the headset rate and not the playback one.
      */
     const context = taps ? new AudioContext({ sampleRate: taps.sampleRate }) : new AudioContext()
     await context.resume().catch(() => {})
@@ -405,6 +428,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
     bus.connect(meter)
 
     audio.current = context
+    clockSeen.current = -1
     analyser.current = meter
     stream.current = destination.stream
     const both = Boolean(taps) || Boolean(computer.stream)
@@ -425,6 +449,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
     analyser.current = null
     void audio.current?.close().catch(() => {})
     audio.current = null
+    clockSeen.current = -1
   }, [])
 
   /**
@@ -603,8 +628,13 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
         system.current !== null &&
         !system.current.getAudioTracks().some((t) => t.readyState === 'live')
       const inactive = !recorder.current || recorder.current.state === 'inactive'
+      // Two seconds is several hundred render quanta; a clock that has not moved at
+      // all in that time is a graph that is not rendering, and nothing is being kept.
+      const clock = audio.current?.currentTime ?? -1
+      const stalled = clock >= 0 && clock === clockSeen.current
+      clockSeen.current = clock
 
-      if (!stream.current || !micLive || systemDied || inactive) {
+      if (!stream.current || !micLive || systemDied || inactive || stalled) {
         void reconnect()
         return
       }

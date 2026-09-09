@@ -12,6 +12,7 @@ const KIND_ICON: Record<SearchHit['kind'], IconName> = {
   task: 'check',
   person: 'people',
   note: 'note',
+  canvas: 'canvas',
   decision: 'decision',
   journal: 'journal'
 }
@@ -21,6 +22,7 @@ const KIND_LABEL: Record<SearchHit['kind'], string> = {
   task: 'Item',
   person: 'Person',
   note: 'Note',
+  canvas: 'Canvas',
   decision: 'Decision',
   journal: 'Journal'
 }

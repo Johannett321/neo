@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from 'react'
-import { classify, fenced, inlines, type Block } from '@/lib/markdown'
+import { calloutOf, classify, fenced, inlines, tableAt, type Block, type CalloutType } from '@/lib/markdown'
 import { openExternal } from '@/lib/api'
+import { Icon, type IconName } from './Icon'
 
 /**
  * Markdown, rendered.
@@ -25,7 +26,13 @@ function Inline({ source }: { source: string }): React.JSX.Element {
       {inlines(source).map((part, i) => {
         switch (part.kind) {
           case 'strong':
-            return <strong key={i}>{part.body}</strong>
+            return part.open === '***' ? (
+              <strong key={i}>
+                <em>{part.body}</em>
+              </strong>
+            ) : (
+              <strong key={i}>{part.body}</strong>
+            )
           case 'em':
             return <em key={i}>{part.body}</em>
           case 'strike':
@@ -44,9 +51,17 @@ function Inline({ source }: { source: string }): React.JSX.Element {
              * worse than the alt text, which is what they get instead.
              */
             return part.href.startsWith('neo-media://') ? (
-              <img key={i} src={part.href} alt={part.body} className="md-inline-image" />
+              <img key={i} src={part.href} alt={part.body} className="md-inline-image" style={sized(part.size)} />
             ) : (
               <Fragment key={i}>{part.body || part.href}</Fragment>
+            )
+          case 'wiki':
+            // A link between notes. Nothing here can follow it — this is the
+            // assistant's panel and a changelog — so it is drawn as one and left.
+            return (
+              <span key={i} className="wk">
+                {part.body}
+              </span>
             )
           case 'link':
             return (
@@ -59,7 +74,7 @@ function Inline({ source }: { source: string }): React.JSX.Element {
                   openExternal(part.href)
                 }}
               >
-                {part.body}
+                {part.body || part.href}
               </a>
             )
           default:
@@ -70,44 +85,27 @@ function Inline({ source }: { source: string }): React.JSX.Element {
   )
 }
 
-/** A row of pipes, split into cells, with the outer pipes discarded. */
-function cells(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\||\|$/g, '')
-    .split('|')
-    .map((c) => c.trim())
+/** `|300` or `|300x200` on an image, as the style it means. */
+function sized(size: string): React.CSSProperties | undefined {
+  if (!size) return undefined
+  const [w, h] = size.split('x')
+  return { width: `${w}px`, height: h ? `${h}px` : undefined, maxHeight: 'none' }
 }
 
-const isDivider = (line: string): boolean => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line) && line.includes('-')
-
-/**
- * A table is the one thing the editor's parser has no opinion about, because you do
- * not type one into a note. Assistants produce them constantly, so they are detected
- * here, where they are only ever read.
- */
-function tableAt(lines: string[], start: number): { rows: string[][]; align: string[]; end: number } | null {
-  const header = lines[start]
-  const divider = lines[start + 1]
-  if (!header?.includes('|') || !divider || !isDivider(divider)) return null
-
-  const columns = cells(header)
-  const align = cells(divider).map((c) =>
-    c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left'
-  )
-  if (columns.length < 2 || align.length !== columns.length) return null
-
-  const rows = [columns]
-  let end = start + 2
-  while (end < lines.length && lines[end].includes('|') && lines[end].trim()) {
-    const row = cells(lines[end])
-    // Ragged rows are padded rather than rejected: a table with one short line is
-    // still a table, and dropping it would lose the content it was carrying.
-    while (row.length < columns.length) row.push('')
-    rows.push(row.slice(0, columns.length))
-    end++
-  }
-  return { rows, align, end }
+const CALLOUT_ICON: Record<CalloutType, IconName> = {
+  note: 'note',
+  abstract: 'journal',
+  info: 'info',
+  todo: 'checkbox',
+  tip: 'sparkle',
+  success: 'check',
+  question: 'question',
+  warning: 'alert',
+  failure: 'close',
+  danger: 'danger',
+  bug: 'bug',
+  example: 'board',
+  quote: 'quote'
 }
 
 interface ListItem {
@@ -117,8 +115,9 @@ interface ListItem {
 
 function List({ items, ordered }: { items: ListItem[]; ordered: boolean }): React.JSX.Element {
   const Tag = ordered ? 'ol' : 'ul'
+  const start = ordered ? Number(items[0]?.block.ordinal.slice(0, -1)) || 1 : undefined
   return (
-    <Tag>
+    <Tag start={start}>
       {items.map((item, i) => (
         <li key={i} className={item.block.kind === 'task' ? 'task' : undefined}>
           {item.block.kind === 'task' && (
@@ -144,7 +143,7 @@ function List({ items, ordered }: { items: ListItem[]; ordered: boolean }): Reac
  * machinery to render one more level of nesting nobody asks for.
  */
 export function Markdown({ source, className = '' }: { source: string; className?: string }): React.JSX.Element {
-  const lines = source.replace(/\r\n/g, '\n').split('\n')
+  const lines = source.replace(/\r\n?/g, '\n').split('\n')
   const inCode = fenced(lines)
   const out: ReactNode[] = []
 
@@ -174,9 +173,10 @@ export function Markdown({ source, className = '' }: { source: string; className
       continue
     }
 
-    const table = tableAt(lines, i)
+    const table = tableAt(lines, i, inCode)
     if (table) {
-      const [head, ...body] = table.rows
+      const rows = lines.slice(table.start, table.end).map(cellsOf)
+      const [head, ...body] = [rows[0], ...rows.slice(2)]
       out.push(
         <div className="tablewrap" key={out.length}>
           <table>
@@ -192,9 +192,9 @@ export function Markdown({ source, className = '' }: { source: string; className
             <tbody>
               {body.map((row, y) => (
                 <tr key={y}>
-                  {row.map((c, x) => (
+                  {head.map((_, x) => (
                     <td key={x} style={{ textAlign: table.align[x] as 'left' }}>
-                      <Inline source={c} />
+                      <Inline source={row[x] ?? ''} />
                     </td>
                   ))}
                 </tr>
@@ -231,6 +231,21 @@ export function Markdown({ source, className = '' }: { source: string; className
       while (i < lines.length && !inCode[i] && classify(lines[i], false).kind === 'quote') {
         body.push(classify(lines[i], false).text)
         i++
+      }
+      const callout = calloutOf(body[0])
+      if (callout) {
+        // Folded shut with `-`: the title stands for the whole thing, as Obsidian
+        // draws it. Nothing here can open it, so it is a summary rather than a toggle.
+        out.push(
+          <aside key={out.length} className="callout" data-callout={callout.type}>
+            <div className="callout-head">
+              <Icon name={CALLOUT_ICON[callout.type]} size={15} />
+              <Inline source={callout.title || callout.typed} />
+            </div>
+            {callout.fold !== '-' && body.length > 1 && <Markdown source={body.slice(1).join('\n')} />}
+          </aside>
+        )
+        continue
       }
       out.push(
         <blockquote key={out.length}>
@@ -282,11 +297,11 @@ export function Markdown({ source, className = '' }: { source: string; className
      * This is what lets a changelog be a page of screenshots and a note be a note,
      * out of the same syntax and with nothing to choose between.
      */
-    const figure = /^!\[([^\]]*)\]\((neo-media:\/\/[^)\s]+)\)$/.exec(text.trim())
+    const figure = /^!\[([^\]]*?)(?:\|(\d+(?:x\d+)?))?\]\((neo-media:\/\/[^)\s]+)\)$/.exec(text.trim())
     out.push(
       figure ? (
         <figure key={out.length} className="md-figure">
-          <img src={figure[2]} alt={figure[1]} />
+          <img src={figure[3]} alt={figure[1]} style={figure[2] ? { ...sized(figure[2]), maxWidth: '100%' } : undefined} />
           {figure[1] && <figcaption>{figure[1]}</figcaption>}
         </figure>
       ) : (
@@ -298,4 +313,13 @@ export function Markdown({ source, className = '' }: { source: string; className
   }
 
   return <div className={`md ${className}`}>{out}</div>
+}
+
+/** A row of pipes, split into cells, with the outer pipes discarded. */
+function cellsOf(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, '')
+    .split('|')
+    .map((c) => c.trim())
 }

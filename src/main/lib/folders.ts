@@ -60,21 +60,25 @@ export async function contentFolderTree(projectId: string): Promise<ContentFolde
        JOIN tree ON f.parent_id = tree.id
        WHERE tree.depth < ${MAX_FOLDER_DEPTH}
      )
-     SELECT tree.*,
-            COALESCE(n.item_count, 0) + COALESCE(m.item_count, 0) AS item_count,
-            COALESCE(s.folder_count, 0) AS folder_count
-     FROM tree
-     LEFT JOIN LATERAL (
-       SELECT count(*)::int AS item_count FROM note WHERE note.folder_id = tree.id
-     ) n ON true
-     LEFT JOIN LATERAL (
-       SELECT count(*)::int AS item_count FROM meeting WHERE meeting.folder_id = tree.id
-     ) m ON true
-     LEFT JOIN LATERAL (
-       SELECT count(*)::int AS folder_count
-       FROM content_folder f WHERE f.parent_id = tree.id
-     ) s ON true
-     ORDER BY kind, sort_key`,
+      SELECT tree.*,
+             COALESCE(n.item_count, 0) + COALESCE(m.item_count, 0) AS item_count,
+             COALESCE(c.item_count, 0) AS canvas_count,
+             COALESCE(s.folder_count, 0) AS folder_count
+      FROM tree
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS item_count FROM note WHERE note.folder_id = tree.id
+      ) n ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS item_count FROM meeting WHERE meeting.folder_id = tree.id
+      ) m ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS item_count FROM canvas WHERE canvas.folder_id = tree.id
+      ) c ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS folder_count
+        FROM content_folder f WHERE f.parent_id = tree.id
+      ) s ON true
+      ORDER BY kind, sort_key`,
     [projectId]
   )
   return rows.map(mapContentFolderView)

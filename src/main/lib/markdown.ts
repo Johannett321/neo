@@ -1,6 +1,6 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { markdownDir, q } from '../db/client'
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
+import { attachmentDir, markdownDir, q } from '../db/client'
 
 /**
  * The database is the index; these files are the durable copy.
@@ -78,7 +78,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
    * it and put it back only at the next full rebuild. Deleting the four the writer
    * owns clears the same stale notes and keeps its hands off everything else.
    */
-  for (const sub of ['notes', 'decisions', 'meetings', 'journal']) {
+  for (const sub of ['notes', 'decisions', 'meetings', 'journal', 'media']) {
     await rmTree(join(dir, sub))
   }
   await mkdir(dir, { recursive: true })
@@ -86,7 +86,29 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
 
   const filedIn = await folderPaths(project.id)
 
-  const [links, cast, notes, decisions, journal, tasks, meetings] = await Promise.all([
+  /*
+   * The pictures, copied in beside the writing and referred to by relative path, so
+   * a note that shows a screenshot here shows it in Obsidian too. The app's own
+   * `neo-media://image/…` URL means nothing outside the app; on disk it becomes
+   * `../media/<file>` from wherever the note is filed.
+   */
+  const pictures = await q<{ path: string }>('SELECT path FROM note_image WHERE project_id = $1', [project.id])
+  if (pictures.length) await mkdir(join(dir, 'media'), { recursive: true })
+  for (const picture of pictures) {
+    try {
+      await copyFile(join(attachmentDir(), picture.path), join(dir, 'media', picture.path))
+      files++
+    } catch {
+      // Not on this disk yet — the reconciler has not fetched it. The note still
+      // refers to it, and the next rebuild picks it up.
+    }
+  }
+  const localise = (body: string, from: string): string =>
+    body.replace(/\(neo-media:\/\/image\/([^)\s]+)\)/g, (_, file: string) =>
+      `(${relative(from, join(dir, 'media', decodeURIComponent(file))).split('\\').join('/')})`
+    )
+
+  const [links, cast, notes, canvases, decisions, journal, tasks, meetings] = await Promise.all([
     q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order', [project.id]),
     q<any>(
       `SELECT m.role, m.note, p.name, p.org, p.how_to_work_with
@@ -95,6 +117,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
       [project.id]
     ),
     q<any>('SELECT * FROM note WHERE project_id = $1 ORDER BY created_at DESC', [project.id]),
+    q<any>('SELECT * FROM canvas WHERE project_id = $1 ORDER BY updated_at DESC', [project.id]),
     q<any>('SELECT * FROM decision WHERE project_id = $1 ORDER BY decided_on DESC', [project.id]),
     q<any>('SELECT * FROM journal_entry WHERE project_id = $1 ORDER BY occurred_on DESC', [project.id]),
     q<any>("SELECT * FROM task WHERE project_id = $1 AND status = 'open' ORDER BY due_date NULLS LAST", [
@@ -166,8 +189,21 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
     for (const n of notes) {
       const into = join(dir, 'notes', ...(filedIn.get(n.folder_id) ?? []))
       await mkdir(into, { recursive: true })
-      const body = `# ${n.title || 'Untitled note'}\n\n_${new Date(n.created_at).toISOString().slice(0, 10)}_\n\n${n.body}\n`
+      const body = `# ${n.title || 'Untitled note'}\n\n_${new Date(n.created_at).toISOString().slice(0, 10)}_\n\n${localise(n.body, into)}\n`
       await writeFile(join(into, `${slug(n.title || 'note')}-${String(n.id).slice(0, 8)}.md`), body, 'utf8')
+      files++
+    }
+  }
+
+  if (canvases.length) {
+    for (const c of canvases) {
+      const into = join(dir, 'notes', ...(filedIn.get(c.folder_id) ?? []))
+      await mkdir(into, { recursive: true })
+      await writeFile(
+        join(into, `${slug(c.title || 'canvas')}-${String(c.id).slice(0, 8)}.canvas`),
+        JSON.stringify(c.data, null, 2),
+        'utf8'
+      )
       files++
     }
   }
@@ -213,7 +249,7 @@ async function writeProjectFiles(root: string, project: any): Promise<number> {
         `**Present:** ${m.attendee_names || '_Not recorded._'}`,
         '',
         '## Notes',
-        m.body || '_None._',
+        m.body ? localise(m.body, into) : '_None._',
         '',
         '## To do',
         m.todo_lines || '_None._',
@@ -284,11 +320,48 @@ LEFT JOIN LATERAL (
 ) fp ON true
 `
 
-/** Refresh one project's folder. Called after any mutation that changes its prose. */
-export async function mirrorProject(projectId: string): Promise<void> {
+/**
+ * Refresh one project's folder. Called after any mutation that changes its prose.
+ *
+ * Coalesced rather than immediate: the note page saves itself every 800 ms of
+ * typing, and rewriting a project's whole mirror — every note deleted and written
+ * back — on each of those was a delete-and-create storm for anything watching the
+ * folder, a hundred times over in a twenty-minute session. So a project's rewrite
+ * waits `MIRROR_DELAY_MS` for the burst to end, and a burst that never ends is still
+ * written at that interval. `flushMirrors()` runs on the way out of the app.
+ */
+export const MIRROR_DELAY_MS = 2000
+
+const waiting = new Map<string, NodeJS.Timeout>()
+/** How many rewrites have actually happened. Verify counts them. */
+export const mirrorStats = { writes: 0 }
+
+export function mirrorProject(projectId: string): Promise<void> {
+  if (!waiting.has(projectId)) {
+    const timer = setTimeout(() => {
+      waiting.delete(projectId)
+      void mirrorNow(projectId).catch((error: unknown) => console.error('Could not mirror project:', error))
+    }, MIRROR_DELAY_MS)
+    // Never the reason the process is still alive.
+    timer.unref?.()
+    waiting.set(projectId, timer)
+  }
+  return Promise.resolve()
+}
+
+async function mirrorNow(projectId: string): Promise<void> {
   const rows = await q<any>(`${PROJECT_ROW} WHERE p.id = $1`, [projectId])
   if (!rows[0]) return
+  mirrorStats.writes++
   await writeProjectFiles(markdownDir(), rows[0])
+}
+
+/** Every rewrite still waiting, done now. */
+export async function flushMirrors(): Promise<void> {
+  const due = [...waiting.keys()]
+  for (const timer of waiting.values()) clearTimeout(timer)
+  waiting.clear()
+  for (const projectId of due) await mirrorNow(projectId)
 }
 
 /** Full rebuild — also clears folders left behind by renames and deletions. */
@@ -297,6 +370,9 @@ export async function mirrorAll(): Promise<{ files: number; dir: string }> {
   await rmTree(root)
   await mkdir(root, { recursive: true })
   const projects = await q<any>(`${PROJECT_ROW} ORDER BY w.sort_order, p.name`)
+  for (const timer of waiting.values()) clearTimeout(timer)
+  waiting.clear()
+  mirrorStats.writes++
   let files = 0
   for (const p of projects) files += await writeProjectFiles(root, p)
   await writeFile(

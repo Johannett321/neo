@@ -4,7 +4,7 @@ import type {
 } from '@shared/types'
 import { daysSince, q, q1 } from '../db/client'
 import {
-  mapActivity, mapCast, mapCollapsible, mapCollapsibleView, mapColumn, mapDecision, mapFolder,
+  mapActivity, mapCanvas, mapCast, mapCollapsible, mapCollapsibleView, mapColumn, mapDecision, mapFolder,
   mapFolderView, mapJournal, mapLink, mapNote, mapProject
 } from '../db/map'
 import { meetingViews, projectSummaries, projectSummary, taskViews } from '../db/queries'
@@ -193,7 +193,7 @@ export function registerProjectHandlers(): void {
 
     await ensureColumns(id)
     const [
-      columns, tasks, cast, links, notes, meetings, decisions, journal, activity, contentFolders
+      columns, tasks, cast, links, notes, canvases, meetings, decisions, journal, activity, contentFolders
     ] = await Promise.all([
       q<any>('SELECT * FROM board_column WHERE project_id = $1 ORDER BY sort_order, created_at', [id]),
       taskViews('t.project_id = $1', [id]),
@@ -206,6 +206,7 @@ export function registerProjectHandlers(): void {
       ),
       q<any>('SELECT * FROM link WHERE project_id = $1 ORDER BY sort_order, label', [id]),
       q<any>('SELECT * FROM note WHERE project_id = $1 ORDER BY is_pinned DESC, updated_at DESC', [id]),
+      q<any>('SELECT * FROM canvas WHERE project_id = $1 ORDER BY is_pinned DESC, updated_at DESC', [id]),
       meetingViews('m.project_id = $1', [id]),
       q<any>('SELECT * FROM decision WHERE project_id = $1 ORDER BY decided_on DESC, created_at DESC', [id]),
       q<any>('SELECT * FROM journal_entry WHERE project_id = $1 ORDER BY occurred_on DESC, created_at DESC', [id]),
@@ -221,6 +222,7 @@ export function registerProjectHandlers(): void {
       cast: await Promise.all(cast.map(async (c) => mapCast(c, await readIcon(c.avatar_path ?? '')))),
       links: links.map(mapLink),
       notes: notes.map(mapNote),
+      canvases: canvases.map(mapCanvas),
       meetings,
       // One walk of the tree, split by the list each folder belongs to — the two never
       // see each other, so neither screen has to remember to filter.

@@ -29,6 +29,7 @@ import { MeetingWriter } from '@/routes/project/MeetingWriter'
 import { ProjectSettings } from '@/routes/project/ProjectSettings'
 import { ProjectDecisions, ProjectNotes, ProjectPeople } from '@/routes/project/ProjectNotes'
 import { NoteWriter } from '@/routes/project/NoteWriter'
+import { CanvasEditor } from '@/routes/project/CanvasEditor'
 import { NewProjectModal, ProjectsPage } from '@/routes/Projects'
 import { SettingsPage } from '@/routes/Settings'
 import { WorkspaceSettings } from '@/routes/WorkspaceSettings'
@@ -57,8 +58,9 @@ function Shell(): React.JSX.Element {
   // not evaluate its right-hand side once the left is true, and a `useMatch` skipped
   // on some renders and not others is a hook that changes position in the list.
   const inNote = useMatch('/projects/:id/notes/:noteId')
+  const inCanvas = useMatch('/projects/:id/canvas/:canvasId')
   const inMeeting = useMatch('/projects/:id/meetings/:meetingId')
-  const writing = Boolean(inNote || inMeeting)
+  const writing = Boolean(inNote || inCanvas || inMeeting)
   const navigate = useNavigate()
   const location = useLocation()
   const scroller = useRef<HTMLElement>(null)
@@ -198,6 +200,7 @@ function Shell(): React.JSX.Element {
                 </Route>
                 {/* Outside the project layout on purpose: the writers have no heading. */}
                 <Route path="/projects/:id/notes/:noteId" element={<NoteWriter />} />
+                <Route path="/projects/:id/canvas/:canvasId" element={<CanvasEditor />} />
                 <Route path="/projects/:id/meetings/:meetingId" element={<MeetingWriter />} />
                 <Route path="/people" element={<PeoplePage />} />
                 <Route path="/people/:id" element={<PersonPage />} />

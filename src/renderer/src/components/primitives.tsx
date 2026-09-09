@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon, type IconName } from './Icon'
 import { initials } from '@/lib/format'
 
@@ -200,7 +201,12 @@ export function Modal({
   }, [open, confirming, attemptClose])
 
   if (!open) return null
-  return (
+  /*
+   * Through a portal to the body rather than in place: a `backdrop-filter` or a
+   * `transform` on any ancestor makes that ancestor the containing block for a fixed
+   * element, and a dialog opened from a blurred toolbar was centred in the toolbar.
+   */
+  return createPortal(
     <div
       data-modal-backdrop
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/25 p-8 backdrop-blur-[2px]"
@@ -282,6 +288,7 @@ export function Modal({
         )}
       </div>
     </div>
+    , document.body
   )
 }
 
@@ -382,7 +389,8 @@ export function ConfirmDialog({
   }, [open, onCancel])
 
   if (!open) return null
-  return (
+  // The same portal as `Modal`, for the same reason: this one opens from toolbars.
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-8 backdrop-blur-[2px]"
       onMouseDown={(e) => {
@@ -407,6 +415,7 @@ export function ConfirmDialog({
         </div>
       </div>
     </div>
+    , document.body
   )
 }
 

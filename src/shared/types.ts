@@ -33,7 +33,7 @@ export interface BoardColumn {
 export type LinkKind =
   | 'repo' | 'board' | 'design' | 'docs' | 'chat' | 'drive' | 'staging' | 'other'
 export type ActivityKind =
-  | 'task_created' | 'task_completed' | 'note' | 'decision' | 'journal' | 'meeting'
+  | 'task_created' | 'task_completed' | 'note' | 'canvas' | 'decision' | 'journal' | 'meeting'
   | 'state_updated' | 'person_added' | 'link_added' | 'project_created'
 
 export interface Workspace {
@@ -490,6 +490,8 @@ export interface ContentFolderView extends ContentFolder {
   depth: number
   /** Notes or meetings filed directly in it — not counting its subfolders'. */
   itemCount: number
+  /** Canvases filed directly in it; they share note folders but are counted separately. */
+  canvasCount: number
   /** Folders filed directly in it. */
   folderCount: number
 }
@@ -504,6 +506,19 @@ export interface Note {
   isPinned: boolean
   createdAt: string
   updatedAt: string
+}
+
+/** A picture in a note, stored beside the database and served over `neo-media://`. */
+export interface NoteImage {
+  id: string
+  projectId: string
+  name: string
+  mime: string
+  bytes: number
+  /** Filename inside attachments/. The renderer never sees a path it can read. */
+  path: string
+  /** What the note's Markdown refers to it by. */
+  url: string
 }
 
 export interface Meeting {
@@ -544,6 +559,70 @@ export interface MeetingView extends Meeting {
   todos: MeetingTodo[]
   /** Still owed. The meeting list shows this without you having to open anything. */
   openTodos: number
+}
+
+/* ------------------------------------------------------------------ canvas */
+
+/**
+ * A visual note: an infinite board of text cards, groups and the lines between them,
+ * stored in the open JSON Canvas format so the file can be opened in Obsidian as well
+ * as in Neo.
+ */
+export type CanvasNodeType = 'text' | 'group'
+
+export type CanvasSide = 'top' | 'right' | 'bottom' | 'left'
+
+export type CanvasEnd = 'none' | 'arrow'
+
+export interface CanvasNodeBase {
+  id: string
+  type: CanvasNodeType
+  x: number
+  y: number
+  width: number
+  height: number
+  color?: string
+}
+
+export interface CanvasTextNode extends CanvasNodeBase {
+  type: 'text'
+  text: string
+}
+
+export interface CanvasGroupNode extends CanvasNodeBase {
+  type: 'group'
+  label?: string
+}
+
+export type CanvasNode = CanvasTextNode | CanvasGroupNode
+
+export interface CanvasEdge {
+  id: string
+  fromNode: string
+  fromSide?: CanvasSide
+  fromEnd?: CanvasEnd
+  toNode: string
+  toSide?: CanvasSide
+  toEnd?: CanvasEnd
+  label?: string
+  color?: string
+}
+
+export interface JSONCanvas {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+}
+
+export interface Canvas {
+  id: string
+  projectId: string
+  title: string
+  data: JSONCanvas
+  /** Canvases are filed in the same folders as notes, because they live beside them. */
+  folderId: string | null
+  isPinned: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 /* ------------------------------------------------------------------ recording */
@@ -712,11 +791,12 @@ export interface ProjectDetail {
   links: Link[]
   notes: Note[]
   meetings: MeetingView[]
+  canvases: Canvas[]
   /*
    * The two folder trees, fetched with everything else rather than through a list
    * channel of their own: a project's folders are as much part of opening a project as
-   * its notes are, and there are tens of them, not thousands. Depth-first, in the
-   * order the pages draw them, each already carrying its path.
+   * its notes are, and there are tens of them, not thousands. Depth-first, in the order
+   * the pages draw them, each already carrying its path.
    */
   noteFolders: ContentFolderView[]
   meetingFolders: ContentFolderView[]
@@ -753,7 +833,7 @@ export interface TodayView {
 }
 
 export interface SearchHit {
-  kind: 'project' | 'task' | 'person' | 'note' | 'decision' | 'journal'
+  kind: 'project' | 'task' | 'person' | 'note' | 'canvas' | 'decision' | 'journal'
   id: string
   projectId: string | null
   title: string

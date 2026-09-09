@@ -103,6 +103,19 @@ const api = {
       ipcRenderer.off('system-audio', listener)
     }
   },
+  /**
+   * The device under the tap changed its rate — a Bluetooth headset finishing its
+   * switch to headset mode, an output device swapped mid-meeting. Every chunk after
+   * this is at the new rate, and the graph has to be told or it plays them wrong.
+   */
+  onSystemAudioFormat(callback: (sampleRate: number) => void): () => void {
+    const listener = (_event: unknown, payload: { sampleRate: number }): void =>
+      callback(payload.sampleRate)
+    ipcRenderer.on('system-audio-format', listener)
+    return () => {
+      ipcRenderer.off('system-audio-format', listener)
+    }
+  },
   /** The helper stopped on its own — a device change, a crash. Mic-only from here. */
   onSystemAudioStopped(callback: () => void): () => void {
     const listener = (): void => callback()

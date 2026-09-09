@@ -662,10 +662,42 @@ rewritten: every character is still in the note, and the file on disk is the fil
 typed.
 
 Lists carry themselves on when you press Return and end when you press it on an empty
-one, Backspace where the words start unmakes the item rather than chewing through `- `,
-`⇥` and `⇧⇥` nest and lift, `⌘B` / `⌘I` / `⌘⇧K` wrap the selection, checkboxes tick when
-clicked, and pasting a URL over selected text turns it into a link. Copying takes the
-Markdown rather than what happens to be on screen.
+one — a nested one lifts a level first. Backspace where the words start lifts a nested
+item and unmakes a top-level one rather than chewing through `- `; `⇥` and `⇧⇥` nest and
+lift, and `⇥` only nests where there is something to nest under. A nested item steps in
+with its bullet, and a faint guide runs down from each level to what sits inside it.
+A numbered list numbers itself: insert an item in the middle, delete one, move one, and
+the run it is in is renumbered — only that run, never the rest of the note, and it keeps
+whatever number it started at. `⌥↑` / `⌥↓` move a line, or a list item together with
+everything nested under it.
+
+`⌘B` / `⌘I` / `⌘E` / `⌘⇧X` bold, italicise, code and strike the selection, or the word
+under the caret when nothing is selected; `⌘⇧K` makes a link, `⌘⏎` turns the line into a
+checkbox or ticks it, `⌘⇧7` / `⌘⇧8` / `⌘⇧9` make a numbered list, a bulleted one or a
+quote, and `⌘⌥1`–`⌘⌥6` set a heading level. Checkboxes tick when clicked, and pasting
+a URL over selected text turns it into a link. Copying takes the Markdown rather than
+what happens to be on screen, and a page copied from a browser pastes as Markdown —
+headings, lists, links and emphasis — rather than as its words alone.
+
+**Notes link to each other** with `[[double brackets]]`, Obsidian's syntax, so the
+file on disk is the same file. Type `[[` and the notes in this project are offered;
+`⌘`-click a link to open the note, or, if there is no note by that name yet, to start
+one with that title. The bottom of a note lists the notes that link to it, read off
+their text rather than kept anywhere, so it is never out of date. Links stay inside the
+project: a note is filed under one, and this is not the screen that mixes them.
+
+A quote that begins `> [!warning] Careful` is a **callout** — a tinted box with an icon
+and a title, in Obsidian's vocabulary of kinds (`note`, `tip`, `warning`, `danger`,
+`question`, `success` and the rest). A row of pipes with a `|---|` line under it is a
+**table**, drawn as one while you type in it: `⇥` moves to the next cell, `⇥` past the
+last cell and Return both add a row.
+
+**A picture goes in by dropping it on the page or pasting it** — a screenshot straight
+from `⌘⇧4` works. It is stored beside the database like an icon, the note carries only
+its address, and dragging the picture's corner writes the width into the Markdown as
+`![shot|300](…)`, the way Obsidian writes one. In the Markdown mirror the picture is
+copied in beside the notes and the note points at it by relative path, so it shows
+there too.
 
 Under it, this is a `contenteditable`, because a textarea has one font for the whole
 box. Every edit is intercepted before the browser can apply it, applied to the Markdown

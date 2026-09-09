@@ -82,8 +82,21 @@ const PATHS = {
   /** A picture, for the banner across the top of Today. */
   image: 'M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM4 16l4.5-4.5 4 4 3-3L20 16M9.3 9.3h.01',
   /** Somewhere to take hold of a row you are about to drag. */
-  grip: 'M9.5 6h.01M14.5 6h.01M9.5 12h.01M14.5 12h.01M9.5 18h.01M14.5 18h.01'
+  grip: 'M9.5 6h.01M14.5 6h.01M9.5 12h.01M14.5 12h.01M9.5 18h.01M14.5 18h.01',
+  /** A visual canvas: cards on an infinite board, connected by lines. */
+  canvas: 'M4 5.5h6v6H4zM14 12.5h6v6h-6zM10 8.5h4M14 8.5v4',
+  /** One thing, and the copy of it behind. */
+  copy: 'M9 9a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2h-8a2 2 0 01-2-2V9zM5 15a2 2 0 01-2-2V5a2 2 0 012-2h8a2 2 0 012 2',
+  /* The callout kinds a note can be marked with. */
+  info: 'M12 11v5M12 8h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  question: 'M9.6 9.3a2.5 2.5 0 014.9.6c0 1.7-2.5 2-2.5 3.6M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  quote: 'M6 15.5a3 3 0 003-3V8H4.5v4.5H8M15 15.5a3 3 0 003-3V8h-4.5v4.5H17',
+  danger: 'M8.5 3h7l5 5v7l-5 5h-7l-5-5V8l5-5zM12 8v4.5M12 16h.01',
+  bug: 'M8.5 11a3.5 3.5 0 017 0v4a3.5 3.5 0 01-7 0v-4zM10 8.5a2 2 0 014 0M4.5 12h4M15.5 12h4M6 17.5l2.5-1.8M18 17.5l-2.5-1.8M6 7.5l2.5 1.8M18 7.5l-2.5 1.8'
 } as const
+
+/** The path behind a name, for the one place that draws an icon without React. */
+export const iconPath = (name: IconName): string => PATHS[name]
 
 interface IconProps {
   name: IconName

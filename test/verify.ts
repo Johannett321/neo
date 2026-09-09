@@ -37,8 +37,10 @@ import { resolveTemperature } from '../src/shared/formats'
 import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
 import { recapMarkdown } from '../src/main/lib/recording/summarise'
 import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
-import { helperPath } from '../src/main/lib/recording/systemAudio'
-import { addDays, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
+import { helperPath, parseHelperLine } from '../src/main/lib/recording/systemAudio'
+import { addDays, attachmentDir, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
+import { pruneNoteImages } from '../src/main/lib/images'
+import { flushMirrors, mirrorStats } from '../src/main/lib/markdown'
 import {
   adoptExistingRows, allBatches, deviceId, ingest, initOplog, onLocalWrite, pending, replayLog,
   SYNC_ORDER
@@ -355,6 +357,45 @@ async function main(): Promise<void> {
   ok('and the workspace is back to no collapsibles at all',
      (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
 
+  /* -------------------------------------------------------------- adoption order */
+
+  /*
+   * A project can reference its folder and collapsible. When existing rows are taken
+   * into the log, the referenced rows must be emitted first: a project batch applied
+   * before its folder batch defers, and because sync applies one batch at a time the
+   * deferral becomes a drop.
+   */
+  const adoptWsId = randomUUID()
+  const adoptFolderId = randomUUID()
+  const adoptProjectId = randomUUID()
+  await exec(
+    `INSERT INTO workspace (id, name, color) VALUES ($1, 'Adopt order', '#6366f1')`,
+    [adoptWsId]
+  )
+  await exec(
+    `INSERT INTO project_folder (id, workspace_id, name, sort_order) VALUES ($1, $2, 'Adopted folder', 0)`,
+    [adoptFolderId, adoptWsId]
+  )
+  await exec(
+    `INSERT INTO project (id, workspace_id, name, folder_id, status, summary) VALUES ($1, $2, 'Adopted project', $3, 'active', '')`,
+    [adoptProjectId, adoptWsId, adoptFolderId]
+  )
+  await adoptExistingRows()
+  const folderSeq = await q1<{ seq: string }>(
+    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project_folder'
+     ORDER BY seq DESC LIMIT 1`
+  )
+  const projectSeq = await q1<{ seq: string }>(
+    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project'
+     ORDER BY seq DESC LIMIT 1`
+  )
+  ok('adoption emits folders before the projects that point at them',
+     folderSeq !== undefined && projectSeq !== undefined && Number(folderSeq.seq) < Number(projectSeq.seq),
+     `folder=${folderSeq?.seq} project=${projectSeq?.seq}`)
+
+  // Clean up so later workspace-counting tests are not thrown off.
+  await call('workspace:delete', { id: adoptWsId })
+
   /*
    * Arranging the cards by hand. Zero means nobody has said, so a workspace nobody
    * has dragged anything in is ordered exactly as it always was; the first drop is
@@ -500,6 +541,85 @@ async function main(): Promise<void> {
      afterOther.activity.filter((a: any) => a.kind === 'note').map((a: any) => a.summary).join(' | '))
   await call('note:delete', { id: draft.id })
   await call('note:delete', { id: other.id })
+
+  /* ----------------------------------------------------------- pictures in notes */
+
+  // One transparent pixel. The bytes go to attachments/, the row to the log, and
+  // the note carries only the URL — which is what the mirror later turns into a path.
+  const PIXEL =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const picture = await call('noteImage:save', {
+    projectId: checkout.id,
+    file: { name: 'shot.png', mime: 'image/png', data: PIXEL }
+  })
+  ok('a picture dropped into a note is stored and given an app URL',
+     picture.url === `neo-media://image/${picture.path}` && existsSync(join(attachmentDir(), picture.path)),
+     picture.url)
+  ok('anything that is not a picture is refused',
+     await threw(() => call('noteImage:save', {
+       projectId: checkout.id, file: { name: 'x.txt', mime: 'text/plain', data: 'aGk=' }
+     }), 'pictures'))
+  const illustrated = await call('note:save', {
+    projectId: checkout.id, title: 'With a picture', body: `Look:\n\n![shot|300](${picture.url})\n`
+  })
+  const unused = await call('noteImage:save', {
+    projectId: checkout.id,
+    file: { name: 'unused.png', mime: 'image/png', data: PIXEL }
+  })
+  ok('a picture nothing refers to yet is left alone', (await pruneNoteImages()) === 0)
+  await exec("UPDATE note_image SET created_at = now() - interval '2 days' WHERE id = $1", [unused.id])
+  ok('after a day it is swept, and the one a note shows is kept',
+     (await pruneNoteImages()) === 1 &&
+       !existsSync(join(attachmentDir(), unused.path)) &&
+       existsSync(join(attachmentDir(), picture.path)))
+
+  // The note page saves every 800 ms of typing; the mirror must not be torn down and
+  // rebuilt on every one of them. It waits for the burst to end, and quitting flushes it.
+  await flushMirrors()
+  const writesBefore = mirrorStats.writes
+  await call('note:save', { id: illustrated.id, body: `Look again:\n\n![shot|300](${picture.url})\n` })
+  await call('note:save', { id: illustrated.id, body: `Look once more:\n\n![shot|300](${picture.url})\n` })
+  ok('a burst of saves does not rewrite the mirror on each one', mirrorStats.writes === writesBefore)
+  await flushMirrors()
+  ok('the rewrite happens once the burst is over', mirrorStats.writes === writesBefore + 1,
+     `${writesBefore} -> ${mirrorStats.writes}`)
+  {
+    const projectDir = join((await call('settings:get')).markdownDir, 'Day job', 'Checkout rewrite')
+    const noteFile = join(projectDir, 'notes', `with-a-picture-${illustrated.id.slice(0, 8)}.md`)
+    ok('the mirror copies the picture beside the notes and points the note at it',
+       existsSync(join(projectDir, 'media', picture.path)) &&
+         readFileSync(noteFile, 'utf8').includes(`![shot|300](../media/${picture.path})`),
+       noteFile)
+  }
+
+  const flow = await call('canvas:save', {
+    projectId: checkout.id,
+    title: 'Flow',
+    data: {
+      nodes: [
+        { id: 'a', type: 'text', text: 'Start', x: 0, y: 0, width: 250, height: 60, color: 'red' },
+        { id: 'b', type: 'text', text: 'End', x: 300, y: 0, width: 250, height: 60 },
+        { id: 'g', type: 'group', label: 'Scope', x: -20, y: -20, width: 600, height: 120, color: 'blue' }
+      ],
+      edges: [{ id: 'e1', fromNode: 'a', fromSide: 'right', toNode: 'b', toSide: 'left', label: 'Next' }]
+    }
+  })
+  ok('a canvas can be saved', flow.title === 'Flow' && flow.data.nodes.length === 3)
+  const group = flow.data.nodes.find((n: any) => n.type === 'group')
+  const edge = flow.data.edges[0]
+  ok('canvas nodes keep their color and edges keep their labels',
+     flow.data.nodes[0].color === 'red' && group?.color === 'blue' && edge?.label === 'Next')
+  const withCanvas = await call('project:get', { id: checkout.id })
+  ok('it appears on the project', withCanvas.canvases.some((c: any) => c.id === flow.id))
+  ok('creating a canvas logs it',
+     withCanvas.activity.some((a: any) => a.kind === 'canvas' && a.summary === 'Canvas: Flow'))
+  await call('canvas:save', { id: flow.id, title: 'Flowchart', data: flow.data })
+  const afterRename = await call('project:get', { id: checkout.id })
+  ok('renaming a canvas updates the existing activity line',
+     afterRename.activity.filter((a: any) => a.kind === 'canvas').length === 1 &&
+     afterRename.activity.some((a: any) => a.summary === 'Canvas: Flowchart'))
+  await call('canvas:delete', { id: flow.id })
+  ok('a canvas can be deleted', !(await call('project:get', { id: checkout.id })).canvases.some((c: any) => c.id === flow.id))
 
   const todoColumn = detail.columns[0]
   const doingColumn = detail.columns[1]
@@ -650,6 +770,18 @@ async function main(): Promise<void> {
   ok('and the folder counts what is filed in it',
      (await call('project:get', { id: filingProject.id })).noteFolders
        .find((f: any) => f.id === interviews.id).itemCount === 1)
+
+  const filedCanvas = await call('canvas:save', {
+    projectId: filingProject.id,
+    title: 'Interview map',
+    data: { nodes: [{ id: 'c1', type: 'text', text: 'Topic', x: 0, y: 0, width: 250, height: 60 }], edges: [] },
+    folderId: interviews.id
+  })
+  ok('a canvas can be filed in a note folder', filedCanvas.folderId === interviews.id)
+  const folderCounts = (await call('project:get', { id: filingProject.id })).noteFolders
+    .find((f: any) => f.id === interviews.id)
+  ok('and the folder counts it separately from notes',
+     folderCounts.itemCount === 1 && folderCounts.canvasCount === 1)
 
   const filedMeeting = await call('meeting:save', {
     projectId: filingProject.id, title: 'Steering #1', folderId: steering.id
@@ -1022,6 +1154,24 @@ async function main(): Promise<void> {
   ok('and finds the helper by looking for the file rather than by asking if it is packaged',
      process.platform !== 'darwin' || existsSync(helperPath()) === (await call('systemAudio:available')).available,
      helperPath() || '(no helper built)')
+
+  /*
+   * The rate the helper's bytes are at is read off what it reports, and a change of
+   * rate under a running tap is an event of its own rather than a restart. A
+   * Bluetooth headset drops from 48 kHz to 24 kHz the moment its microphone is
+   * opened; audio labelled with the old rate plays back at double speed.
+   */
+  {
+    const ready = parseHelperLine('{"type":"ready","sampleRate":24000,"channels":1,"format":"s16le"}')
+    const moved = parseHelperLine('{"type":"format","sampleRate":48000}')
+    const bare = parseHelperLine('{"type":"ready"}')
+    ok('the helper\'s rate is read off its own report, and a change of rate is its own event',
+       ready?.type === 'ready' && ready.sampleRate === 24000 &&
+       moved?.type === 'format' && moved.sampleRate === 48000 &&
+       bare?.type === 'ready' && bare.sampleRate === 48000 &&
+       parseHelperLine('not json at all') === null &&
+       parseHelperLine('{"type":"error","message":"no"}')?.type === 'error')
+  }
 
   // What a recording listens to is about this machine, not about a working life, so
   // it lives in app settings beside the theme rather than on the workspace.
@@ -1738,11 +1888,24 @@ async function main(): Promise<void> {
      await threw(() => tool('update_folder').summary({ folder: 'Somewhere else' }, dayJobCtx),
                  'No folder in this workspace'))
 
+  const mirrorCanvas = await call('canvas:save', {
+    projectId: checkout.id,
+    title: 'Process flow',
+    data: {
+      nodes: [{ id: 'm1', type: 'text', text: 'Step one', x: 0, y: 0, width: 250, height: 60 }],
+      edges: []
+    }
+  })
+
   const md = await call('settings:exportMarkdown')
   ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
   const filedOverview = join((await call('settings:get')).markdownDir,
                              'Day job', 'Clients', 'Acme', 'Internal tooling', '_overview.md')
   ok('a filed project is mirrored inside its folders on disk', existsSync(filedOverview), filedOverview)
+  const canvasFile = join((await call('settings:get')).markdownDir,
+                          'Day job', 'Checkout rewrite', 'notes',
+                          `process-flow-${mirrorCanvas.id.slice(0, 8)}.canvas`)
+  ok('a canvas is mirrored as a .canvas file', existsSync(canvasFile), canvasFile)
   const json = await call('settings:exportJson')
   ok('json export writes', typeof json.path === 'string', json.path)
 

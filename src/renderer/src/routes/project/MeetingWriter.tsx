@@ -9,6 +9,7 @@ import { differs, formatBytes, relativeFromIso, todayStr } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { DateField } from '@/components/DateField'
 import { MarkdownEditor } from '@/components/MarkdownEditor'
+import { useImageDrop, useNoteLinks } from '@/lib/noteLinks'
 import { Avatar, ConfirmButton, EmptyState, Field } from '@/components/primitives'
 import { RecorderRail } from '@/components/meeting/RecorderRail'
 import { RecordingPane } from '@/components/meeting/RecordingPane'
@@ -57,6 +58,10 @@ export function MeetingWriter(): React.JSX.Element {
   // The details column is draggable like every other side panel, and remembers where
   // you left it across meetings — it is one column, not one per meeting.
   const panel = useResizablePanel<HTMLElement>('meeting')
+
+  // A write-up links to the project's notes and takes pictures the way a note does.
+  const { linkTargets, openLink } = useNoteLinks(projectId, data?.notes ?? [], null, '')
+  const takeImage = useImageDrop(projectId)
 
   // The draft lives here, not in the query cache: every save invalidates everything,
   // and a refetch must never overwrite what is being typed.
@@ -364,6 +369,9 @@ export function MeetingWriter(): React.JSX.Element {
                 autoFocus={meetingId !== 'new'}
                 placeholder="What was actually said, including the part that was awkward."
                 className="min-h-[60vh] px-0.5"
+                linkTargets={linkTargets}
+                onOpenLink={openLink}
+                onImage={takeImage}
               />
             </div>
           )}

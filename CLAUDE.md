@@ -459,6 +459,25 @@ content: their presence is what proves the ops were *applied* and not merely cop
   workspace the flow creates falsifies its own condition: without the latch the screen
   unmounts mid-save and the app appears behind it. Nothing is written until the last
   button, so abandoning the flow leaves nothing behind.
+- **A picture in a note is a row and a file, and nothing points at the row.**
+  `note_image` is scoped to the *project* — a note being written for the first time has
+  no id yet — and holds the uuid filename the bytes were stored under in `attachments/`,
+  which is what makes it a blob the sync reconciler can name. The note's Markdown refers
+  to it by `neo-media://image/<file>`, served by `recording/media.ts` only for a file a
+  row names. Because the reference lives in prose, `lib/images.ts`'s launch sweep is
+  what deletes: a row no note or meeting in its project mentions, after a day's grace
+  for a row that synced ahead of the note that mentions it. The mirror copies the file
+  into the project's `media/` and rewrites the address to a relative path, so Obsidian
+  shows it. `![alt|300](…)` is the width, Obsidian's way, and the only size there is.
+- **`[[Links]]` between notes resolve by title, inside one project, and are never
+  stored.** Backlinks are computed in the renderer from the bodies `project:get` already
+  returns (`lib/noteLinks.ts`); there is no link table to keep right. The editor is
+  handed the titles it may complete to and a callback for ⌘-click, and knows nothing
+  about notes otherwise.
+- **The mirror is coalesced, not immediate.** `mirrorProject()` waits `MIRROR_DELAY_MS`
+  for a burst of autosaves to end; `flushMirrors()` runs on the way out, and
+  `settings:exportMarkdown` still rebuilds everything at once. `verify.ts` counts
+  rewrites through `mirrorStats`.
 - **Every side panel resizes through one hook.** `lib/resize.tsx` — `useResizablePanel`
   and `PanelResizeHandle` — and the bounds for each one live in `src/shared/panels.ts`,
   never in the component. The panel's own edge is what a drag measures from, not the
@@ -707,6 +726,23 @@ A **child process, not a native module**, deliberately: a module is compiled aga
 one Electron's headers and a crash in it takes the app down. Stopping is done by
 closing its stdin, never by killing it, because it has to hand the private aggregate
 device back to Core Audio — verify asserts nothing is left behind.
+
+**The microphone is opened before the tap, and the order is load-bearing.** A
+Bluetooth headset is one device in two modes — playback at 48 kHz, and a 24 kHz
+headset link that is the only mode with a microphone — and opening the microphone
+is what makes it switch. It cannot switch while the tap's aggregate device holds its
+output side at the playback rate: started tap-first, the AirPods' microphone track
+ended the instant it opened, the `AudioContext` clock stood still, and the recorder
+wrote nothing until another application played sound and shook the device loose. So
+a meeting recorded fine and a note dictated alone was empty. Two consequences. The
+helper labels its bytes with the *aggregate's* rate read after it has started, not
+the tap's format, and emits a `format` line when that rate moves under it (the
+switch finishes a beat after the aggregate is made); `onSystemAudioFormat` carries
+it to the feed, which stamps each buffer with the rate it arrived at and lets the
+graph resample. And the watchdog checks that `currentTime` has moved since its last
+look, because a stalled graph is the one failure the track states cannot show: the
+mixed track is generated and always "live", and a `MediaRecorder` over it sits at
+`recording` producing nothing.
 
 Two clocks meet in the schedule (the tap runs on the output device, the mic on its
 own), so it is allowed to slip: behind the clock it restarts just ahead of now, and

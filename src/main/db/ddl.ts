@@ -167,6 +167,36 @@ CREATE TABLE IF NOT EXISTS note (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- A visual canvas in the open JSON Canvas format. The data column is the file
+-- contents exactly as Obsidian would write them, so the mirror is a valid \`.canvas\` file
+-- file and a canvas created in Neo opens unchanged elsewhere.
+CREATE TABLE IF NOT EXISTS canvas (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  title      text NOT NULL DEFAULT '',
+  data       jsonb NOT NULL DEFAULT '{"nodes":[],"edges":[]}'::jsonb,
+  folder_id  uuid REFERENCES content_folder(id) ON DELETE SET NULL,
+  is_pinned  boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- A picture dropped into a note. The bytes live in attachments/ beside the chat's
+-- files, under a uuid filename that never changes, so both machines call the same
+-- file by the same name. Scoped to the project rather than the note: a note that has
+-- not been saved yet has no id, and the picture has to go somewhere before it does.
+-- Nothing points at these rows — the note's Markdown does, by filename — and the
+-- launch sweep removes any row no note or meeting in the project still refers to.
+CREATE TABLE IF NOT EXISTS note_image (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  name       text NOT NULL DEFAULT '',
+  mime       text NOT NULL DEFAULT '',
+  bytes      integer NOT NULL DEFAULT 0,
+  path       text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS meeting (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id  uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -509,6 +539,8 @@ CREATE INDEX IF NOT EXISTS idx_task_due           ON task (due_date) WHERE statu
 CREATE INDEX IF NOT EXISTS idx_membership_project ON membership (project_id);
 CREATE INDEX IF NOT EXISTS idx_membership_person  ON membership (person_id);
 CREATE INDEX IF NOT EXISTS idx_note_project       ON note (project_id);
+CREATE INDEX IF NOT EXISTS idx_canvas_project     ON canvas (project_id);
+CREATE INDEX IF NOT EXISTS idx_note_image_project ON note_image (project_id);
 CREATE INDEX IF NOT EXISTS idx_decision_project   ON decision (project_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_project    ON meeting (project_id, occurred_on DESC);
 CREATE INDEX IF NOT EXISTS idx_meeting_todo       ON meeting_todo (meeting_id, sort_order);
@@ -641,6 +673,10 @@ export const MIGRATIONS: string[] = [
   // writing. The table itself is in the DDL above and therefore already exists here.
   `ALTER TABLE note ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES content_folder(id) ON DELETE SET NULL`,
   `ALTER TABLE meeting ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES content_folder(id) ON DELETE SET NULL`,
+  // Canvases are new; the table is created by DDL, but an upgraded database that
+  // already has an older canvas table needs these columns added safely.
+  `ALTER TABLE canvas ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES content_folder(id) ON DELETE SET NULL`,
+  `ALTER TABLE canvas ADD COLUMN IF NOT EXISTS is_pinned boolean NOT NULL DEFAULT false`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS avatar_path text NOT NULL DEFAULT ''`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS is_me boolean NOT NULL DEFAULT false`,
   `ALTER TABLE person ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES workspace(id) ON DELETE CASCADE`,
@@ -753,6 +789,7 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_project_collapsible ON project (collapsible_id)`,
   `CREATE INDEX IF NOT EXISTS idx_collapsible_level ON project_collapsible (workspace_id, folder_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_note_folder ON note (folder_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_canvas_folder ON canvas (folder_id)`,
   `CREATE INDEX IF NOT EXISTS idx_meeting_folder ON meeting (folder_id)`,
   `CREATE INDEX IF NOT EXISTS idx_content_folder_level ON content_folder (project_id, kind, parent_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,

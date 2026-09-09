@@ -35,8 +35,14 @@ FROM decision d JOIN project p ON p.id = d.project_id JOIN workspace w ON w.id =
 WHERE p.workspace_id = $2 AND p.archived_at IS NULL AND (d.title ILIKE $1 OR d.rationale ILIKE $1 OR d.alternatives ILIKE $1)
 
 UNION ALL
+SELECT 'canvas', c.id, c.project_id, COALESCE(NULLIF(c.title, ''), 'Untitled canvas'), p.name,
+       left(c.title, 160), w.color, 5
+FROM canvas c JOIN project p ON p.id = c.project_id JOIN workspace w ON w.id = p.workspace_id
+WHERE p.workspace_id = $2 AND p.archived_at IS NULL AND (c.title ILIKE $1 OR c.data::text ILIKE $1)
+
+UNION ALL
 SELECT 'journal', j.id, j.project_id, j.occurred_on, p.name,
-       left(j.body, 160), w.color, 5
+       left(j.body, 160), w.color, 6
 FROM journal_entry j JOIN project p ON p.id = j.project_id JOIN workspace w ON w.id = p.workspace_id
 WHERE p.workspace_id = $2 AND p.archived_at IS NULL AND j.body ILIKE $1
 
