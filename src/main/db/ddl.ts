@@ -816,6 +816,13 @@ export const MIGRATIONS: string[] = [
   // A cursor into a stream that no longer exists. The column goes with it, and the
   // rows with the column: a device that had read to sequence 4,000 of the old log has
   // read nothing at all of the new one, and must start from the beginning.
+  //
+  // The replacement has to be added here rather than left to the DDL above, and this
+  // is the trap: `CREATE TABLE IF NOT EXISTS sync_state` does nothing at all on a
+  // machine that already has the table, so a column added to that definition never
+  // reaches an upgraded database. It reaches a fresh one, which is why it looks fine
+  // everywhere except on the installs that matter.
+  `ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS remote_rev bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE sync_state DROP COLUMN IF EXISTS remote_seq`,
   `DELETE FROM sync_state`,
 

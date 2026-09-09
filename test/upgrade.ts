@@ -8,6 +8,7 @@ import { applyRun } from '../src/main/db/apply'
 import type { RowChange } from '@shared/tables'
 import { DEVICE_ONLY_COLUMNS } from '@shared/tables'
 import { mapWorkspace } from '../src/main/db/map'
+import * as sync from '../src/main/lib/sync/engine'
 import { ensureMeEverywhere } from '../src/main/lib/profile'
 
 /**
@@ -671,6 +672,25 @@ async function main(): Promise<void> {
 
   ok('and what had already been uploaded is forgotten, so the files are offered again',
      (await q<{ n: number }>('SELECT count(*)::int AS n FROM blob_sync'))[0]?.n === 0)
+
+  /*
+   * The Sync pane, on an upgraded database, and this is the assertion that matters
+   * most in this file.
+   *
+   * `CREATE TABLE IF NOT EXISTS` does *nothing at all* on a machine that already has
+   * the table, so a column added to a table that predates the release never reaches
+   * an upgraded database — only a fresh one. That looks correct everywhere except on
+   * the installs that actually exist. It shipped once: `sync_state.remote_rev` was
+   * added to the DDL and not to the migrations, `status()` selected a column that was
+   * not there, and the pane sat on "Looking…" for ever because the channel threw.
+   *
+   * Asserting the columns would not have caught it, because the code that reads them
+   * is what has to agree. So this calls the real thing.
+   */
+  const pane = await sync.status()
+  ok('the sync pane can be drawn on an upgraded database',
+     pane.serverUrl === 'https://sync.neomoon.io' && pane.pending >= 0,
+     `${pane.phase}, ${pane.pending} waiting, ${pane.workspaces.length} workspace(s)`)
 
   /*
    * The same gate verify.ts holds new work to, held here against work that was
