@@ -93,7 +93,7 @@ export interface SyncConnect {
   deviceName: string
 }
 
-export const DEFAULT_SYNC_SERVER = 'https://neo-sync-production.up.railway.app'
+export const DEFAULT_SYNC_SERVER = 'https://sync.neomoon.io'
 
 /**
  * When Neo mentions syncing to somebody who has never been offered it.
