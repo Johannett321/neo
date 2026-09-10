@@ -787,6 +787,11 @@ sentence or a page with screenshots; both are written as ordinary Markdown in
 [`changelog/`](changelog/), and the release notes on GitHub are generated from the same
 files when the tag is pushed, so a release is described once rather than twice.
 
+Not every version writes one. An entry is for something worth hearing about, and a
+release of fixes and small refinements is not made into one by being written up — so
+that screen stays shut for those versions, which is what keeps it worth reading when it
+does appear.
+
 That screen also asks for three permissions back, and this is the honest cost of a
 project with no Apple Developer certificate. macOS remembers what an app is allowed to
 do against that app's **code signature**, and Neo's is rebuilt from scratch with every
@@ -1097,12 +1102,13 @@ Releases are built by GitHub Actions on native runners for all three platforms �
 `.github/workflows/release.yml`, triggered by pushing a `v*` tag. `ci.yml` runs the
 typecheck and both verify scripts on every push and pull request.
 
-**Cutting a release** means three things in one commit: bump `version` in `package.json`,
-write `changelog/<version>.md`, and tag it. The workflow refuses a tag with no changelog
-file — saying what changed is part of shipping it — and it sets the GitHub release notes
-from that file, so the sentence somebody reads before updating is the one the app shows
-them afterwards. The macOS **zip** goes up alongside the disk image and is not optional:
-it is the file already-installed copies download to replace themselves.
+**Cutting a release** means bumping `version` in `package.json` and tagging it, plus —
+when the release has something in it worth reading about — writing `changelog/<version>.md`
+in the same commit. The workflow sets the GitHub release notes from that file, so the
+sentence somebody reads before updating is the one the app shows them afterwards; with no
+file it falls back to a plain sentence and the app says nothing. The macOS **zip** goes up
+alongside the disk image and is not optional: it is the file already-installed copies
+download to replace themselves.
 
 Settings has no reset button: emptying the database is a thing you do to the data folder,
 not something to leave a click away from your own work.

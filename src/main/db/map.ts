@@ -229,7 +229,8 @@ export const mapTaskView = (r: Row): TaskView => {
     assigneeAvatar: r.assignee_avatar ?? null,
     assigneeColor: r.assignee_color ?? null,
     assigneeIsMe: r.assignee_is_me ?? false,
-    daysUntilDue: r.due_date ? daysBetween(now, r.due_date) : null
+    daysUntilDue: r.due_date ? daysBetween(now, r.due_date) : null,
+    sourceMeetingId: r.source_meeting_id ?? null
   }
 }
 

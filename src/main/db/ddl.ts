@@ -792,6 +792,9 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_meeting_folder ON meeting (folder_id)`,
   `CREATE INDEX IF NOT EXISTS idx_content_folder_level ON content_folder (project_id, kind, parent_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_task_stage ON task (project_id, stage)`,
+  // Read the other way round: given a card, which meeting item promoted it. Every
+  // list of cards in the app asks it once per row, and most rows answer nothing.
+  `CREATE INDEX IF NOT EXISTS idx_meeting_todo_task ON meeting_todo (task_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_person_me ON person (workspace_id) WHERE is_me`,
   // Said once, and once only. Not merely a lookup: the insert that claims a day is
   // what decides whether the notification is shown at all, so this index is the

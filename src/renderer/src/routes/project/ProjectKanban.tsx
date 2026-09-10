@@ -3,6 +3,7 @@ import type { BoardColumn, TaskView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
 import { dueLabel, KIND_LABEL } from '@/lib/format'
+import { useRevealed, useRevealTarget } from '@/lib/reveal'
 import { Icon } from '@/components/Icon'
 import { Avatar, ConfirmButton } from '@/components/primitives'
 import { CreateDialog } from '@/components/CreateDialog'
@@ -14,11 +15,14 @@ const KIND_ICON = { task: 'check', delegated: 'arrowRight' } as const
 function Card({
   task,
   columns,
+  revealed,
   onEdit,
   onDragStart
 }: {
   task: TaskView
   columns: BoardColumn[]
+  /** Arrived here from somewhere that named this card. See `lib/reveal.ts`. */
+  revealed: boolean
   onEdit: () => void
   onDragStart: () => void
 }): React.JSX.Element {
@@ -26,10 +30,12 @@ function Card({
   const setStatus = useApiMutation('task:setStatus')
   const remove = useApiMutation('task:delete')
   const openMenu = useContextMenu()
+  const ref = useRevealTarget<HTMLDivElement>(revealed)
   const overdue = task.daysUntilDue !== null && task.daysUntilDue < 0 && task.status !== 'done'
 
   return (
     <div
+      ref={ref}
       draggable
       onDragStart={onDragStart}
       onClick={onEdit}
@@ -60,7 +66,9 @@ function Card({
           }
         ])
       }
-      className="hairline row-hover cursor-grab rounded-field border bg-base-100 px-2.5 py-2 active:cursor-grabbing"
+      className={`hairline row-hover cursor-grab rounded-field border bg-base-100 px-2.5 py-2 active:cursor-grabbing ${
+        revealed ? 'reveal-flash' : ''
+      }`}
     >
       <div className={`text-[12px] leading-snug ${task.status === 'done' ? 'text-base-content/40' : ''}`}>
         {task.title}
@@ -101,6 +109,9 @@ function Card({
  */
 export function ProjectKanban(): React.JSX.Element {
   const { project, columns, tasks } = useProject()
+  // Read once for the whole board rather than per card: the id is spent on the first
+  // read, and the cards are only being told which of them it was. See `lib/reveal.ts`.
+  const revealed = useRevealed()
   const setColumn = useApiMutation('task:setColumn')
   const saveColumn = useApiMutation('column:save')
   const deleteColumn = useApiMutation('column:delete')
@@ -179,6 +190,7 @@ export function ProjectKanban(): React.JSX.Element {
               onAddTask={() => setAdding(column.id)}
               onDragStartTask={setDragging}
               allColumns={columns}
+              revealed={revealed}
             />
           ))}
 
@@ -263,7 +275,8 @@ function BoardColumnView({
   onEditTask,
   onAddTask,
   onDragStartTask,
-  allColumns
+  allColumns,
+  revealed
 }: {
   column: BoardColumn
   index: number
@@ -284,6 +297,8 @@ function BoardColumnView({
   onAddTask: () => void
   onDragStartTask: (id: string) => void
   allColumns: BoardColumn[]
+  /** Which card the screen was opened to point at, if any. */
+  revealed: string | null
 }): React.JSX.Element {
   const [renaming, setRenaming] = useState(false)
   const openMenu = useContextMenu()
@@ -464,6 +479,7 @@ function BoardColumnView({
             key={task.id}
             task={task}
             columns={allColumns}
+            revealed={revealed === task.id}
             onEdit={() => onEditTask(task)}
             onDragStart={() => onDragStartTask(task.id)}
           />

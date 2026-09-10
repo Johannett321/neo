@@ -105,15 +105,32 @@ export async function projectSummary(id: string): Promise<ProjectSummary | null>
   return list[0] ?? null
 }
 
+/**
+ * Every card carries where it came from, when it came from anywhere.
+ *
+ * A card promoted out of a meeting is the one row in the app whose home is not the
+ * board it is sitting on, and until this join it was only discoverable by reading the
+ * sentence `meetingTodo:promote` writes into `details`. The lateral is the cheap half
+ * of a left join — one indexed lookup per card against `meeting_todo(task_id)`, and
+ * `LIMIT 1` because a card is promoted out of exactly one item.
+ */
 const TASK_SELECT = /* sql */ `
 SELECT t.*, p.name AS project_name, p.color AS project_color, p.workspace_id,
        w.name AS workspace_name, w.color AS workspace_color,
        asg.name AS assignee_name, asg.avatar_path AS assignee_avatar_path,
-       asg.avatar_color AS assignee_color, COALESCE(asg.is_me, false) AS assignee_is_me
+       asg.avatar_color AS assignee_color, COALESCE(asg.is_me, false) AS assignee_is_me,
+       src.meeting_id AS source_meeting_id
 FROM task t
 JOIN project p ON p.id = t.project_id
 JOIN workspace w ON w.id = p.workspace_id
 LEFT JOIN person asg ON asg.id = t.assignee_person_id
+LEFT JOIN LATERAL (
+  SELECT mt.meeting_id
+  FROM meeting_todo mt
+  WHERE mt.task_id = t.id
+  ORDER BY mt.created_at
+  LIMIT 1
+) src ON true
 `
 
 export async function taskViews(

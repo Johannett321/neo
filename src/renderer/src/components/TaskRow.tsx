@@ -3,6 +3,7 @@ import { useContextMenu } from '@/lib/contextMenu'
 import type { TaskView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { dueLabel, formatDate, KIND_LABEL, projectColor } from '@/lib/format'
+import { useReveal } from '@/lib/reveal'
 import { Avatar, Dot } from './primitives'
 import { Icon } from './Icon'
 
@@ -24,6 +25,7 @@ export function TaskRow({
   const setStatus = useApiMutation('task:setStatus')
   const remove = useApiMutation('task:delete')
   const navigate = useNavigate()
+  const reveal = useReveal()
   const openMenu = useContextMenu()
   const done = task.status === 'done'
   // Its project's colour, not its workspace's: every row on a workspace-fenced
@@ -42,6 +44,36 @@ export function TaskRow({
             onSelect: () => setStatus.mutate({ id: task.id, status: done ? 'open' : 'done' })
           },
           { label: 'Edit…', icon: 'edit', disabled: !onEdit, onSelect: () => onEdit?.(task) },
+          'separator',
+          /*
+           * Where this row actually is, rather than which screen it is somewhere on.
+           * A row on Today has been lifted out of its context, and finding it again
+           * afterwards — on a board with forty cards, in a write-up with a dozen
+           * items — was left entirely to the eye. Both of these land on the thing
+           * itself and light it for a beat. See `lib/reveal.ts`.
+           *
+           * The board first because it is where the card lives now: an item promoted
+           * out of a meeting stops being the meeting's to keep, and from then on the
+           * card is what says whether it is done.
+           */
+          {
+            label: 'Show on the board',
+            icon: 'board',
+            onSelect: () => reveal(`/projects/${task.projectId}/kanban`, task.id)
+          },
+          ...(task.sourceMeetingId
+            ? [
+                {
+                  label: 'Show in the meeting',
+                  icon: 'people' as const,
+                  onSelect: () =>
+                    reveal(
+                      `/projects/${task.projectId}/meetings/${task.sourceMeetingId}`,
+                      task.id
+                    )
+                }
+              ]
+            : []),
           {
             label: 'Open project',
             icon: 'projects',

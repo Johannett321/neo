@@ -506,8 +506,12 @@ content: their presence is what proves the ops were *applied* and not merely cop
   a time on the right. Add a pane rather than another section stacked below the last one,
   and if a screen needs more than about five, the screen is doing too much.
 - **The app updates itself, and the changelog ships with it.** `changelog/<version>.md`
-  is written in the same commit as the version bump; the release workflow refuses a tag
-  without one and generates the GitHub release notes from it, so a release is described
+  is written in the same commit as the version bump — but **only for a release worth
+  reading about**: a feature that changes how the app is used, not a fortnight of fixes
+  or one more small thing on a screen that already existed. A version with no file
+  releases perfectly happily; the notes fall back to a plain sentence and *What changed*
+  stays shut, which is what keeps it worth opening when it does. The workflow generates
+  the GitHub release notes from the file when there is one, so a release is described
   once. See *Updating itself* below for why there is no `electron-updater` here and what
   the ad-hoc signature costs on every update.
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
@@ -641,12 +645,19 @@ which writes to stderr even on success) rather than assumed, so a real Developer
 retires the whole permissions panel without a line being touched.
 
 **The changelog is a folder in the repository, bundled and never fetched.** `changelog/`
-holds one Markdown file per version with its illustrations in `media/`; it ships as
-`extraResources` and is found by looking for the file. The screen that reads it appears
-on the first launch after an update, which is exactly the launch most likely to have no
-network. The release workflow generates the GitHub release notes from the same files, so
-a release is described **once**: do not write notes into a tag by hand. A tag with no
-changelog file fails the workflow, and `verify.ts` asserts the same thing a step earlier.
+holds one Markdown file per release worth describing, with its illustrations in
+`media/`; it ships as `extraResources` and is found by looking for the file. The screen
+that reads it appears on the first launch after an update, which is exactly the launch
+most likely to have no network. The release workflow generates the GitHub release notes
+from the same files, so a release is described **once**: do not write notes into a tag
+by hand.
+
+**Not every version has a file, and that is deliberate.** A changelog is for an arrival
+somebody would want to hear about; a release of fixes and refinements is not made into
+one by being written up, and a rule that demanded a page per tag only ever produced
+pages nobody read. `readChangelog()` answers `null`, the workflow falls back to a plain
+sentence, and `WhatsNew` draws nothing at all rather than a heading with nothing under
+it — `verify.ts` asserts that a missing entry is an answer rather than an error.
 
 Illustrations are relative paths rewritten to `neo-media://changelog/…` by the parser,
 because the renderer's CSP allows an image from `self` and a data URL and nothing else,
