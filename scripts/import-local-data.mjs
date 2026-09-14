@@ -38,7 +38,7 @@ const args = Object.fromEntries(
 let copy = ''
 
 const dataDir = (args.data ?? join(homedir(), '.neo')).replace(/^~/, homedir())
-const server = (args.server ?? process.env.NEO_CLOUD_URL ?? 'https://neo-sync-production.up.railway.app').replace(/\/+$/, '')
+const server = (args.server ?? process.env.NEO_CLOUD_URL ?? 'https://sync.neomoon.io').replace(/\/+$/, '')
 const username = args.username
 if (!username) fail('Say which account to import into: --username <your username>')
 if (!existsSync(join(dataDir, 'db'))) fail(`There is no Neo database in ${dataDir}.`)

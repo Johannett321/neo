@@ -16,7 +16,7 @@ import { clearSession, loadSession } from './session'
  * of knowing where that is.
  */
 
-export const DEFAULT_CLOUD_URL = 'https://neo-sync-production.up.railway.app'
+export const DEFAULT_CLOUD_URL = 'https://sync.neomoon.io'
 
 /** Neo Cloud, unless a development run has pointed the app at a server of its own. */
 export const cloudUrl = (): string =>
