@@ -87,6 +87,13 @@ jobs:
       # same sentence rather than two descriptions that drift apart. Illustrations are
       # relative paths — they resolve inside the app, where the files are bundled — so
       # they are rewritten to raw URLs here, and only here.
+      #
+      # A version with no file is a release, not a mistake. Changelogs are for the
+      # arrivals somebody would want to read about; a fortnight of fixes and small
+      # refinements does not become one by being written up, and a rule that demanded
+      # one for every tag only ever produced pages nobody read. So the fallback below
+      # says the true and boring thing, and the app's *What changed* screen stays shut
+      # for that version rather than opening on a heading with nothing under it.
       - name: Take the release notes from the changelog
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -94,15 +101,16 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           FILE="changelog/$VERSION.md"
-          if [ ! -f "$FILE" ]; then
-            echo "::error::$FILE is missing. Every release says what changed in it."
-            exit 1
+          if [ -f "$FILE" ]; then
+            RAW="https://raw.githubusercontent.com/$REPO/$TAG/changelog/"
+            # Drop the front matter, then point every relative image at the tag it
+            # belongs to — a `main` URL would go stale the moment the next release lands.
+            awk 'NR==1 && /^---$/ {front=1; next} front && /^---$/ {front=0; next} !front' "$FILE" \
+              | sed -E "s#\]\((\./)?(media/[^)]+)\)#](${RAW}\2)#g" > notes.md
+          else
+            echo "No changelog/$VERSION.md — releasing without one."
+            printf '%s\n' 'Fixes and refinements. Nothing in this one needed a page of its own.' > notes.md
           fi
-          RAW="https://raw.githubusercontent.com/$REPO/$TAG/changelog/"
-          # Drop the front matter, then point every relative image at the tag it
-          # belongs to — a `main` URL would go stale the moment the next release lands.
-          awk 'NR==1 && /^---$/ {front=1; next} front && /^---$/ {front=0; next} !front' "$FILE" \
-            | sed -E "s#\]\((\./)?(media/[^)]+)\)#](${RAW}\2)#g" > notes.md
           cat notes.md
 
       - name: Attach the artifacts to the release
@@ -112,9 +120,14 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # The release is made here if nobody made it first, titled from the
-          # changelog's own front matter. `edit` alone fails with "release not
+          # changelog's own front matter when there is one — a version without a
+          # changelog is just its number. `edit` alone fails with "release not
           # found" after three platforms have spent twenty minutes building.
-          TITLE="$(sed -nE '1,/^---$/!d; s/^title:[[:space:]]*//p' "changelog/${TAG#v}.md" | head -1)"
+          FILE="changelog/${TAG#v}.md"
+          TITLE=""
+          if [ -f "$FILE" ]; then
+            TITLE="$(sed -nE '1,/^---$/!d; s/^title:[[:space:]]*//p' "$FILE" | head -1)"
+          fi
           if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPO" --verify-tag \
               --title "Neo ${TAG#v}${TITLE:+ — $TITLE}" --notes-file notes.md

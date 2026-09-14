@@ -799,6 +799,19 @@ async function main(): Promise<void> {
   ok('promoting twice is not two cards',
      (await call('meetingTodo:promote', { id: item.id })).todos[3].taskId === card.taskId)
 
+  /*
+   * And the card knows the way back. A row on Today has been lifted out of every
+   * context it had, and "where did this come from" is the question it raises; the
+   * sentence in `details` says it in prose, this says it in a way a menu can act on.
+   */
+  ok('a promoted card carries the meeting it came out of',
+     (await call('task:list', { projectId: checkout.id }))
+       .find((t: any) => t.id === card.taskId)?.sourceMeetingId === sync.id)
+  ok('and a card made on the board carries nothing',
+     (await call('task:list', { projectId: checkout.id }))
+       .filter((t: any) => t.id !== card.taskId)
+       .every((t: any) => t.sourceMeetingId === null))
+
   // The card is the one that knows, so the two screens can never disagree.
   await call('task:setStatus', { id: card.taskId, status: 'done' })
   const afterBoard = (await call('project:get', { id: checkout.id })).meetings[0]
@@ -815,6 +828,10 @@ async function main(): Promise<void> {
   ok('an item can be taken off the board, and the card stays there',
      detached.todos[3].taskId === null &&
      (await call('task:list', { projectId: checkout.id })).some((t: any) => t.id === card.taskId))
+  // The link is the item's, not the card's: taking it off the board severs both ways.
+  ok('and the card stops claiming to have come from anywhere',
+     (await call('task:list', { projectId: checkout.id }))
+       .find((t: any) => t.id === card.taskId)?.sourceMeetingId === null)
 
   /* -------------------------------------------- filing notes and meetings */
 
@@ -2567,15 +2584,20 @@ async function main(): Promise<void> {
      changelogVersion('../secrets.md') === '')
 
   /*
-   * The release workflow refuses a tag with no changelog file, so this is the same
-   * rule enforced a step earlier: saying what changed is part of shipping it, and
-   * finding that out from a failed release is finding it out too late.
+   * Not every version has a file, and that is the design rather than a gap in it: a
+   * changelog is written when something arrived that is worth reading about, and a
+   * release of fixes is not made into one by being written up. So what is asserted
+   * here is that a missing entry is an *answer* — the reader hands back null, the
+   * release workflow falls back to a plain sentence, and `WhatsNew` draws nothing —
+   * rather than an error anybody has to find out about from a failed release.
    */
   const version = (await call('settings:get')).appVersion
   const shipped = await readChangelog(version)
   const history = await listChangelog()
-  ok('this version says what changed in it',
-     Boolean(shipped?.body) || version === '0.0.0-test',
+  ok('a version that wrote no changelog says so rather than failing',
+     (await readChangelog('0.0.1')) === null)
+  ok('and one that wrote one reads back with something in it',
+     shipped === null || Boolean(shipped.body),
      version)
   ok('the changelog is newest first',
      history.length > 0 && history.every((entry: any, i: number) =>

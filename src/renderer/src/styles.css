@@ -317,6 +317,66 @@ summary,
 }
 
 /*
+ * "It is this one."
+ *
+ * Sending somebody to the screen a thing lives on is only half an answer: a board
+ * with forty cards on it, or a write-up with a dozen items in it, has answered the
+ * question "where" and left "which" entirely open. This is the second half — the row
+ * you were sent to holds a ring and a wash of the accent for a beat and then lets go,
+ * so the eye lands on it and the screen goes back to looking like itself.
+ *
+ * Twice, not once and not until dismissed: a single pulse is missable while the
+ * scroll to it is still settling, and anything that stays lit becomes a state
+ * somebody has to clear.
+ *
+ * **`box-shadow` and nothing else, including for the wash.** A border would move the
+ * layout of everything it is applied to by a pixel as it arrives and again as it
+ * goes, and animating `background-color` would fight the card for a property the card
+ * already sets — an animation wins that fight, so the last keyframe would decide what
+ * a card looks like for as long as the class is on it. An inset shadow with a spread
+ * big enough to cover the box paints *over* the background instead, leaving the
+ * card's own colour and its hover exactly where they were.
+ *
+ * No fill mode, for the same reason: when it is over there should be nothing left of
+ * it. Reduced motion gets the answer held still rather than pulsed — what is being
+ * removed is the movement, never the information.
+ */
+@keyframes reveal-flash {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 transparent,
+      inset 0 0 0 999px transparent;
+  }
+  12%,
+  62% {
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--color-primary) 55%, transparent),
+      inset 0 0 0 999px color-mix(in oklch, var(--color-primary) 10%, transparent);
+  }
+  37% {
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--color-primary) 18%, transparent),
+      inset 0 0 0 999px color-mix(in oklch, var(--color-primary) 3%, transparent);
+  }
+}
+.reveal-flash {
+  animation: reveal-flash 1.4s ease-in-out;
+  /* The ring is outside the box, so it must not be painted under the row beside it. */
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-flash {
+    animation: none;
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--color-primary) 55%, transparent),
+      inset 0 0 0 999px color-mix(in oklch, var(--color-primary) 10%, transparent);
+  }
+}
+
+/*
  * The note as you write it.
  *
  * Every one of these rules styles a line of Markdown *in place* — the characters are

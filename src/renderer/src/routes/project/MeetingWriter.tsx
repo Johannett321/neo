@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { CastMember, MeetingTodo, MeetingView } from '@shared/types'
 import { call, useApi, useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
+import { useReveal, useRevealed, useRevealTarget } from '@/lib/reveal'
 import { useToast } from '@/lib/toast'
 import { PanelResizeHandle, useResizablePanel } from '@/lib/resize'
 import { differs, formatBytes, relativeFromIso, todayStr } from '@/lib/format'
@@ -535,6 +536,13 @@ function Todos({
   const [adding, setAdding] = useState('')
   const todos = meeting?.todos ?? []
   const open = todos.filter((t) => !t.done).length
+  /*
+   * Arriving here from a row on Today that came out of this room. What is named is
+   * the *card*, because that is the id Today has to hand and the only one the two
+   * screens share — the item that produced it is the one holding that card's id.
+   * Read once for the list; see `lib/reveal.ts`.
+   */
+  const revealed = useRevealed()
 
   const add = async (): Promise<void> => {
     const text = adding.trim()
@@ -558,7 +566,12 @@ function Todos({
 
       <div className="space-y-0.5">
         {todos.map((todo) => (
-          <TodoRow key={todo.id} todo={todo} projectId={projectId} />
+          <TodoRow
+            key={todo.id}
+            todo={todo}
+            projectId={projectId}
+            revealed={revealed !== null && todo.taskId === revealed}
+          />
         ))}
       </div>
 
@@ -584,12 +597,22 @@ function Todos({
   )
 }
 
-function TodoRow({ todo, projectId }: { todo: MeetingTodo; projectId: string }): React.JSX.Element {
+function TodoRow({
+  todo,
+  projectId,
+  revealed
+}: {
+  todo: MeetingTodo
+  projectId: string
+  /** This is the item the screen was opened to point at. */
+  revealed: boolean
+}): React.JSX.Element {
   const save = useApiMutation('meetingTodo:save')
   const remove = useApiMutation('meetingTodo:delete')
   const promote = useApiMutation('meetingTodo:promote')
   const openMenu = useContextMenu()
-  const navigate = useNavigate()
+  const reveal = useReveal()
+  const ref = useRevealTarget<HTMLDivElement>(revealed)
 
   const [text, setText] = useState(todo.text)
   const focused = useRef(false)
@@ -608,15 +631,22 @@ function TodoRow({ todo, projectId }: { todo: MeetingTodo; projectId: string }):
     if (next !== todo.text) save.mutate({ id: todo.id, text: next })
   }
 
-  const board = `/projects/${projectId}/kanban`
+  // The card, not the board: sending somebody to a board with forty cards on it and
+  // leaving them to find this one is the half-answer this used to give.
+  const showCard = (): void => {
+    if (todo.taskId) reveal(`/projects/${projectId}/kanban`, todo.taskId)
+  }
 
   return (
     <div
-      className="row-hover group flex items-start gap-2 rounded-field px-1.5 py-1"
+      ref={ref}
+      className={`row-hover group flex items-start gap-2 rounded-field px-1.5 py-1 ${
+        revealed ? 'reveal-flash' : ''
+      }`}
       onContextMenu={(e) =>
         openMenu(e, [
           todo.taskId
-            ? { label: 'Show on the board', icon: 'board', onSelect: () => navigate(board) }
+            ? { label: 'Show on the board', icon: 'board', onSelect: showCard }
             : {
                 label: 'Add to the board',
                 icon: 'board',
@@ -681,7 +711,7 @@ function TodoRow({ todo, projectId }: { todo: MeetingTodo; projectId: string }):
         {todo.taskId && (
           <button
             className="mt-0.5 flex items-center gap-1 text-[10.5px] text-base-content/45 transition hover:text-base-content"
-            onClick={() => navigate(board)}
+            onClick={showCard}
           >
             <Icon name="board" size={10} />
             On the board{todo.taskColumn ? ` · ${todo.taskColumn}` : ''}

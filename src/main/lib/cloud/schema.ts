@@ -2288,6 +2288,11 @@ export interface components {
             assigneeIsMe: boolean;
             /** @description Negative is overdue by that many days, zero is today. */
             daysUntilDue: number | null;
+            /**
+             * Format: uuid
+             * @description The meeting this card was put on the board from, when it was. Null for a card made on the board.
+             */
+            sourceMeetingId: string | null;
         };
         Link: {
             /** Format: uuid */

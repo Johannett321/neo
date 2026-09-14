@@ -448,6 +448,14 @@ export interface TaskView extends Task {
   assigneeIsMe: boolean
   /** Negative = overdue by n days, 0 = today, positive = n days away. */
   daysUntilDue: number | null
+  /**
+   * The meeting this card was promoted out of, when it was one. A card carries a
+   * sentence saying where it came from — `meetingTodo:promote` writes it into
+   * `details` — but a sentence is not somewhere you can be taken, and "where did
+   * this come from" is the question actually asked of a row on Today. Null for the
+   * ordinary case of a card that was made on the board.
+   */
+  sourceMeetingId: string | null
 }
 
 /**
