@@ -14,7 +14,7 @@ stakeholders, who is expected to know the state of every one of them on demand.
 [![CI](https://github.com/Johannett321/neo/actions/workflows/ci.yml/badge.svg)](https://github.com/Johannett321/neo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Johannett321/neo?display_name=tag&sort=semver)](https://github.com/Johannett321/neo/releases/latest)
 [![Electron](https://img.shields.io/badge/Electron-44-47848F.svg)](https://www.electronjs.org/)
-[![Local first](https://img.shields.io/badge/data-100%25%20local-success.svg)](#your-data)
+[![Neo Cloud](https://img.shields.io/badge/data-Neo%20Cloud-success.svg)](#your-data)
 
 **[johannett321.github.io/neo](https://johannett321.github.io/neo/)** · [Download](https://github.com/Johannett321/neo/releases/latest)
 
@@ -46,7 +46,7 @@ It answers the three questions no single tool does:
 | **Eight stakeholders, and you cannot remember who approves what.** Who signs off the release, who needs the one-pager first, who says no clearly and who says yes and means maybe. | Every project has a **cast**: who is on it, the roles they actually hold, and a line on how to work with them. Read it in the thirty seconds before the meeting. |
 | **"Why did we decide it that way?"** Six weeks later nobody remembers, so the settled argument gets reopened — usually by whoever lost it. | A **decision log** per project: what was decided, by whom, the reasoning, and **what was rejected**. The rejected option is the half that comes back. |
 | **Meeting actions die in the notes.** You write "Priya: error states by Friday", and it stays a sentence in a document nobody opens again. | Meeting write-ups are prose, and the to-dos inside them **become real items on the board**, owned and dated, counted as still owed until they are done. |
-| **Everything you know about a project is in your head.** Which makes annual leave stressful, handover impossible, and your own memory the single point of failure. | Notes, journal, decisions, links and people live with the project and are mirrored to **plain Markdown on disk**. If you get hit by a bus — or just go on holiday — it is all readable without this app. |
+| **Everything you know about a project is in your head.** Which makes annual leave stressful, handover impossible, and your own memory the single point of failure. | Notes, journal, decisions, links and people live with the project, written in **plain Markdown**, and the whole account exports as JSON whenever you ask. If you get hit by a bus — or just go on holiday — it is all readable without this app. |
 
 Everything is designed around one constraint: *it must survive neglect*. A tool that only
 works while you are diligent about it is abandoned in three weeks, and you go back to the
@@ -96,10 +96,17 @@ from source with `npm run dist`, which is three commands below and produces the 
 does the whole thing itself — no disk image, nothing to drag, no Gatekeeper dance a
 second time. See [Updating itself](#updating-itself).
 
+**Neo keeps your work in Neo Cloud.** The first thing it asks for is an account — a
+username and a password, or a passkey — and everything you put in it is kept there and
+nowhere else. Sign in on a second Mac and it is all there; nothing is left behind on the
+first. Neo Cloud is free, and free includes everything.
+
 ## Run it from source
 
-You need [Node.js](https://nodejs.org/) 22 or newer. That is the whole list — there is no
-database server to install, no Docker, no backend to run in a second terminal.
+You need [Node.js](https://nodejs.org/) 22 or newer. A development build signs in to
+Neo Cloud like a released one; to work against a server of your own, run
+[`neo-sync-server`](https://github.com/Johannett321/neo-sync-server) locally (Java 21 and
+Docker) and start the app with `NEO_CLOUD_URL=http://localhost:8080`.
 
 On a Mac, if the Xcode command line tools are present (`xcode-select --install`) the
 build also compiles `neo-audiotap`, the small Swift helper that lets a recording catch
@@ -112,13 +119,11 @@ cd neo
 npm install && npm run dev
 ```
 
-Clone it, then one line, and the app is open — there is no second terminal, no database
-to provision and no `.env` to fill in. It creates its own embedded PostgreSQL database on
-first launch, inside `~/.neo`. To get a real application bundle
-instead of a development window, run `npm run dist`.
+Clone it, then one line, and the app is open. To get a real application bundle instead of
+a development window, run `npm run dist`.
 
-On that first launch it introduces itself and asks for two things: your name, and one
-area of work to put your projects in. If you would rather look around first, **load the
+On that first launch it asks you to sign in or make an account, then introduces itself and
+asks for two things: your name, and one area of work to put your projects in. If you would rather look around first, **load the
 sample data** from that first panel — a realistic portfolio of projects, people, meetings
 and history, which is what every screenshot below is showing.
 
@@ -210,7 +215,11 @@ to flatten it to grey, and a window you chose in order to see past is exactly th
 that should not do that.
 
 ### The first launch
-The app opens the first time on an introduction rather than a form: what this is for,
+The app opens the first time on the sign-in screen, because your work is kept in your
+account rather than on the machine: sign in, make an account with a username and a
+password, or use a passkey — which opens your browser, so the passkey lives in your
+browser's keychain and every Mac that shares it can sign in. Then it opens on an
+introduction rather than a form: what this is for,
 the three questions above, and the one constraint everything else follows from — it has
 to survive neglect. Only then does it ask for anything, and it asks for two things:
 your name, and one area of work to put your projects in. Nothing is written until the last button,
@@ -228,8 +237,8 @@ them; *Not now* sits beside it and leaves the app silent. Windows and Linux do n
 that question to you, so there the panel does not exist and the rail is three segments
 again.
 
-It is shown **once**, and only to a genuinely new installation — the flow writes down
-that it finished. Deleting or archiving your last workspace a year later gets the short
+It is shown **once**, and only to a genuinely new account — the flow writes down that it
+finished, in the account, so signing in on a second Mac does not introduce the app again. Deleting or archiving your last workspace a year later gets the short
 "create a workspace" screen instead, which is also where the archived ones are listed
 for restoring. Someone upgrading from an older version never sees the introduction at
 all: they already have workspaces, which is the proof they do not need it.
@@ -289,9 +298,7 @@ A folder is filing and nothing else: it holds no dates and no state, it never ap
 Today, search or the weekly review, and nothing in the app reads it back and asks you to
 keep it true. **Deleting one never deletes what is in it** — its projects and its
 subfolders move up a level and only the folder goes, because losing a project to a word
-that sounds like tidying up is not something this app will do. Folders are mirrored to
-disk as real directories, so `~/.neo/markdown/Day job/Clients/Acme/…` is exactly
-where you filed it.
+that sounds like tidying up is not something this app will do.
 
 A project takes its workspace's colour until you give it one of its own in project
 settings. It shows on the project's mark and in the fill of its deadline bar — never as a
@@ -500,7 +507,7 @@ the three to six words you would scan a list for, and about the subject rather t
 ceremony: "Pricing for the Nordic launch", not "Weekly sync". It only suggests. The name
 lands in the field where you can read it, edit it or type straight over it, and it is
 kept by the same autosave as everything else on the page. It runs on whichever engine
-the workspace uses for recaps, so it works with a local model too.
+the workspace uses for recaps.
 
 Writing one up is writing, so it gets a page rather than a dialog — the same Markdown
 editor a note uses down the middle, and everything a meeting has that a note does not
@@ -563,32 +570,32 @@ therefore ad-hoc signs the bundle with the app's own identifier. That does nothi
 Gatekeeper, and because the permission is remembered against the signature you are
 asked again after every rebuild.
 
-**It is built to survive the machine.** Audio is appended to disk every second and
-never buffered anywhere else, so the most a power cut can cost is that second. Every
-five minutes it rolls over into a new file, which bounds the damage a half-written
-file can do and gives everything downstream something to resume from. A Mac that goes
+**It is built to survive the machine.** Audio is sent to Neo Cloud every second and
+stored there before the next second is sent, so the most a power cut can cost is that
+second — and a dropped connection costs nothing, because what could not be sent is held
+and sent when the connection comes back. Every five minutes it rolls over into a new
+file, which bounds what a half-finished file can cost and gives everything downstream
+something to resume from. A Mac that goes
 to sleep mid-meeting closes the file it was writing, and opens a new one the moment
 the lid does — you will find a segment boundary in the recording and nothing else. A
-crash or a flat battery is the one case Neo will not decide for you: the next launch
-shows the meeting with **Recording was interrupted**, the audio it got, and two
-buttons — *Carry on*, because the meeting may still be happening, and *It is over*.
+crash or a flat battery is the one case Neo will not decide for you: the meeting shows
+**Recording was interrupted**, the audio it got, and two buttons — *Carry on*, because the
+meeting may still be happening, and *It is over*.
 
-Transcription starts on its own when you stop, and it is done one five-minute part at
-a time, each written down before the next begins. Then speakers, then the recap. All
-three run in the background whether or not the app is on that screen, all three
-remember where they got to, and a step that fails for a reason waiting will not fix —
-a wrong key, a model that does not exist — stops and says so instead of retrying
-forever.
+Transcription starts on its own when you stop, and it runs in Neo Cloud — so you can close
+the lid on the way out of the room and the recap is still written. It is done one
+five-minute part at a time, each written down before the next begins. Then speakers, then
+the recap. All three remember where they got to, and a step that fails for a reason
+waiting will not fix — a wrong key, a model that does not exist — stops and says so
+instead of retrying forever.
 
-**Where it runs is yours to choose**, per workspace, under *Workspace settings →
-Recording*. A client's conversations can be transcribed and summarised entirely on
-your own machine while the day job's go to OpenAI. The two halves are set separately,
-because they are different questions: transcription sends the *audio* somewhere, the
-recap sends the *words*. One thing worth knowing — **Ollama cannot transcribe**; it
-runs language models and only those. So *on this Mac* for transcription means an
-OpenAI-compatible speech server you run yourself (whisper.cpp's `whisper-server`,
-faster-whisper-server, Speaches, LocalAI) and the setting asks for its address.
-Ollama is the natural choice for the recap half.
+**Which service does the work is yours to choose**, per workspace, under *Workspace
+settings → Recording*: OpenAI on the workspace's own key, or any OpenAI-compatible server
+you run (whisper.cpp's `whisper-server`, faster-whisper-server, Speaches, LocalAI for the
+audio; Ollama or any other for the words). The two halves are set separately, because
+they are different questions: transcription sends the *audio* somewhere, the recap sends
+the *words*. Because the work happens in Neo Cloud, a server of your own has to be one Neo
+Cloud can reach — `localhost` on your Mac is not.
 
 **The recap becomes part of the meeting, on its own.** Nothing to press. The moment it
 is written it is appended to the write-up as ordinary Markdown you can edit, which is
@@ -598,7 +605,7 @@ a name; one you named keeps yours. And every **commitment** — somebody saying 
 that they will do something — becomes one of the meeting's to-do items in the rail on
 the right, so it is counted as owing on Today and can be put on the board like any
 other. Folding it in is a step in the same queue as everything else, so a recap that
-was written before the machine went to sleep is folded in when it wakes.
+could not be folded in straight away is folded in on the next pass.
 
 That happens once. After the first time, the write-up is yours: re-running the recap
 updates what the Recording screen shows and leaves your notes alone.
@@ -627,9 +634,7 @@ because then the audio is the only copy of the meeting.
 Throwing the whole thing away — transcript and recap included — is a separate action,
 at the bottom of the Recording screen underneath everything it would destroy. It is
 for the recording you should not have made, not for saving space. Deleting a meeting,
-a project or a workspace takes its audio off the disk with it; a cascade in the
-database frees no space on its own, so Neo sweeps the folders itself, and again at
-launch as a backstop.
+a project or a workspace takes its audio with it.
 
 ### Decision log
 A first-class record: what was decided, when, by whom, why, and **what was rejected**.
@@ -648,8 +653,7 @@ heading, no tabs, no search bar. The project heading is for moving around and th
 the one screen where you are not, so the note starts at the top of the window and the
 only chrome left — the way back, the word count, whether it is saved — floats over it.
 
-It is **Markdown**, which is also how it is stored and how it is mirrored to disk, so
-what you type is what survives. It renders itself as you write it, in the line you are
+It is **Markdown**, which is also how it is stored, so what you type is what survives. It renders itself as you write it, in the line you are
 writing: type `## ` and that line becomes a heading with the cursor still in it, type
 `- ` and it becomes a bullet. There is no preview and no preview pane, because a
 preview is a second copy of the note that you have to look away from the first one to
@@ -693,11 +697,9 @@ and a title, in Obsidian's vocabulary of kinds (`note`, `tip`, `warning`, `dange
 last cell and Return both add a row.
 
 **A picture goes in by dropping it on the page or pasting it** — a screenshot straight
-from `⌘⇧4` works. It is stored beside the database like an icon, the note carries only
-its address, and dragging the picture's corner writes the width into the Markdown as
-`![shot|300](…)`, the way Obsidian writes one. In the Markdown mirror the picture is
-copied in beside the notes and the note points at it by relative path, so it shows
-there too.
+from `⌘⇧4` works. It is stored in Neo Cloud like an icon, the note carries only its
+address, and dragging the picture's corner writes the width into the Markdown as
+`![shot|300](…)`, the way Obsidian writes one.
 
 Under it, this is a `contenteditable`, because a textarea has one font for the whole
 box. Every edit is intercepted before the browser can apply it, applied to the Markdown
@@ -735,9 +737,8 @@ Everything else is what a folder is everywhere in this app: filing and nothing m
 holds no dates and no state, nothing in Today or search or the weekly review reads it, and
 **deleting one never deletes what is in it** — the notes and any folders inside come up a
 level and only the folder goes. A note started while a folder is open is filed there, and
-leaving it takes you back to the folder it is in rather than to the top of the list. On
-disk the folders are real directories, so a note filed in *Research / Interviews* is
-mirrored to `…/Checkout/notes/Research/Interviews/`. And with no folders at all, both
+leaving it takes you back to the folder it is in rather than to the top of the list. And
+with no folders at all, both
 pages are exactly the lists they were before any of this existed.
 
 ### Confirmations
@@ -924,9 +925,9 @@ sorting out a portfolio that has grown past a screenful is the kind of tedious r
 worth asking for in a sentence. It is told to leave filing nobody asked it to touch alone.
 
 Every write it makes goes through the same channel your own click goes through, so a task
-it creates is not a special kind of task. It logs activity, bumps the project's clock and
-lands in the Markdown mirror exactly as a hand-made one does, because it is the same code
-path rather than a second copy of it.
+it creates is not a special kind of task. It logs activity and bumps the project's clock
+exactly as a hand-made one does, because it is the same code path rather than a second
+copy of it.
 
 Replies stream as they are written and render as real Markdown — headings, lists, tables,
 code. You can **attach files**: images, PDFs, and text or code files, dropped onto the
@@ -963,15 +964,13 @@ npm run mcp:pack     # writes dist/neo.mcpb
 which they drop on **Claude Desktop → Settings → Extensions**. That route runs on Claude
 Desktop's own bundled Node, so it needs nothing installed either.
 
-**Neo has to be open.** The connector holds no database of its own — it forwards every
-call over a local socket to the running app, which answers it with the same tools the
-panel uses, on the same channels. That is not caution for its own sake: PGlite is an
-in-process engine with no lock, and a second process reading that folder is the one thing
-that can damage it. With Neo shut, the tools say so and do nothing.
+**Neo has to be open, and signed in.** The connector holds no account of its own — it
+forwards every call over a local socket to the running app, which answers it with the same
+tools the panel uses, on the same channels and as the same account. With Neo shut, the
+tools say so and do nothing.
 
 Everything else follows from being the same code path. A task Claude Desktop creates logs
-activity, bumps the project's clock and lands in the Markdown mirror, because it *is* the
-click you would have made. Reads are fenced to one workspace exactly as the panel's are.
+activity and bumps the project's clock, because it *is* the click you would have made. Reads are fenced to one workspace exactly as the panel's are.
 Every tool takes an optional `workspace` — a name is enough — and uses whichever one Neo
 is showing if you leave it out; the answer always says which one it used, so the choice is
 never silent. `list_workspaces` is there to find the others.
@@ -988,48 +987,40 @@ in arguments.
 
 ## Your data
 
-Everything lives in **`~/.neo`**:
+Everything lives in **your Neo Cloud account**: every workspace, project, task, note,
+meeting, decision, journal entry, conversation with the assistant, the pictures and
+files in them, and the audio of recorded meetings. Nothing is kept on the Mac — the one
+thing Neo stores there is the token that says you are signed in, sealed in the login
+keychain. Sign in on another machine and everything is there; sign out and nothing is
+left behind.
 
-- `db/` — an embedded PostgreSQL database (PGlite: real Postgres compiled to WebAssembly,
-  running inside the app). No server, no Docker, nothing to install or start.
-- `markdown/` — a plain-Markdown mirror of every project overview, note, meeting,
-  decision and journal entry, rewritten automatically on every change, one directory per
-  workspace and per folder you filed a project in. If this app is ever abandoned, the
-  writing that matters survives in a format any editor opens.
-- `icons/` — the images you upload for workspaces, projects and people. Files nothing
-  references any more are swept on launch.
-- `attachments/` — files you have dropped into a conversation with the assistant.
-- `recordings/` — the audio of recorded meetings, one folder per recording and one file
-  per five minutes. They are ordinary Opus files; drag one out and any player will open
-  it. Deleting a recording's audio from inside Neo removes the folder and keeps the
-  transcript.
-- `exports/` — JSON dumps of the structured data, on demand.
+Neo Cloud is free, and free includes everything. **Settings → Account** shows who you are
+signed in as, on which machines, and lets you sign any of them out.
 
-**If you have been using Neo already, your data moves itself.** Earlier versions kept
-all of this in `~/Documents/Neo`; the first launch after updating moves that folder to
-`~/.neo` and says so in the log. It is a move and not a copy, so there is never a second
-database quietly going stale, and it never lands on top of an existing `~/.neo` — if one
-is somehow already there, that one wins and the old folder is left exactly where it is.
+**Getting it out again** is **Settings → Data → Export everything as JSON**, which writes
+one file wherever you choose.
 
-The leading dot is deliberate. Documents is for your files, and a PostgreSQL database
-being written to constantly is not one of them — on a Mac with iCloud's *Desktop &
-Documents* sync switched on it was being uploaded byte by byte as it changed, which is a
-poor thing to do to a database. It is still a plain folder you can copy, and the Markdown
-mirror is still ordinary files; **File › Reveal Data Folder** and the Data settings pane
-both open it directly, whatever the Finder chooses to hide.
+**Coming from an older version?** Versions before Neo Cloud kept everything in `~/.neo` on
+the Mac. `scripts/import-local-data.mjs` copies all of it — the database, icons, pictures,
+files and recordings — into an empty account, and changes nothing in the folder; delete
+it yourself once you have looked around:
 
-The Markdown mirror covers recordings too: a recorded meeting writes its recap into the
-write-up file and its transcript into a second file beside it, so the words survive this
-app even if the audio has been deleted from inside it.
+```bash
+node scripts/import-local-data.mjs --username <your username>
+```
 
-Nothing leaves the machine on its own. Three things ever do, and all three are things you
-asked for. A question typed into the assistant goes to OpenAI on your own key, along with
-whatever it looked up to answer it, and only from the workspace you asked in — with no key
-saved, that channel is shut. Anything the Claude Desktop connector reads goes to Anthropic
-as part of the conversation you are having there; uninstalling the extension, or simply
-keeping Neo shut, closes that one. And a meeting you record is sent wherever that
-workspace's *Recording* settings say — to OpenAI, or to a server on your own machine, or
-one of each for the audio and the words.
+Quit the old app first. An account that signs in with a passkey can add a password under
+**Settings → Account** to use here.
+
+**What leaves the Mac.** Your work goes to Neo Cloud, because that is where it is kept, and
+Neo Cloud can read it: it is not end-to-end encrypted, because the server does work the
+app used to do on the Mac, such as transcribing a meeting after you have closed the lid.
+Beyond that, three things ever leave, and all three are things you asked for. A question
+typed into the assistant goes to OpenAI on your own key, along with whatever it looked up
+to answer it, and only from the workspace you asked in. Anything the Claude Desktop
+connector reads goes to Anthropic as part of the conversation you are having there. And a
+meeting you record is sent wherever that workspace's *Recording* settings say — to OpenAI,
+or to a server of your own.
 
 ## Calendar
 
@@ -1072,18 +1063,17 @@ reload and no sign that anything was wrong.
 
 ## Running it
 
-Node.js 22 or newer, and nothing else — the database is embedded, so there is no server
-to start and no second terminal to keep open.
+Node.js 22 or newer.
 
 ```bash
 npm install
-npm run dev             # development, with hot reload
+npm run dev             # development, with hot reload (NEO_CLOUD_URL=… for a local server)
 npm run build           # typecheck + production build
 npm run package         # unpacked application into dist/
 npm run dist            # packaged, signed-if-possible application
 npm run typecheck       # both TypeScript projects
-npm run verify          # exercise the whole backend headlessly
-npm run verify:upgrade  # open a database written by an older version
+npm run gen:api         # regenerate the Neo Cloud client from the server's OpenAPI spec
+npm run verify          # the main process against a running Neo Cloud, headlessly
 npm run mcp:pack        # build the Claude Desktop connector into dist/neo.mcpb
 ```
 
@@ -1094,8 +1084,7 @@ exercised; the other two build from the same source but have had far less use, a
 reports are welcome.
 
 Releases are built by GitHub Actions on native runners for all three platforms —
-`.github/workflows/release.yml`, triggered by pushing a `v*` tag. `ci.yml` runs the
-typecheck and both verify scripts on every push and pull request.
+`.github/workflows/release.yml`, triggered by pushing a `v*` tag.
 
 **Cutting a release** means three things in one commit: bump `version` in `package.json`,
 write `changelog/<version>.md`, and tag it. The workflow refuses a tag with no changelog
@@ -1104,13 +1093,9 @@ from that file, so the sentence somebody reads before updating is the one the ap
 them afterwards. The macOS **zip** goes up alongside the disk image and is not optional:
 it is the file already-installed copies download to replace themselves.
 
-Settings has no reset button: emptying the database is a thing you do to the data folder,
-not something to leave a click away from your own work.
-
 ### The menu, and shortcuts
 
-There is a real application menu: **File** for creating things and reaching your data
-folder, **Edit** with the standard roles (so text fields keep undo, redo and the system
+There is a real application menu: **File** for creating things, **Edit** with the standard roles (so text fields keep undo, redo and the system
 emoji picker), **Go** for jumping between screens, plus View, Window and Help. Menu items
 drive the same actions the buttons and keyboard do rather than a parallel set of their own.
 
@@ -1122,66 +1107,41 @@ drive the same actions the buttons and keyboard do rather than a parallel set of
 | `⌘1`–`⌘3` | Today, Projects, People |
 | `⌘[` / `⌘]` | Back and forward |
 | `⌘,` | Settings |
-| `⌘⇧O` | Reveal the data folder |
 | `⌘↵` | Save and close a dialog |
 | `Esc` | Close a dialog, or leave a settings screen |
 
 ## How it is built
 
 - **Electron 44**, main process + renderer, with a typed IPC bridge as the only surface
-  between them. The database, filesystem and shell never reach the renderer.
-- **PGlite** for storage, driven with plain SQL. The DDL in `src/main/db/ddl.ts` is the
-  single source of truth and is applied idempotently on launch.
+  between them. The account's token, the filesystem and the shell never reach the renderer.
+- **Neo Cloud** ([`neo-sync-server`](https://github.com/Johannett321/neo-sync-server)) holds
+  the data and the logic that decides what to write: Java 21, Spring Boot, PostgreSQL with
+  row level security per account, and a REST API written down first as an OpenAPI spec.
+  The server implements interfaces generated from it, and this app's client is typed from
+  it (`src/main/lib/cloud/schema.ts`).
 - **React 19 + TanStack Query** in the renderer, with React Router in hash mode and
   Framer Motion for the sidebar transition.
 - **Tailwind 4 + daisyUI 5** on a custom theme, light and dark.
 - `src/shared/api.ts` maps every IPC channel to its input and output types, so the
-  renderer cannot call a channel that main does not handle.
+  renderer cannot call a channel that main does not handle; each handler in main turns its
+  channel into a request to Neo Cloud.
 
-Calendar dates are stored as `text` in `YYYY-MM-DD` rather than as `date` columns —
-a desktop app renders dates in local time, and round-tripping a `date` through a driver
-that returns UTC-midnight is how you end up showing "due yesterday".
-
-### Looking after the data
-
-PGlite is an in-process engine with no lock of its own, so two copies of the app writing
-the same folder will corrupt it. The app therefore takes a single-instance lock and a
-second launch focuses the window already open **without ever opening the database**.
-Quitting is deferred until the database has been flushed, and Ctrl-C in development gets
-the same treatment, because a half-written shutdown is the other way this breaks.
-
-If a b-tree index is damaged anyway — a force quit, a crash — Postgres reports `XX002` on
-startup. Rather than refusing to open, the app rebuilds the index and carries on: the row
-data is never what is damaged in that failure, only the index over it. That path has been
-run against a genuinely corrupted database, not just a simulated one.
-
-### Migrations
-
-The schema is applied idempotently on launch: `DDL` creates tables and indexes in one
-batch, then `MIGRATIONS` runs one statement at a time, in four groups — columns, then
-constraint changes, then backfills, then indexes. Keep that order: an index or an
-`UPDATE` that mentions a column added further down the list will fail on an older
-database, which is exactly the bug the grouping prevents. That split is not cosmetic —
-PostgreSQL parses *every* statement in a multi-statement batch before executing any of
-them, so a statement referencing a column that an `ALTER` in the same batch is about to
-add fails to parse. Anything that depends on a migrated column — an `UPDATE`, an index —
-must live in `MIGRATIONS`, below the `ALTER` that creates it.
-
-`npm run verify:upgrade` builds a database in an older shape and opens it with the
-current code, which is the only way that class of bug gets caught before launch.
+Calendar dates travel as `YYYY-MM-DD` text rather than as instants — a desktop app renders
+dates in local time, and a date turned into UTC midnight is how you end up showing "due
+yesterday". Every request says which time zone it comes from, so "due today" on the
+server means today where you are.
 
 ### Tests
 
-`npm run verify` stubs Electron and drives the real IPC handlers end to end — sample data,
-the attention reasons, workspace isolation, the Today and review dashboards, the re-entry
-brief, board stages, meetings, search, cascade deletes and both exports — in plain Node,
-with no window and no display.
+`npm run verify` stubs Electron and drives the real IPC handlers end to end against a
+running Neo Cloud — sample data, the attention reasons, workspace and account isolation,
+the Today dashboard, the re-entry brief, the board, meetings and recordings, search, and
+the export — in plain Node, with no window and no display. It registers a fresh account
+each run.
 
-There is no linter and no test framework. `test/verify.ts` and `test/upgrade.ts` are
-single scripts of `ok(label, condition)` assertions run end to end, so there is no way to
-run one in isolation — run the whole script, which takes a few seconds. Add an assertion
-to `verify.ts` for any backend behaviour you change, and to `upgrade.ts` when you change
-the schema.
+There is no linter and no test framework. `test/verify.ts` is a single script of
+`ok(label, condition)` assertions run end to end, so there is no way to run one in
+isolation — run the whole script. The server has its own, `test/verify.sh`.
 
 ## Contributing
 
@@ -1192,7 +1152,8 @@ assistant but just as useful to a person.
 
 The one thing worth knowing before you propose a feature: **there is no status field a
 user has to maintain by hand**, anywhere, and there is not going to be one. Attention is
-derived from overdue work, deadline proximity and staleness, in `src/main/lib/attention.ts`.
+derived from overdue work, deadline proximity and staleness, in Neo Cloud's
+`work/Attention.java`.
 That constraint is the product, not an implementation detail.
 
 ## Licence

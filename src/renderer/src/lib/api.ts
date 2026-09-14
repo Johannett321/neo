@@ -29,17 +29,24 @@ export function useApi<C extends Channel>(channel: C, ...args: Args<C, [options?
 }
 
 /**
- * Every mutation invalidates everything. The whole dataset is a few thousand rows
- * held locally, and almost every write moves a derived number somewhere else —
- * what needs a look, the Today counts, the review lists. Refetching the lot is cheaper
- * to reason about and imperceptible in practice.
+ * Everything the work is, which is everything but the account itself. Who is signed in
+ * does not change because a task did, and is asked for again only when it could have.
+ */
+const everythingButTheAccount = { predicate: (query: { queryKey: readonly unknown[] }) =>
+  query.queryKey[0] !== 'account:status' }
+
+/**
+ * Every mutation invalidates everything. The dataset is small, and almost every write
+ * moves a derived number somewhere else — what needs a look, the Today counts, the
+ * review lists. Refetching the lot is cheaper to reason about than working out which
+ * screens a write touched, and the requests are to one server, answered in a moment.
  */
 export function useApiMutation<C extends Channel>(channel: C) {
   const client = useQueryClient()
   return useMutation<Output<C>, Error, Input<C>>({
     mutationFn: (input: Input<C>) => window.api.invoke(channel, input),
     onSuccess: () => {
-      void client.invalidateQueries()
+      void client.invalidateQueries(everythingButTheAccount)
     }
   })
 }
@@ -47,22 +54,20 @@ export function useApiMutation<C extends Channel>(channel: C) {
 /**
  * Refetch when something was written that this window did not write.
  *
- * The assistant and the Claude Desktop connector call the app's own channels from
- * inside the main process, so no mutation resolves here and nothing invalidates the
- * cache — which is why a task either of them created used to sit unseen until you
- * navigated away and back. Main says a write landed and the whole cache goes, exactly
- * as `useApiMutation` does it, so the card appears while the assistant is still
- * talking. Mounted once, at the top of the app.
+ * Three ways that happens: another device signed in to the same account (Neo Cloud says
+ * so on its event stream), the assistant, or the Claude Desktop connector — the last
+ * two call the app's own channels from inside the main process, so no mutation resolves
+ * here. Main says a write landed and the cache goes, exactly as `useApiMutation` does
+ * it, so the card appears while the assistant is still talking. Mounted once, at the top.
  */
 export function useLiveData(): void {
   const client = useQueryClient()
-  useEffect(() => window.api.onData(() => void client.invalidateQueries()), [client])
+  useEffect(() => window.api.onData(() => void client.invalidateQueries(everythingButTheAccount)), [client])
 }
 
 /**
- * Warm a screen's data before it is asked for. Every query here costs a couple of
- * milliseconds against an in-process database, but those milliseconds land *after*
- * the click, which is exactly where they are felt. Fetching on hover moves them
+ * Warm a screen's data before it is asked for. Every query here is a round trip to Neo
+ * Cloud, and that time lands *after* the click, which is exactly where it is felt. Fetching on hover moves them
  * into the time the pointer is already travelling, so the screen has its content
  * on the first frame it paints instead of arriving empty and filling in.
  */

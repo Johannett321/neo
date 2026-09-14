@@ -1,24 +1,16 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, powerMonitor, protocol, session, shell } from 'electron'
-import { closeDb, dataRoot, initDb, q } from './db/client'
-import { adoptExistingRows, initOplog } from './db/oplog'
-import { registerSyncHandlers } from './ipc/sync'
-import * as sync from './lib/sync/engine'
+import { registerAccountHandlers } from './ipc/account'
+import { startEvents, stopEvents } from './lib/cloud/events'
+import { loadSession } from './lib/cloud/session'
 import { buildAppMenu } from './menu'
-import { ensureColumnsEverywhere } from './lib/board'
 import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from './lib/glass'
-import { pruneIcons } from './lib/icons'
-import { ensureMeEverywhere, ensureMeOnAllProjects } from './lib/profile'
 import { startBridge, stopBridge } from './lib/mcp/bridge'
 import { abandonSplash, openSplash, splashFor, splashOpen } from './lib/splash'
 import { kickNotifications, startNotifications, stopNotifications } from './lib/notifier'
 import { applyStagedUpdate, pruneStaged, startUpdates, stopUpdates } from './lib/updater'
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
-import { kick, recoverRecordings, startPipeline, stopPipeline } from './lib/recording/pipeline'
-import { pruneRecordings } from './lib/recording/store'
-import { pruneNoteImages } from './lib/images'
-import { flushMirrors } from './lib/markdown'
 import { stopSystemAudio } from './lib/recording/systemAudio'
 import { registerChatHandlers } from './ipc/chat'
 import { registerContentHandlers } from './ipc/content'
@@ -72,9 +64,9 @@ if (process.env.NEO_USER_DATA) {
 }
 
 /**
- * Two copies of the app writing the same database directory will corrupt it — PGlite
- * is an in-process engine with no lock of its own. A second launch focuses the window
- * that is already open instead.
+ * One copy at a time. There is no database here to protect any more, but two copies
+ * would each run the notification loop and each record the same meeting's microphone,
+ * so a second launch focuses the window that is already open instead.
  */
 const isPrimary = app.requestSingleInstanceLock()
 
@@ -87,7 +79,6 @@ if (isPrimary) {
     }
   })
 } else {
-  // Quit without ever touching the database: opening it is the damage being avoided.
   app.exit(0)
 }
 app.setAboutPanelOptions({
@@ -170,6 +161,7 @@ function createWindow(): BrowserWindow {
 }
 
 function registerHandlers(): void {
+  registerAccountHandlers()
   registerWorkspaceHandlers()
   registerProjectHandlers()
   registerTaskHandlers()
@@ -181,7 +173,6 @@ function registerHandlers(): void {
   registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
-  registerSyncHandlers()
   registerUpdateHandlers()
   registerWeatherHandlers()
   registerMcpHandlers()
@@ -236,78 +227,29 @@ async function start(): Promise<void> {
     { useSystemPicker: false }
   )
 
-  await initDb()
   /*
-   * The log comes up before anything writes to it, and the adoption pass comes before
-   * the housekeeping below — `ensureMeEverywhere()` and friends all write, and they
-   * must write *as themselves* rather than being swept up as rows that were always
-   * here. On an install that predates the log this is the launch that gives years of
-   * work its history; on every launch after it, it finds nothing and costs one query
-   * per table.
+   * Nothing to open. Everything Neo knows lives in Neo Cloud, and what this machine
+   * keeps is the token it signed in with. With one, the stream of changes made on other
+   * devices is opened now; without one, the window will be the sign-in screen and the
+   * stream starts when somebody signs in.
    */
-  await initOplog()
-  const adopted = await adoptExistingRows()
-  if (adopted.rows > 0) console.log(`Took ${adopted.rows} existing row(s) into the operation log.`)
+  if (loadSession()) startEvents()
+
   /*
-   * Syncing starts after adoption, never before it. A device that pushed its log
-   * before taking its own existing rows into it would hand the other Mac an account
-   * of a working life that begins today.
-   */
-  void sync.start()
-  await ensureMeEverywhere()
-  await ensureMeOnAllProjects()
-  await ensureColumnsEverywhere()
-  const referenced = await q<{ icon_path: string }>(
-    `SELECT icon_path FROM workspace
-     UNION ALL SELECT icon_path FROM project
-     UNION ALL SELECT banner_path FROM workspace
-     UNION ALL SELECT avatar_path FROM person
-     UNION ALL SELECT value FROM setting WHERE key = 'profileAvatarPath'`
-  )
-  await pruneIcons(referenced.map((r) => r.icon_path))
-  // The same sweep for audio, and the backstop for every route that could have
-  // orphaned some: an hour of a meeting is the largest thing this app writes, and a
-  // cascade in the database frees none of it.
-  const sweptAudio = await pruneRecordings()
-  const sweptImages = await pruneNoteImages()
-  if (sweptImages > 0) console.log(`Removed ${sweptImages} picture(s) no note refers to any more.`)
-  if (sweptAudio > 0) console.log(`Removed ${sweptAudio} recording folder(s) with no recording left.`)
-  /*
-   * And the same for an update that was downloaded and never applied — a lid closed
-   * on the way to the airport, a machine restarted for another reason. A staged
-   * release is hundreds of megabytes and nothing will ever come back for it: if it is
-   * still wanted, this launch will find it again and fetch it in the background.
+   * An update that was downloaded and never applied — a lid closed on the way to the
+   * airport — is hundreds of megabytes nothing will come back for. If it is still
+   * wanted, this launch will find it again.
    */
   const sweptUpdates = await pruneStaged()
   if (sweptUpdates > 0) console.log(`Removed ${sweptUpdates} staged update(s) that were never applied.`)
   registerHandlers()
   registerMediaProtocol()
 
-  /*
-   * Everything a recording was in the middle of is turned back into something it is
-   * waiting for, and then the runner is started. This is the whole of crash
-   * recovery: a machine that lost power in the middle of a two-hour meeting comes
-   * back with its audio on disk, its capture marked interrupted so the person in the
-   * room can decide whether it is over, and any transcription or recap it had
-   * started resumed at the segment it had reached.
-   */
-  const interrupted = await recoverRecordings()
-  if (interrupted > 0) {
-    console.log(`${interrupted} recording(s) were interrupted and are waiting for you.`)
-  }
-  startPipeline()
-
-  // A laptop that has been shut for a week wakes with a backlog and, more to the
-  // point, with a network again — which is usually why the last attempt failed.
-  // And the morning's deadlines with it, for the machine that was shut at nine and
-  // opened at eleven. The tick would find them a minute later anyway; this is so that
-  // opening the lid and being told are the same moment.
-  const caughtUp = (): void => {
-    kick()
-    kickNotifications()
-  }
-  powerMonitor.on('resume', caughtUp)
-  powerMonitor.on('unlock-screen', caughtUp)
+  // The morning's deadlines, for the machine that was shut at nine and opened at eleven.
+  // The tick would find them a minute later anyway; this makes opening the lid and
+  // being told the same moment.
+  powerMonitor.on('resume', kickNotifications)
+  powerMonitor.on('unlock-screen', kickNotifications)
 
   // Told to the window as well, because the microphone lives there and does not
   // survive a suspend. Hearing about it here is what makes a recording pick back up
@@ -320,12 +262,13 @@ async function start(): Promise<void> {
   powerMonitor.on('suspend', tellWindows('suspend'))
   powerMonitor.on('resume', tellWindows('resume'))
 
-  // After the handlers, because the bridge answers by calling them, and never before
-  // the database is open: the tools it exposes are the app's own channels.
+  // After the handlers, because the bridge answers by calling them: the tools it
+  // exposes are the app's own channels.
   await startBridge()
   buildAppMenu()
   // Read before the window exists rather than told to it afterwards. See createWindow.
-  presetGlass((await invokeChannel('settings:get')).theme)
+  // Offline, the window is drawn in the default theme rather than not drawn at all.
+  presetGlass((await invokeChannel('settings:get').catch(() => ({ theme: 'system' as const }))).theme)
   createWindow()
 
   /*
@@ -340,7 +283,7 @@ async function start(): Promise<void> {
 
   // Last of all, and quietly: the first look happens half a minute in, so it is never
   // competing with the first screen for a slow connection.
-  startUpdates((await invokeChannel('settings:get')).updates)
+  startUpdates((await invokeChannel('settings:get').catch(() => ({ updates: 'automatic' as const }))).updates)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -356,10 +299,7 @@ if (isPrimary) {
       abandonSplash()
       const message = error instanceof Error ? error.message : String(error)
       console.error('Neo failed to start:', error)
-      dialog.showErrorBox(
-        'Neo could not start',
-        `${message}\n\nYour data in ${dataRoot()} has not been changed.`
-      )
+      dialog.showErrorBox('Neo could not start', message)
       app.exit(1)
     })
   )
@@ -370,34 +310,26 @@ app.on('window-all-closed', () => {
 })
 
 /**
- * The database has to be flushed before the process goes away. The default quit does
- * not wait for a promise, so quitting is deferred until the close has finished — this
- * is what protects the data from a half-written shutdown.
+ * On the way out: the helpers that hold something of the operating system's are given
+ * it back, and a staged update is applied. Quitting is deferred until the bridge has
+ * closed its socket, which is the one thing here that is asynchronous.
  */
 let closing = false
 app.on('before-quit', (event) => {
   if (closing) return
   event.preventDefault()
   closing = true
-  stopPipeline()
   stopNotifications()
   stopUpdates()
+  stopEvents()
   // The helper hands its audio device back to Core Audio when its stdin closes. Left
   // running it would keep a private aggregate device alive after the app has gone.
   stopSystemAudio()
   void stopBridge()
     .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
-    // A note saved in the last two seconds has its mirror still waiting; write it now.
-    .then(() => flushMirrors())
-    .then(() => closeDb())
-    .catch((error: unknown) => console.error('Could not close the database cleanly:', error))
     .finally(() => {
-      /*
-       * The very last thing, and after the database is closed rather than before.
-       * The swap waits for this process to disappear before it touches the bundle,
-       * so starting it here costs nothing — and starting it any earlier would race a
-       * shutdown that is still writing.
-       */
+      // Last, because the swap waits for this process to disappear before it touches
+      // the bundle.
       applyStagedUpdate()
       app.exit(0)
     })
@@ -408,8 +340,6 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     void stopBridge()
       .catch(() => {})
-      .then(() => flushMirrors())
-      .then(() => closeDb())
       .finally(() => process.exit(0))
   })
 }

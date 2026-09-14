@@ -8,7 +8,7 @@ on:
 
 jobs:
   check:
-    name: Typecheck and verify (${{ matrix.os }})
+    name: Typecheck (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # The whole run is seconds. A job still going after twenty minutes is a job
     # that has hung, and without this it hangs for the full six hours — billed at
@@ -35,10 +35,95 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # The backend runs headless in plain Node with Electron stubbed out,
-      # so there is no display to set up.
-      - name: Verify the backend
+  verify:
+    name: Verify against Neo Cloud
+    # The main process's handlers run headless in plain Node with Electron stubbed out,
+    # against a real server built from neo-sync-server. That repository is private, so
+    # this needs a token that can read it; without one (a pull request from a fork) the
+    # job says so and passes rather than failing for a reason the change did not cause.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_SERVER: ${{ secrets.NEO_CLOUD_REPO_TOKEN != '' }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: neocloud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: No server to verify against
+        if: env.HAS_SERVER != 'true'
+        run: echo "NEO_CLOUD_REPO_TOKEN is not set, so there is no server to run the verify script against."
+
+      - uses: actions/checkout@v4
+        if: env.HAS_SERVER == 'true'
+
+      - uses: actions/checkout@v4
+        if: env.HAS_SERVER == 'true'
+        with:
+          repository: Johannett321/neo-sync-server
+          token: ${{ secrets.NEO_CLOUD_REPO_TOKEN }}
+          path: neo-sync-server
+
+      - uses: actions/setup-java@v4
+        if: env.HAS_SERVER == 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        if: env.HAS_SERVER == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Start Neo Cloud
+        if: env.HAS_SERVER == 'true'
+        working-directory: neo-sync-server
+        env:
+          DATABASE_URL: jdbc:postgresql://localhost:5432/neocloud
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PORT: 8080
+        run: |
+          mvn -B -q -DskipTests package
+          nohup java -jar target/neo-cloud-*.jar > server.log 2>&1 &
+          for i in $(seq 1 90); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 2
+          done
+          cat server.log
+          exit 1
+
+      - run: npm ci
+        if: env.HAS_SERVER == 'true'
+
+      - name: The generated client matches the server's contract
+        if: env.HAS_SERVER == 'true'
+        env:
+          NEO_CLOUD_SPEC: neo-sync-server/src/main/resources/openapi/neo-cloud.yaml
+        run: |
+          npm run gen:api
+          git diff --exit-code src/main/lib/cloud/schema.ts
+
+      - name: Verify
+        if: env.HAS_SERVER == 'true'
+        env:
+          NEO_CLOUD_URL: http://localhost:8080
+          # The few facts no channel can reach are read straight out of the database.
+          NEO_VERIFY_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/neocloud
         run: npm run verify
 
-      - name: Verify an upgrade from an older schema
-        run: npm run verify:upgrade
+      - name: Server log
+        if: failure() && env.HAS_SERVER == 'true'
+        run: cat neo-sync-server/server.log

@@ -6,45 +6,44 @@ understand what it is trying to be before you change it.
 
 Start with [`README.md`](README.md) — it explains what every feature is for and why it
 exists, and most of those decisions were arrived at deliberately. [`CLAUDE.md`](CLAUDE.md)
-is the architecture tour: the typed IPC contract, the database rules, and the conventions
-that will break things if you work around them.
+is the architecture tour: the typed IPC contract, how the app talks to Neo Cloud, and the
+conventions that will break things if you work around them.
 
 ## Getting set up
 
-Node.js 22 or newer. Nothing else — the database is embedded, so there is no server to
-start.
+Node.js 22 or newer, and for anything that touches data, the server: Neo keeps everything
+in Neo Cloud and nothing on the device, and the server lives in
+[`neo-sync-server`](https://github.com/Johannett321/neo-sync-server) (Java 21, Maven,
+Docker for its Postgres).
 
 ```bash
+# the server, in its own checkout
+docker compose up -d && mvn spring-boot:run
+
+# the app, pointed at it
 git clone https://github.com/Johannett321/neo.git
 cd neo
-npm install && npm run dev
+npm install && NEO_CLOUD_URL=http://localhost:8080 npm run dev
 ```
 
-Your data lives in `~/.neo`. Development and a packaged build **share that
-folder**, and PGlite has no lock of its own, so do not run two copies at once — the app
-takes a single-instance lock, but a dev build and an installed build have different bundle
-identifiers, which is why there is also a `.lock` file holding the owning pid.
-
-Load the sample data from the first-launch panel to get something realistic to work
-against.
+Without `NEO_CLOUD_URL` a development build signs in to production Neo Cloud. Make an
+account on the sign-in screen, then load the sample data from the first-launch panel to
+get something realistic to work against.
 
 ## Before you open a pull request
 
 ```bash
-npm run typecheck       # both TypeScript projects
-npm run verify          # the whole backend, headless, in plain Node
-npm run verify:upgrade  # opens a database written by an older version
+npm run typecheck                                   # both TypeScript projects
+NEO_CLOUD_URL=http://localhost:8080 npm run verify  # the main process against a server
 ```
 
-All three must pass. There is no linter and no test framework: `test/verify.ts` and
-`test/upgrade.ts` are single scripts of `ok(label, condition)` assertions, run end to end
-in a few seconds. You cannot run one assertion in isolation — run the script.
+Both must pass. There is no linter and no test framework: `test/verify.ts` is a single
+script of `ok(label, condition)` assertions, run end to end against a running server. You
+cannot run one assertion in isolation — run the script.
 
-- **Changed backend behaviour?** Add an assertion to `test/verify.ts`.
-- **Changed the schema?** Add one to `test/upgrade.ts` too, and read the migrations rules
-  in `CLAUDE.md` first. PostgreSQL parses every statement in a batch before executing any
-  of them, so a statement that mentions a column an `ALTER` is about to add must live
-  below it in `MIGRATIONS`, in a later group. That bug has shipped twice.
+- **Changed what a channel does?** Add an assertion to `test/verify.ts`.
+- **Changed the API or the data?** That is a change to the server: the OpenAPI spec first,
+  then its controller and its tests, then `npm run gen:api` here.
 
 ## The constraints that are not up for negotiation
 
@@ -53,23 +52,25 @@ will be asked to change, however good the code is.
 
 - **No status field the user maintains by hand.** No RAG rating, no percent-complete, no
   health dropdown. Attention is *derived* — from overdue work, deadline proximity and
-  staleness — in `src/main/lib/attention.ts`, and it returns the single most pressing fact
+  staleness — in the server's `work/Attention.java`, and it returns the single most pressing fact
   in plain words, never a level, a badge or a colour. A project manager will not keep a
   status field true across five projects, so a feature that depends on them doing so is
   abandoned in three weeks and takes the rest of the app with it.
 - **Workspace isolation is a hard boundary.** Every scoped IPC channel takes an explicit
   `workspaceId`; there is no implicit "all", and no screen may mix two workspaces.
-- **Every mutation logs activity** via `logActivity()`, and handlers that change project
-  content also call `mirrorProject()`. That is what makes the re-entry brief and the
-  Markdown mirror work.
+- **Every mutation logs activity**, on the server, via `Activity.log()`. That is what makes
+  the re-entry brief work.
 - **The assistant asks before every write.** Every tool marked `writes: true` must have a
   `summary()` that returns the confirmation sentence, with ids resolved to names and dates
   validated *before* the question is asked. There is deliberately no allowlist of "safe"
   writes.
-- **Nothing phones home.** No analytics, no telemetry, no crash reporting, no update
-  check. The only outbound request the app ever makes is a question you typed into the
-  assistant, on your own OpenAI key. Please do not add a dependency that changes that.
-- **The app stays free.** No billing, no licence keys, no paid tier, no "pro" features.
+- **Nothing phones home beyond what the app is for.** The app talks to Neo Cloud, because
+  that is where your work is, and to OpenAI only on a key you gave it. No analytics, no
+  telemetry, no crash reporting. Please do not add a dependency that changes that.
+- **What an account may use is decided in one place.** Everybody is on the free plan and
+  it includes everything. The server's `Entitlements` and the `features` on
+  `/v1/account` exist so a feature can later be kept for a paid plan without every screen
+  learning a new question — do not check a plan anywhere else.
 
 ## Adding an IPC channel
 
@@ -77,10 +78,14 @@ will be asked to change, however good the code is.
 output types; everything else then fails to compile until it is wired up — the main
 handler through `handle<C>()`, and the renderer call through `useApi` / `useApiMutation`.
 
-If the assistant needs to do something, give it the *channel*, not its own SQL. Tools call
-`invokeChannel()` so that a task the assistant creates goes down the same code path as one
-you create by hand, and therefore logs activity, bumps the project clock and lands in the
-Markdown mirror for free.
+If the channel reads or writes data, it is a request to Neo Cloud: add the endpoint to the
+server's OpenAPI spec, implement it there, run `npm run gen:api`, and make the handler the
+one or two lines that call it through `api` in `lib/cloud/client.ts`.
+
+If the assistant needs to do something, give it the *channel*, not its own request. Tools
+call `invokeChannel()` so that a task the assistant creates goes down the same code path
+as one you create by hand, and therefore logs activity and bumps the project clock for
+free.
 
 ## Style
 
@@ -88,8 +93,8 @@ Match the file you are in. A few house rules worth knowing:
 
 - Icons are hand-rolled paths in `components/Icon.tsx` on a 24px grid — add a path, not a
   dependency.
-- Dates use `components/DateField.tsx`, never `<input type="date">`. Calendar dates are
-  stored as `text` in `YYYY-MM-DD`, never as `date` columns.
+- Dates use `components/DateField.tsx`, never `<input type="date">`. Calendar dates travel
+  as `YYYY-MM-DD` text, never as instants.
 - Right-click menus go through `lib/contextMenu.tsx`, including the confirmation step for
   destructive actions. Do not reimplement a confirm at a call site.
 - Settings screens are panes in `components/SettingsLayout.tsx`, not sections stacked in a
@@ -99,9 +104,9 @@ Match the file you are in. A few house rules worth knowing:
 ## Reporting a bug
 
 Say what you did, what happened, and what you expected. Include your OS and the version
-from **Settings → About**. If it involves the database, `npm run verify` and
-`npm run verify:upgrade` output is useful. Please do not attach your data folder — it is
-your actual work.
+from **Settings → About**. If it involves data, `npm run verify` output against a local
+server is useful. Please do not attach an export of your account — it is your actual
+work.
 
 ## Security
 

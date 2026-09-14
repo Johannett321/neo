@@ -4,8 +4,8 @@ import type { AiEvent, OpenTarget, RecordingEvent } from '@shared/types'
 import type { UpdateStatus } from '@shared/update'
 
 /**
- * The only surface the renderer gets. The database connection, the filesystem and
- * the shell all stay in the main process; this passes typed messages and nothing else.
+ * The only surface the renderer gets. The account's token, the filesystem and the shell
+ * all stay in the main process; this passes typed messages and nothing else.
  */
 const api = {
   invoke<C extends Channel>(channel: C, input?: Input<C>): Promise<Output<C>> {
@@ -41,6 +41,17 @@ const api = {
     ipcRenderer.on('data', listener)
     return () => {
       ipcRenderer.off('data', listener)
+    }
+  },
+  /**
+   * This machine was signed out from somewhere else: another device revoked it, or the
+   * account's password was changed. The window goes back to the sign-in screen.
+   */
+  onAccount(callback: (event: { signedIn: boolean }) => void): () => void {
+    const listener = (_event: unknown, payload: { signedIn: boolean }): void => callback(payload)
+    ipcRenderer.on('account', listener)
+    return () => {
+      ipcRenderer.off('account', listener)
     }
   },
   /**

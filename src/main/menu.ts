@@ -1,6 +1,4 @@
-import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { dataRoot } from './db/client'
-import { mirrorAll } from './lib/markdown'
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
 import { checkForUpdate } from './lib/updater'
 
 /**
@@ -88,20 +86,6 @@ export function buildAppMenu(): void {
         { label: 'New Project…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-project') },
         { label: 'New Workspace…', click: () => send('new-workspace') },
         { type: 'separator' },
-        {
-          label: 'Rebuild Markdown Mirror',
-          click: async () => {
-            await mirrorAll()
-          }
-        },
-        {
-          label: 'Reveal Data Folder',
-          accelerator: 'CmdOrCtrl+Shift+O',
-          click: () => {
-            void shell.openPath(dataRoot())
-          }
-        },
-        { type: 'separator' },
         ...(isMac
           ? [{ role: 'close' as const }]
           : [
@@ -185,10 +169,8 @@ export function buildAppMenu(): void {
       role: 'help',
       submenu: [
         {
-          label: 'Where Your Data Lives',
-          click: () => {
-            void shell.openPath(dataRoot())
-          }
+          label: 'Your Account',
+          click: () => send('go:/settings?pane=account')
         }
       ]
     }

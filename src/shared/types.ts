@@ -850,9 +850,7 @@ export interface Profile {
 }
 
 export interface Settings {
-  dataDir: string
-  markdownDir: string
-  /** Read-only, like the two paths above: reported by main, never written back. */
+  /** Read-only: reported by the app itself, never written back. */
   appVersion: string
   /** Remembered across restarts so you land back where you were. */
   activeWorkspaceId: string

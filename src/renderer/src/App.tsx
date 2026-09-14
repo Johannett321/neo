@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { HashRouter, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
+import { SIGNED_OUT } from '@shared/account'
 import { AssistantPanel } from '@/components/AssistantPanel'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Icon } from '@/components/Icon'
@@ -19,6 +21,7 @@ import { useTheme } from '@/lib/theme'
 import { RecorderProvider } from '@/lib/recorder'
 import { WorkspaceProvider, useWorkspaces } from '@/lib/workspace'
 import { Onboarding } from '@/routes/Onboarding'
+import { Offline, SignIn } from '@/routes/SignIn'
 import { Welcome } from '@/routes/Welcome'
 import { PeoplePage, PersonPage } from '@/routes/People'
 import { ProjectToday } from '@/routes/project/ProjectToday'
@@ -337,16 +340,72 @@ function Gate(): React.JSX.Element {
   )
 }
 
+/**
+ * Before any of that: whether anybody is signed in.
+ *
+ * Every workspace lives in Neo Cloud, so nothing below this can be asked for until
+ * there is an account to ask as — the workspace provider included, which is why it is
+ * mounted here rather than above. Signed out is the sign-in screen; signed in but
+ * unreachable is a screen that says so rather than a sign-in screen that would ask for
+ * a password nothing is wrong with.
+ *
+ * The answer is kept in the query cache under `account:status` and replaced whole on
+ * signing in and out, and the cache is emptied both times: what was in it belonged to
+ * nobody, or to somebody else.
+ */
+function AccountGate(): React.JSX.Element {
+  const client = useQueryClient()
+  const status = useApi('account:status', undefined, { staleTime: Infinity, retry: false })
+  const known = status.data
+
+  // Signed out from another device, or the password changed there.
+  useEffect(
+    () =>
+      window.api.onAccount(() => {
+        client.clear()
+        void status.refetch()
+      }),
+    [client, status]
+  )
+
+  // The sign-in and offline screens have no data to wait for, so the splash can go.
+  const bare = Boolean(known && (!known.signedIn || known.offline)) || status.isError
+  useEffect(() => {
+    if (bare) void call('window:ready')
+  }, [bare])
+
+  const signOut = async (): Promise<void> => {
+    const signedOut = await call('account:signOut').catch(() => SIGNED_OUT)
+    client.clear()
+    client.setQueryData(['account:status', null], signedOut)
+  }
+
+  if (status.isError) {
+    return <Offline username="" onRetry={() => void status.refetch()} onSignOut={() => void signOut()} />
+  }
+  if (!known) return <div className="glass-window h-full bg-base-100" />
+  if (!known.signedIn) {
+    return <SignIn onSignedIn={(next) => client.setQueryData(['account:status', null], next)} />
+  }
+  if (known.offline) {
+    return <Offline username={known.username} onRetry={() => void status.refetch()} onSignOut={() => void signOut()} />
+  }
+  return (
+    <WorkspaceProvider>
+      <Gate />
+    </WorkspaceProvider>
+  )
+}
+
 export default function App(): React.JSX.Element {
-  // Writes the assistant and Claude Desktop make, which nothing here is waiting on.
+  // Writes made somewhere else — another device, the assistant, Claude Desktop — which
+  // nothing here is waiting on.
   useLiveData()
   return (
     <HashRouter>
       <ToastProvider>
         <ContextMenuProvider>
-          <WorkspaceProvider>
-            <Gate />
-          </WorkspaceProvider>
+          <AccountGate />
         </ContextMenuProvider>
       </ToastProvider>
     </HashRouter>

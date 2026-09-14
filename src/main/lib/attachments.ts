@@ -1,16 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { attachmentDir } from '../db/client'
+import { extname } from 'node:path'
 
 /**
- * Files put into a conversation.
+ * Files put into a conversation: which ones the model can read, and how.
  *
- * They are written into the data folder beside the icons rather than into the
- * database, for the same reason: a backup of `~/.neo` is then a backup of
- * everything, and a 4 MB screenshot does not have to be read out of a row every time
- * the panel repaints. The renderer never learns a path it could open — it hands over
- * bytes on the way in and receives a data URL on the way out.
+ * The files themselves are kept in Neo Cloud. This is only the question of shape, asked
+ * before a file is sent anywhere — the server asks it again on the way in.
  */
 
 /** What the model can actually be shown. Anything else is refused rather than sent. */
@@ -42,31 +36,4 @@ export function shapeOf(name: string, mime: string): AttachmentShape | null {
   if (DOCUMENT.has(mime) || extname(name).toLowerCase() === '.pdf') return 'document'
   if (mime.startsWith('text/') || TEXT_EXTENSIONS.has(extname(name).toLowerCase())) return 'text'
   return null
-}
-
-/** Write bytes into attachments/ and return the stored filename. */
-export async function storeAttachment(name: string, base64: string): Promise<{ path: string; bytes: number }> {
-  const buffer = Buffer.from(base64, 'base64')
-  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`${name} is larger than 20 MB.`)
-  }
-  await mkdir(attachmentDir(), { recursive: true })
-  const path = `${randomUUID()}${extname(name).toLowerCase()}`
-  await writeFile(join(attachmentDir(), path), buffer)
-  return { path, bytes: buffer.byteLength }
-}
-
-export async function readAttachment(path: string): Promise<Buffer | null> {
-  if (!path) return null
-  try {
-    return await readFile(join(attachmentDir(), path))
-  } catch {
-    // A file removed from under us must not take the conversation down with it.
-    return null
-  }
-}
-
-export async function deleteAttachment(path: string): Promise<void> {
-  if (!path) return
-  await rm(join(attachmentDir(), path), { force: true })
 }

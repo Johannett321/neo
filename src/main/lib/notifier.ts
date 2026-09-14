@@ -1,8 +1,9 @@
 import { BrowserWindow, Notification } from 'electron'
 import type { OpenTarget } from '@shared/types'
-import { q, q1, today } from '../db/client'
-import { invokeChannel, noteWrite, remove } from '../ipc/util'
-import { deliveryDue } from './notify'
+import { invokeChannel } from '../ipc/util'
+import { api, must } from './cloud/client'
+import { loadSession } from './cloud/session'
+import { today } from './dates'
 
 /**
  * Putting the day's deadlines on the desktop, once.
@@ -15,16 +16,13 @@ import { deliveryDue } from './notify'
  *
  * The tick is deliberately dumb. Every minute it asks whether the morning has
  * arrived, and if it has, asks each workspace what it would say and tries to claim
- * today for each answer. The claim is an insert against a unique index, so the
- * database decides whether this is the first time — not a variable, and not a
- * comparison of timestamps that a clock change could get wrong.
+ * today for each answer. The claim is an insert against a unique index in Neo Cloud, so
+ * the server decides whether this is the first time — which is also what keeps two
+ * Macs signed in to the same account from both saying it.
  */
 
 /** Cheap: on a quiet day it is one settings read and nothing else. */
 const TICK_MS = 60_000
-
-/** A record of what was said is worth a month and no more. */
-const KEEP_DAYS = 30
 
 let timer: ReturnType<typeof setInterval> | null = null
 /** How a window is got hold of when one is wanted. Set by main; see startNotifications. */
@@ -103,24 +101,41 @@ function open(target: OpenTarget): void {
  * behaviour is "what happens at ten past nine on a Tuesday", and a test that has to
  * wait until then is not a test.
  */
+/**
+ * Whether this moment is inside the part of the day that a delivery may happen in.
+ *
+ * "At or after the time you chose, on a day you allowed" — deliberately a window
+ * rather than an instant, because the machine is very often asleep at nine in the
+ * morning and the alternative is a notification that is simply lost. What stops it
+ * being said twice is not this function but the claim the delivery makes; this only
+ * says the morning has arrived.
+ */
+export function deliveryDue(now: Date, at: string, weekends: boolean): boolean {
+  const day = now.getDay()
+  if (!weekends && (day === 0 || day === 6)) return false
+  const [hours, minutes] = at.split(':').map(Number)
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return false
+  return now.getHours() * 60 + now.getMinutes() >= (hours ?? 0) * 60 + (minutes ?? 0)
+}
+
+/**
+ * One pass. Returns how many notifications were actually put on the desktop, which
+ * is what makes the whole thing assertable in a test with no display.
+ *
+ * `now` is a parameter rather than read inside for the same reason: the interesting
+ * behaviour is "what happens at ten past nine on a Tuesday", and a test that has to
+ * wait until then is not a test.
+ */
 export async function deliverNotifications(now: Date = new Date()): Promise<number> {
+  // Nobody signed in, nobody to tell.
+  if (!loadSession()) return 0
   const settings = await invokeChannel('settings:get')
   // Nothing at all until the app has been introduced. A first run is a screen you are
   // filling in, and the sample data it can load has deadlines of its own.
   if (!settings.notifications || !settings.onboardedAt) return 0
   if (!deliveryDue(now, settings.notifyAt, settings.notifyWeekends)) return 0
 
-  /*
-   * Read straight rather than through `workspace:list`, and this is the one place in
-   * main that does. That channel reads every workspace's icon off the disk to build a
-   * data URL for a renderer that is not asking — and this runs every minute, all day.
-   * The workspace fence is not weakened by it: what comes back is a list of ids, and
-   * every question about what is *in* a workspace still goes through the scoped
-   * channel below, one workspace at a time.
-   */
-  const workspaces = await q<{ id: string }>(
-    'SELECT id FROM workspace WHERE archived_at IS NULL AND notify ORDER BY sort_order, name'
-  )
+  const workspaces = (await invokeChannel('workspace:list')).filter((w) => !w.archivedAt && w.notify)
 
   const on = today(now)
   let shown = 0
@@ -129,24 +144,18 @@ export async function deliverNotifications(now: Date = new Date()): Promise<numb
     const pending = await invokeChannel('notification:pending', { workspaceId: workspace.id })
     for (const item of pending) {
       /*
-       * Claim the day before saying anything. The unique index is the whole guard:
-       * a second pass gets no row back and stays quiet.
+       * Claim the day before saying anything. The server's unique index is the whole
+       * guard: a second pass — or a second Mac — is told it has already been said.
        *
-       * Written first and shown second on purpose. Crashing between the two costs a
+       * Claimed first and shown second on purpose. Crashing between the two costs a
        * nudge that Today would have given you anyway; doing it the other way round
        * would cost a duplicate every time the app was restarted, which is the failure
        * that teaches people to turn notifications off.
        */
-      const claimed = await q1<{ id: string }>(
-        `INSERT INTO notification (workspace_id, kind, on_date, title, body)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (workspace_id, kind, on_date) DO NOTHING
-         RETURNING id`,
-        [workspace.id, item.kind, on, item.title, item.body]
-      )
+      const { claimed } = await must(api.POST('/v1/notifications', {
+        body: { workspaceId: workspace.id, kind: item.kind, onDate: on, title: item.title, body: item.body }
+      }))
       if (!claimed) continue
-      // The claim above has to be one statement; the op is taken from the row it wrote.
-      await noteWrite('notification', claimed.id)
 
       const result = await showNotification({
         title: item.title,
@@ -160,24 +169,9 @@ export async function deliverNotifications(now: Date = new Date()): Promise<numb
   return shown
 }
 
-/** Old records of what was said. Kept a month, so "did it tell me?" stays answerable. */
-async function sweep(now: Date): Promise<void> {
-  const cutoff = today(new Date(now.getTime() - KEEP_DAYS * 86_400_000))
-  /*
-   * Through `remove()` so each row leaves a tombstone, and one row at a time because
-   * of it. A bare DELETE here was fine while this table was only ever local; with a
-   * log behind it, a row deleted without a trace comes back on the next replay — and
-   * then collides with a later claim for the same workspace, kind and day, because
-   * that pair is exactly what the unique index forbids.
-   */
-  const stale = await q<{ id: string }>('SELECT id FROM notification WHERE on_date < $1', [cutoff])
-  for (const row of stale) await remove('notification', row.id)
-}
-
 /** A pass, with anything that goes wrong logged rather than thrown at the app. */
 export function kickNotifications(): void {
   void deliverNotifications()
-    .then(() => sweep(new Date()))
     .catch((error: unknown) => console.error('Could not deliver notifications:', error))
 }
 

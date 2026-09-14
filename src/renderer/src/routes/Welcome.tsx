@@ -54,7 +54,6 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
   useTheme()
   const reduce = useReducedMotion()
   const { switchTo } = useWorkspaces()
-  const settings = useApi('settings:get')
   const suggestedName = useApi('profile:suggestName')
 
   const saveProfile = useApiMutation('profile:save')
@@ -321,7 +320,6 @@ export function Welcome({ onDone }: { onDone: () => void }): React.JSX.Element {
                     workspaceName={workspaceName}
                     color={color}
                     icon={icon}
-                    dataDir={settings.data?.dataDir ?? ''}
                   />
                 )}
               </motion.div>
@@ -897,14 +895,12 @@ function Ready({
   name,
   workspaceName,
   color,
-  icon,
-  dataDir
+  icon
 }: {
   name: string
   workspaceName: string
   color: string
   icon: string | null
-  dataDir: string
 }): React.JSX.Element {
   const first = name.trim().split(' ')[0] ?? ''
   return (
@@ -948,15 +944,12 @@ function Ready({
         </div>
       </Line>
 
-      {dataDir && (
-        <Line className="mt-5">
-          <p className="text-[11.5px] leading-relaxed text-base-content/40">
-            Everything you write lands in{' '}
-            <code className="font-mono text-[11px] text-base-content/55">{dataDir}</code>, including a
-            plain-Markdown copy of it. Back it up by copying that folder.
-          </p>
-        </Line>
-      )}
+      <Line className="mt-5">
+        <p className="text-[11.5px] leading-relaxed text-base-content/40">
+          Everything you write is kept in your Neo Cloud account, so it is on every machine you sign in
+          to — and nothing is left behind on this one.
+        </p>
+      </Line>
     </div>
   )
 }

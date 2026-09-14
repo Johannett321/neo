@@ -25,15 +25,15 @@ import type { AddressInfo } from 'node:net'
  * it takes — the arrangement RFC 8252 recommends for exactly this, and the one
  * `gh auth login` uses.
  *
- * A token is all that crosses back. Key material never does: the passphrase is typed
- * in Neo's own window and the master key is unwrapped in this process, where a page
- * the server wrote can never reach it.
+ * A token is all that crosses back: one the server issued itself, guarded by a `state`
+ * nonce compared in constant time. The same page makes an account and signs in to one.
  */
 
 export interface SignedIn {
   token: string
   accountId: string
-  handle: string
+  deviceId: string
+  username: string
 }
 
 /** Long enough to find your phone and answer a prompt; short enough to give up. */
@@ -41,7 +41,7 @@ const PATIENCE_MS = 3 * 60_000
 
 const DONE_PAGE = `<!doctype html>
 <meta charset="utf-8">
-<title>Connected</title>
+<title>Signed in</title>
 <style>
   body { margin:0; min-height:100vh; display:grid; place-items:center;
          font:15px/1.6 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -50,7 +50,7 @@ const DONE_PAGE = `<!doctype html>
   p { opacity:.7 }
 </style>
 <main style="text-align:center">
-  <h1 style="font-size:19px;margin:0 0 6px">Neo is connected</h1>
+  <h1 style="font-size:19px;margin:0 0 6px">Neo is signed in</h1>
   <p>You can close this tab and go back to the app.</p>
 </main>`
 
@@ -82,7 +82,12 @@ export async function signInWithPasskey(serverUrl: string): Promise<SignedIn | n
 
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(DONE_PAGE)
       finish(matches && token && accountId
-        ? { token, accountId, handle: url.searchParams.get('handle') ?? '' }
+        ? {
+            token,
+            accountId,
+            deviceId: url.searchParams.get('deviceId') ?? '',
+            username: url.searchParams.get('username') ?? ''
+          }
         : null)
     })
 

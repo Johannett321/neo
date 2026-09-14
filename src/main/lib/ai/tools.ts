@@ -1,5 +1,6 @@
 import type { CastMember, MeetingView, ProjectDetail, TaskView } from '@shared/types'
-import { q, today } from '../../db/client'
+import { api, must } from '../cloud/client'
+import { today } from '../dates'
 import { invokeChannel } from '../../ipc/util'
 
 /**
@@ -7,11 +8,11 @@ import { invokeChannel } from '../../ipc/util'
  *
  * Two rules shape this file, and both are load-bearing.
  *
- * **Every write goes through a channel the app already has.** A tool never touches
- * the database directly — it calls `project:save`, `task:setStatus`, `note:save`,
- * exactly as a click in the interface does. So an assistant-made task logs activity,
- * bumps the project's clock and rewrites the Markdown mirror for free, and it cannot
- * drift from what the buttons do, because it is not a second implementation of them.
+ * **Every write goes through a channel the app already has.** A tool never makes a
+ * request of its own — it calls `project:save`, `task:setStatus`, `note:save`, exactly
+ * as a click in the interface does. So an assistant-made task logs activity and bumps
+ * the project's clock for free, and it cannot drift from what the buttons do, because
+ * it is not a second implementation of them.
  *
  * **Every write says what it is about to do, in plain words, before doing it.** That
  * is what `summary` is for: the sentence the confirmation shows. It is written for
@@ -74,16 +75,16 @@ const object = (properties: Record<string, unknown>, required: string[] = []): R
  * Ids are what the tools take, and names are what a person says. Every lookup that
  * accepts either resolves inside the workspace, so a name that is ambiguous says so
  * rather than picking one, and a name from another workspace is simply not found.
+ *
+ * How a loose reference is matched: the id, the exact name, or a piece of it.
  */
-async function resolveProject(ref: string, ctx: ToolContext): Promise<{ id: string; name: string }> {
-  const rows = await q<{ id: string; name: string }>(
-    `SELECT id, name FROM project
-     WHERE workspace_id = $1 AND (id::text = $2 OR lower(name) = lower($2) OR name ILIKE $3)
-     ORDER BY (lower(name) = lower($2)) DESC, archived_at NULLS FIRST, name
-     LIMIT 5`,
-    [ctx.workspaceId, ref, `%${ref}%`]
-  )
-  if (rows.length === 0) throw new Error(`No project in this workspace matches "${ref}".`)
+function matching<T extends { id: string; name: string }>(rows: T[], ref: string): T[] {
+  const wanted = ref.toLowerCase()
+  return rows.filter((r) => r.id === ref || r.name.toLowerCase() === wanted || r.name.toLowerCase().includes(wanted))
+}
+
+function pickOne<T extends { id: string; name: string }>(rows: T[], ref: string, none: string): T {
+  if (rows.length === 0) throw new Error(none)
   // An exact match wins outright; several loose ones are an ambiguity worth reporting.
   const exact = rows.filter((r) => r.name.toLowerCase() === ref.toLowerCase() || r.id === ref)
   if (exact.length === 1) return exact[0]
@@ -93,33 +94,45 @@ async function resolveProject(ref: string, ctx: ToolContext): Promise<{ id: stri
   return rows[0]
 }
 
+async function resolveProject(ref: string, ctx: ToolContext): Promise<{ id: string; name: string }> {
+  // Live projects before archived ones, exact names before partial ones, then by name.
+  const [live, archived] = await Promise.all([
+    invokeChannel('project:list', { workspaceId: ctx.workspaceId }),
+    invokeChannel('project:list', { workspaceId: ctx.workspaceId, archived: true })
+  ])
+  const wanted = ref.toLowerCase()
+  const byName = (x: { name: string }, y: { name: string }): number => x.name.localeCompare(y.name)
+  const rows = [...matching(live, ref).sort(byName), ...matching(archived, ref).sort(byName)]
+    .sort((x, y) => Number(y.name.toLowerCase() === wanted) - Number(x.name.toLowerCase() === wanted))
+    .slice(0, 5)
+  const found = pickOne(rows, ref, `No project in this workspace matches "${ref}".`)
+  return { id: found.id, name: found.name }
+}
+
 async function resolvePerson(ref: string, ctx: ToolContext): Promise<{ id: string; name: string }> {
-  const rows = await q<{ id: string; name: string }>(
-    `SELECT id, name FROM person
-     WHERE workspace_id = $1 AND (id::text = $2 OR lower(name) = lower($2) OR name ILIKE $3)
-     ORDER BY (lower(name) = lower($2)) DESC, name
-     LIMIT 5`,
-    [ctx.workspaceId, ref, `%${ref}%`]
-  )
-  if (rows.length === 0) throw new Error(`Nobody in this workspace matches "${ref}".`)
-  const exact = rows.filter((r) => r.name.toLowerCase() === ref.toLowerCase() || r.id === ref)
-  if (exact.length === 1) return exact[0]
-  if (rows.length > 1) {
-    throw new Error(`"${ref}" matches ${rows.map((r) => r.name).join(', ')}. Ask which one is meant.`)
-  }
-  return rows[0]
+  const wanted = ref.toLowerCase()
+  const rows = matching(await invokeChannel('person:list', { workspaceId: ctx.workspaceId }), ref)
+    .sort((x, y) => Number(y.name.toLowerCase() === wanted) - Number(x.name.toLowerCase() === wanted) ||
+      x.name.localeCompare(y.name))
+    .slice(0, 5)
+  const found = pickOne(rows, ref, `Nobody in this workspace matches "${ref}".`)
+  return { id: found.id, name: found.name }
 }
 
 /** A task, confirmed to be inside this workspace before anything is done to it. */
-async function resolveTask(id: string, ctx: ToolContext): Promise<{ id: string; title: string; projectName: string }> {
-  const rows = await q<{ id: string; title: string; project_name: string }>(
-    `SELECT t.id, t.title, p.name AS project_name
-     FROM task t JOIN project p ON p.id = t.project_id
-     WHERE t.id::text = $1 AND p.workspace_id = $2`,
-    [id, ctx.workspaceId]
-  )
-  if (rows.length === 0) throw new Error(`No task ${id} in this workspace. Look it up first.`)
-  return { id: rows[0].id, title: rows[0].title, projectName: rows[0].project_name }
+async function resolveTask(
+  id: string,
+  ctx: ToolContext
+): Promise<{ id: string; title: string; projectId: string; projectName: string }> {
+  const task = (await invokeChannel('task:list', { workspaceId: ctx.workspaceId })).find((t) => t.id === id)
+  if (!task) throw new Error(`No task ${id} in this workspace. Look it up first.`)
+  return { id: task.id, title: task.title, projectId: task.projectId, projectName: task.projectName }
+}
+
+/** A column on a project's board by name, the way a person says it: case does not matter. */
+async function columnNamed(projectId: string, name: string): Promise<{ id: string } | undefined> {
+  const detail = await invokeChannel('project:get', { id: projectId, touch: false })
+  return detail.columns.find((c) => c.name.toLowerCase() === name.trim().toLowerCase())
 }
 
 /**
@@ -454,21 +467,13 @@ export const TOOLS: Tool[] = [
     ),
     writes: false,
     run: async (input, ctx) => {
-      const kind = String(input.kind)
-      const table = kind === 'journal' ? 'journal_entry' : kind
-      // Joined to project so a document outside this workspace simply does not exist.
-      const rows = await q<Record<string, unknown>>(
-        `SELECT d.*, p.name AS project_name FROM ${table} d
-         JOIN project p ON p.id = d.project_id
-         WHERE d.id::text = $1 AND p.workspace_id = $2`,
-        [String(input.id), ctx.workspaceId]
-      )
-      const row = rows[0]
-      if (!row) throw new Error(`No ${kind} ${String(input.id)} in this workspace.`)
-      if (kind !== 'meeting') return row
-      // A meeting is only itself with its attendees and its to-do items attached.
-      const detail = await invokeChannel('project:get', { id: String(row.project_id), touch: false })
-      return detail.meetings.find((m) => m.id === row.id) ?? row
+      const kind = String(input.kind) as 'note' | 'meeting' | 'decision' | 'journal'
+      // Fenced by the server to this workspace, so a document outside it simply does not exist.
+      const found = await must(api.GET('/v1/documents/{kind}/{id}', {
+        params: { path: { kind, id: String(input.id) }, query: { workspaceId: ctx.workspaceId } }
+      })).catch(() => null)
+      if (!found) throw new Error(`No ${kind} ${String(input.id)} in this workspace.`)
+      return { ...found.document, project_name: found.projectName }
     }
   },
   {
@@ -487,39 +492,34 @@ export const TOOLS: Tool[] = [
     ),
     writes: false,
     run: async (input, ctx) => {
-      // Joined back to the workspace, like every other read here: a meeting id from
+      // Fenced to the workspace first, like every other read here: a meeting id from
       // somewhere else is simply not found rather than quietly answered.
-      const rows = await q<Record<string, any>>(
-        `SELECT r.*, m.title, m.occurred_on FROM recording r
-         JOIN meeting m ON m.id = r.meeting_id
-         JOIN project p ON p.id = m.project_id
-         WHERE r.meeting_id::text = $1 AND p.workspace_id = $2`,
-        [String(input.meeting), ctx.workspaceId]
-      )
-      const row = rows[0]
-      if (!row) throw new Error('That meeting has no recording in this workspace.')
+      const meetingId = String(input.meeting)
+      const meeting = await must(api.GET('/v1/documents/{kind}/{id}', {
+        params: { path: { kind: 'meeting', id: meetingId }, query: { workspaceId: ctx.workspaceId } }
+      })).catch(() => null)
+      const { recording: row, cues } = meeting
+        ? await invokeChannel('recording:get', { meetingId })
+        : { recording: null, cues: [] }
+      if (!meeting || !row) throw new Error('That meeting has no recording in this workspace.')
 
       const speakers = row.speakers ?? {}
       const payload: Record<string, unknown> = {
-        meeting: row.title,
-        occurredOn: row.occurred_on,
+        meeting: meeting.document.title,
+        occurredOn: meeting.document.occurredOn,
         state:
-          row.summary_state === 'done'
+          row.summaryState === 'done'
             ? 'ready'
-            : row.transcript_state === 'failed' || row.summary_state === 'failed'
+            : row.transcriptState === 'failed' || row.summaryState === 'failed'
               ? 'failed'
               : 'still being written',
         summary: row.summary,
         ...(row.recap ?? {}),
-        durationMinutes: Math.round(Number(row.duration_ms ?? 0) / 60_000),
-        audioDeleted: Boolean(row.audio_deleted_at)
+        durationMinutes: Math.round(Number(row.durationMs ?? 0) / 60_000),
+        audioDeleted: Boolean(row.audioDeletedAt)
       }
 
       if (input.transcript) {
-        const cues = await q<{ speaker: string; text: string }>(
-          'SELECT speaker, text FROM transcript_cue WHERE recording_id = $1 ORDER BY ord',
-          [row.id]
-        )
         const lines: string[] = []
         let current = ''
         for (const cue of cues) {
@@ -584,12 +584,9 @@ export const TOOLS: Tool[] = [
       const assignee = input.assignee ? (await resolvePerson(String(input.assignee), ctx)).id : undefined
       let columnId: string | undefined
       if (input.column) {
-        const columns = await q<{ id: string; name: string }>(
-          'SELECT id, name FROM board_column WHERE project_id = $1 AND name ILIKE $2 ORDER BY sort_order LIMIT 1',
-          [project.id, String(input.column)]
-        )
-        if (!columns[0]) throw new Error(`${project.name} has no column called "${String(input.column)}".`)
-        columnId = columns[0].id
+        const column = await columnNamed(project.id, String(input.column))
+        if (!column) throw new Error(`${project.name} has no column called "${String(input.column)}".`)
+        columnId = column.id
       }
       const task = await invokeChannel('task:save', {
         projectId: project.id,
@@ -683,13 +680,9 @@ export const TOOLS: Tool[] = [
     },
     run: async (input, ctx) => {
       const task = await resolveTask(String(input.id), ctx)
-      const columns = await q<{ id: string }>(
-        `SELECT c.id FROM board_column c JOIN task t ON t.project_id = c.project_id
-         WHERE t.id = $1 AND c.name ILIKE $2 ORDER BY c.sort_order LIMIT 1`,
-        [task.id, String(input.column)]
-      )
-      if (!columns[0]) throw new Error(`${task.projectName} has no column called "${String(input.column)}".`)
-      const saved = await invokeChannel('task:setColumn', { id: task.id, columnId: columns[0].id })
+      const column = await columnNamed(task.projectId, String(input.column))
+      if (!column) throw new Error(`${task.projectName} has no column called "${String(input.column)}".`)
+      const saved = await invokeChannel('task:setColumn', { id: task.id, columnId: column.id })
       return { id: saved.id, status: saved.status }
     }
   },
@@ -805,14 +798,11 @@ export const TOOLS: Tool[] = [
     parameters: object({ id: str('The meeting to-do id, from get_project or get_document.') }, ['id']),
     writes: true,
     summary: async (input, ctx) => {
-      const rows = await q<{ text: string; project_name: string }>(
-        `SELECT mt.text, p.name AS project_name FROM meeting_todo mt
-         JOIN meeting m ON m.id = mt.meeting_id JOIN project p ON p.id = m.project_id
-         WHERE mt.id::text = $1 AND p.workspace_id = $2`,
-        [String(input.id), ctx.workspaceId]
-      )
-      if (!rows[0]) throw new Error(`No meeting to-do ${String(input.id)} in this workspace.`)
-      return `Put “${rows[0].text}” on ${rows[0].project_name}’s board as a card.`
+      const found = await must(api.GET('/v1/documents/{kind}/{id}', {
+        params: { path: { kind: 'meeting-todo', id: String(input.id) }, query: { workspaceId: ctx.workspaceId } }
+      })).catch(() => null)
+      if (!found) throw new Error(`No meeting to-do ${String(input.id)} in this workspace.`)
+      return `Put “${found.document.text}” on ${found.projectName}’s board as a card.`
     },
     run: async (input) => {
       const meeting = await invokeChannel('meetingTodo:promote', { id: String(input.id) })
@@ -1068,11 +1058,10 @@ export const TOOLS: Tool[] = [
     destroys: true,
     summary: async (input, ctx) => {
       const folder = await resolveFolder(String(input.folder), ctx)
-      const [inside] = await q<{ projects: number; folders: number }>(
-        `SELECT (SELECT count(*)::int FROM project WHERE folder_id = $1) AS projects,
-                (SELECT count(*)::int FROM project_folder WHERE parent_id = $1) AS folders`,
-        [folder.id]
-      )
+      const view = (await invokeChannel('folder:list', { workspaceId: ctx.workspaceId }))
+        .find((f) => f.id === folder.id)
+      // The list counts only live projects; a folder's archived ones move up with it too.
+      const inside = { projects: view?.projectCount ?? 0, folders: view?.folderCount ?? 0 }
       const contents = [
         inside.projects ? `${inside.projects} project${inside.projects === 1 ? '' : 's'}` : '',
         inside.folders ? `${inside.folders} subfolder${inside.folders === 1 ? '' : 's'}` : ''

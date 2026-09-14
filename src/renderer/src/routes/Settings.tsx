@@ -10,7 +10,7 @@ import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
 import { IconPicker } from '@/components/IconPicker'
 import { SettingsLayout } from '@/components/SettingsLayout'
-import { SyncPane } from '@/components/SyncPane'
+import { AccountPane } from '@/components/AccountPane'
 import { UpdatesPane } from '@/components/Updates'
 import { Field, Kbd, Panel } from '@/components/primitives'
 
@@ -31,6 +31,13 @@ export function SettingsPage(): React.JSX.Element {
         </>
       }
       panes={[
+        {
+          id: 'account',
+          label: 'Account',
+          icon: 'people',
+          description: 'Who is signed in to Neo Cloud, and on which machines.',
+          render: () => <AccountPane />
+        },
         {
           id: 'profile',
           label: 'Profile',
@@ -67,17 +74,10 @@ export function SettingsPage(): React.JSX.Element {
           render: () => <AudioPane />
         },
         {
-          id: 'sync',
-          label: 'Sync',
-          icon: 'refresh',
-          description: 'Keep this Mac in step with your others, and back the work up.',
-          render: () => <SyncPane />
-        },
-        {
           id: 'data',
           label: 'Data',
           icon: 'folder',
-          description: 'Where everything is kept, and how to get it out again.',
+          description: 'How to get everything out again.',
           render: () => <DataPane />
         },
         {
@@ -935,59 +935,36 @@ function Choice<T extends string>({
 }
 
 function DataPane(): React.JSX.Element {
-  const settings = useApi('settings:get')
-  const reveal = useApiMutation('settings:revealData')
-  const exportMarkdown = useApiMutation('settings:exportMarkdown')
   const exportJson = useApiMutation('settings:exportJson')
   const [message, setMessage] = useState('')
 
   return (
     <Panel>
-      <Field label="Folder">
-        <div className="flex items-center gap-2">
-          <code className="hairline flex-1 truncate rounded-field border bg-base-200/50 px-3 py-2 font-mono text-[11px]">
-            {settings.data?.dataDir ?? '…'}
-          </code>
-          <button className="btn btn-sm gap-1.5" onClick={() => reveal.mutate()}>
-            <Icon name="folder" size={13} />
-            Reveal
-          </button>
-        </div>
-      </Field>
-
-      <p className="mt-4 text-[12px] leading-relaxed text-base-content/55">
-        Everything is in that folder: an embedded Postgres database in <code className="font-mono">db/</code>,
-        a Markdown mirror of every note, decision and journal entry in{' '}
-        <code className="font-mono">markdown/</code>, uploaded icons in{' '}
-        <code className="font-mono">icons/</code>, and exports in{' '}
-        <code className="font-mono">exports/</code>. Nothing leaves this machine. Back it up by copying
-        the folder.
+      <p className="text-[12px] leading-relaxed text-base-content/55">
+        Everything is kept in your Neo Cloud account: every workspace, note, meeting, recording and
+        picture. Nothing is left on this machine, so signing in anywhere else is all it takes to have it
+        there too.
       </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           className="btn btn-sm gap-1.5"
+          disabled={exportJson.isPending}
           onClick={async () => {
-            const result = await exportMarkdown.mutateAsync()
-            setMessage(`Rebuilt ${result.files} Markdown files.`)
+            try {
+              const result = await exportJson.mutateAsync()
+              if (result) setMessage(`Wrote ${result.path}`)
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : String(error))
+            }
           }}
         >
-          <Icon name="note" size={13} />
-          Rebuild Markdown mirror
-        </button>
-        <button
-          className="btn btn-sm gap-1.5"
-          onClick={async () => {
-            const result = await exportJson.mutateAsync()
-            setMessage(`Wrote ${result.path}`)
-          }}
-        >
-          <Icon name="external" size={13} />
-          Export JSON
+          <Icon name="download" size={13} />
+          {exportJson.isPending ? 'Exporting…' : 'Export everything as JSON'}
         </button>
       </div>
 
-      {message && <p className="mt-3 text-[12px] text-success">{message}</p>}
+      {message && <p className="mt-3 text-[12px] text-base-content/60">{message}</p>}
     </Panel>
   )
 }

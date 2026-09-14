@@ -1,9 +1,10 @@
 import OpenAI from 'openai'
 import { DEFAULT_MODEL } from '@shared/ai'
 import type { AiEvent, AttachmentUpload, Profile } from '@shared/types'
-import { q, q1, today } from '../../db/client'
-import { invokeChannel, upsert } from '../../ipc/util'
-import { readAttachment, shapeOf, storeAttachment } from '../attachments'
+import { api, fetchRaw, must, upload } from '../cloud/client'
+import { today } from '../dates'
+import { invokeChannel } from '../../ipc/util'
+import { MAX_ATTACHMENT_BYTES, shapeOf } from '../attachments'
 import { TOOLS, TOOLS_BY_NAME, type ToolContext } from './tools'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -11,9 +12,10 @@ import { TOOLS, TOOLS_BY_NAME, type ToolContext } from './tools'
 /**
  * The assistant's turn, from the moment you press send to the moment it stops.
  *
- * The loop lives here, in the main process, for the same reason the database does:
- * it is the only place that has the key, the rows and the filesystem, and none of
- * those should ever be reachable from a renderer. The panel is told what is
+ * The loop lives here, in the main process, because it is the only place that holds
+ * the key and the way to Neo Cloud, and neither should ever be reachable from a
+ * renderer. It runs on this machine rather than on the server so a turn can stop in
+ * the middle and ask, and so the answer can be read while it is written. The panel is told what is
  * happening over an event channel and can render a half-written answer; it is never
  * handed the means to write one.
  *
@@ -86,29 +88,18 @@ function systemPrompt(context: {
 
 /* ------------------------------------------------------------------ persistence */
 
-async function nextSortOrder(conversationId: string): Promise<number> {
-  const row = await q1<{ n: number }>(
-    'SELECT COALESCE(max(sort_order), -1) + 1 AS n FROM chat_message WHERE conversation_id = $1',
-    [conversationId]
-  )
-  return row?.n ?? 0
-}
-
+/** One turn, saved at the end of the conversation. The server numbers it and bumps the clock. */
 async function saveMessage(
   conversationId: string,
   role: 'user' | 'assistant',
   blocks: unknown[],
   tools: Record<string, unknown> = {}
 ): Promise<string> {
-  const row = await upsert<{ id: string }>('chat_message', {
-    conversationId,
-    role,
-    blocks: JSON.stringify(blocks),
-    tools: JSON.stringify(tools),
-    sortOrder: await nextSortOrder(conversationId)
-  })
-  await upsert('conversation', { updatedAt: new Date() }, conversationId)
-  return row.id
+  const saved = await must(api.POST('/v1/conversations/{id}/messages', {
+    params: { path: { id: conversationId } },
+    body: { role, blocks, tools }
+  }))
+  return saved.id
 }
 
 /**
@@ -143,13 +134,8 @@ export function apiOnly(items: any[]): any[] {
 
 /** Everything said so far, in the shape the API wants it back. */
 async function replay(conversationId: string): Promise<any[]> {
-  const rows = await q<{ blocks: any }>(
-    'SELECT blocks FROM chat_message WHERE conversation_id = $1 ORDER BY sort_order',
-    [conversationId]
-  )
-  return apiOnly(
-    rows.flatMap((r) => (typeof r.blocks === 'string' ? JSON.parse(r.blocks) : (r.blocks ?? [])))
-  )
+  const { messages } = await must(api.GET('/v1/conversations/{id}', { params: { path: { id: conversationId } } }))
+  return apiOnly((messages as { blocks: any[] }[]).flatMap((m) => m.blocks ?? []))
 }
 
 /**
@@ -163,8 +149,11 @@ async function attachmentContent(
   path: string
 ): Promise<Record<string, unknown> | null> {
   const shape = shapeOf(name, mime)
-  const bytes = await readAttachment(path)
-  if (!shape || !bytes) return null
+  if (!shape) return null
+  const response = await fetchRaw(`/v1/files/${encodeURIComponent(path)}`).catch(() => null)
+  // A file that has gone must not take the conversation down with it.
+  if (!response?.ok) return null
+  const bytes = Buffer.from(await response.arrayBuffer())
   if (shape === 'image') {
     return { type: 'input_image', detail: 'auto', image_url: `data:${mime};base64,${bytes.toString('base64')}` }
   }
@@ -198,12 +187,10 @@ export interface StartOptions {
 export async function startRun(
   options: StartOptions
 ): Promise<{ runId: string; conversationId: string; messageId: string }> {
-  const workspace = await q1<{ id: string; name: string; ai_api_key: string; ai_model: string }>(
-    'SELECT id, name, ai_api_key, ai_model FROM workspace WHERE id = $1',
-    [options.workspaceId]
-  )
-  if (!workspace) throw new Error('Workspace not found')
-  if (!workspace.ai_api_key) {
+  const workspace = await must(api.GET('/v1/workspaces/{id}/assistant', {
+    params: { path: { id: options.workspaceId } }
+  }))
+  if (!workspace.apiKey) {
     throw new Error(
       `${workspace.name} has no API key yet. Add one in workspace settings, under Assistant, and the panel will start working.`
     )
@@ -211,35 +198,29 @@ export async function startRun(
 
   let conversationId = options.conversationId ?? ''
   if (conversationId) {
-    const existing = await q1<{ id: string }>(
-      'SELECT id FROM conversation WHERE id = $1 AND workspace_id = $2',
-      [conversationId, options.workspaceId]
-    )
-    if (!existing) throw new Error('That conversation is not in this workspace.')
+    const existing = await must(api.GET('/v1/conversations/{id}', { params: { path: { id: conversationId } } }))
+      .catch(() => null)
+    if (!existing || existing.conversation.workspaceId !== options.workspaceId) {
+      throw new Error('That conversation is not in this workspace.')
+    }
   } else {
-    const created = await upsert<{ id: string }>('conversation', {
-      workspaceId: options.workspaceId
-    })
+    const created = await must(api.POST('/v1/conversations', { body: { workspaceId: options.workspaceId } }))
     conversationId = created.id
   }
 
-  // Files are written to disk before the turn starts, so a failed request does not
-  // lose what was dropped in — it is still attached when the message is sent again.
+  // Files are stored before the turn starts, so a failed request does not lose what
+  // was dropped in — it is still attached when the message is sent again.
   const content: Record<string, unknown>[] = []
   const stored: { id: string; name: string; mime: string; path: string }[] = []
   for (const file of options.files ?? []) {
     if (!shapeOf(file.name, file.mime)) {
       throw new Error(`${file.name} is not a kind of file the assistant can read.`)
     }
-    const { path, bytes } = await storeAttachment(file.name, file.data)
-    const row = await upsert<{ id: string }>('chat_attachment', {
-      conversationId,
-      name: file.name,
-      mime: file.mime,
-      bytes,
-      path
-    })
-    stored.push({ id: row.id, name: file.name, mime: file.mime, path })
+    const bytes = Buffer.from(file.data, 'base64')
+    if (bytes.byteLength > MAX_ATTACHMENT_BYTES) throw new Error(`${file.name} is larger than 20 MB.`)
+    const row = await upload<{ id: string; path: string }>(`/v1/conversations/${conversationId}/attachments`,
+      { filename: file.name, mime: file.mime }, new Uint8Array(bytes))
+    stored.push({ id: row.id, name: file.name, mime: file.mime, path: row.path })
   }
   for (const file of stored) {
     const block = await attachmentContent(file.name, file.mime, file.path)
@@ -251,7 +232,9 @@ export async function startRun(
 
   const messageId = await saveMessage(conversationId, 'user', [{ role: 'user', content }])
   if (stored.length) {
-    for (const file of stored) await upsert('chat_attachment', { messageId }, file.id)
+    for (const file of stored) {
+      await must(api.PATCH('/v1/chat-attachments/{id}', { params: { path: { id: file.id } }, body: { messageId } }))
+    }
   }
 
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -259,8 +242,8 @@ export async function startRun(
   runs.set(runId, run)
 
   void loop(run, {
-    apiKey: workspace.ai_api_key,
-    model: workspace.ai_model || DEFAULT_MODEL,
+    apiKey: workspace.apiKey,
+    model: workspace.model || DEFAULT_MODEL,
     workspaceId: options.workspaceId,
     workspaceName: workspace.name,
     projectId: options.projectId,
@@ -307,7 +290,9 @@ async function loop(run: Run, ctx: LoopContext): Promise<void> {
   const profile = await invokeChannel('profile:get').catch(() => ({ name: '' }) as Profile)
   const settings = await invokeChannel('settings:get')
   const projectName = ctx.projectId
-    ? (await q1<{ name: string }>('SELECT name FROM project WHERE id = $1', [ctx.projectId]))?.name
+    ? await invokeChannel('project:get', { id: ctx.projectId, touch: false })
+        .then((detail) => detail.project.name)
+        .catch(() => undefined)
     : undefined
 
   const instructions = systemPrompt({
@@ -526,10 +511,9 @@ function ask(
  * "New chat" forever or making you name it before you know what it is about.
  */
 async function nameConversation(client: OpenAI, ctx: LoopContext, run: Run): Promise<void> {
-  const current = await q1<{ title: string }>('SELECT title FROM conversation WHERE id = $1', [
-    run.conversationId
-  ])
-  if (current?.title) return
+  const current = await must(api.GET('/v1/conversations/{id}', { params: { path: { id: run.conversationId } } }))
+    .catch(() => null)
+  if (current?.conversation.title) return
 
   const transcript = (await replay(run.conversationId))
     .flatMap((item: any) => {
@@ -558,7 +542,7 @@ async function nameConversation(client: OpenAI, ctx: LoopContext, run: Run): Pro
     })
     const title = (response.output_text ?? '').trim().replace(/^["'“”]|["'“”.]$/g, '').slice(0, 80)
     if (!title) return
-    await upsert('conversation', { title }, run.conversationId)
+    await must(api.PATCH('/v1/conversations/{id}', { params: { path: { id: run.conversationId } }, body: { title } }))
     ctx.send({ runId: run.id, type: 'title', conversationId: run.conversationId, title })
   } catch {
     // A conversation with no name is a cosmetic problem; it must never fail the turn.

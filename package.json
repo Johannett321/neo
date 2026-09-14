@@ -1,7 +1,7 @@
 {
   "name": "neo",
   "version": "1.5.0",
-  "description": "A personal command centre for running several working lives at once.",
+  "description": "A personal command centre for running several working lives at once, kept in Neo Cloud.",
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",
   "license": "MIT",
@@ -16,11 +16,9 @@
   "keywords": [
     "electron",
     "project-management",
-    "local-first",
-    "pglite",
-    "postgres",
     "desktop",
-    "personal-knowledge-management"
+    "personal-knowledge-management",
+    "openapi"
   ],
   "type": "module",
   "scripts": {
@@ -36,15 +34,15 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
-    "verify:upgrade": "esbuild test/upgrade.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/upgrade.mjs --external:@electric-sql/pglite --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/upgrade.mjs",
-    "verify:sync": "test/sync.sh"
+    "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
+    "gen:api": "openapi-typescript ${NEO_CLOUD_SPEC:-../neo-sync-server/src/main/resources/openapi/neo-cloud.yaml} -o src/main/lib/cloud/schema.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.8",
-    "openai": "^7.10.0"
+    "openai": "^7.10.0",
+    "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@modelcontextprotocol/server": "^2.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/react-query": "^5.64.1",
@@ -58,6 +56,7 @@
     "electron-vite": "^5.0.0",
     "esbuild": "^0.25.0",
     "framer-motion": "^13.2.0",
+    "openapi-typescript": "^7.13.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.3",

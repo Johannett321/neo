@@ -1,53 +1,28 @@
 import { protocol } from 'electron'
-import { Readable } from 'node:stream'
 import { readFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
-import { attachmentDir, iconDir, q1 } from '../../db/client'
+import { extname } from 'node:path'
 import { changelogMedia } from '../changelog'
-import { readSegmentStream, segmentBytes } from './store'
+import { fetchRaw } from '../cloud/client'
+import { loadSession } from '../cloud/session'
 
 /**
- * How the renderer hears the audio without being able to reach the disk.
+ * How the window shows a stored file without ever holding the token that fetches it.
  *
- * A recording is far too big to hand across the IPC bridge as bytes, and an audio
- * element that has the whole file in memory cannot be seeked into cheaply anyway.
- * So main serves the segments over a scheme of its own, honouring range requests,
- * which is exactly what an `<audio>` element wants: it asks for the part it is about
- * to play and seeks by asking for a different part.
+ * Icons, banners, avatars, pictures in notes and recording audio all live in Neo Cloud.
+ * The window is given `neo-media://` addresses for them, and this handler — in the
+ * process that holds the token — fetches each one from the server and hands the bytes
+ * back. The renderer never sees a URL on the server, and a page loaded in it cannot
+ * reach one.
  *
- * The renderer never learns a path. It asks for a segment by id, and this looks the
- * id up in the database and serves the file that row names — so the only files
- * reachable through this scheme are files this app wrote, whatever URL is typed.
+ * Audio is passed through a part at a time: an `<audio>` element asks for the range it
+ * is about to play and seeks by asking for another, and the `Range` header goes to the
+ * server and the `206` comes back unchanged.
+ *
+ * Pictures are kept in memory once fetched — a file is named once and never changed,
+ * so a copy cannot go stale — and never written to the disk. Signing out forgets them.
  */
 
 export const MEDIA_SCHEME = 'neo-media'
-
-export const segmentUrl = (segmentId: string): string => `${MEDIA_SCHEME}://segment/${segmentId}`
-
-/**
- * The workspace banner, over the same scheme and for the same reason as the audio:
- * it is a photograph, and a photograph handed over the bridge as base64 would be
- * re-sent on every `workspace:list` — which is to say after every write in the app.
- * The renderer gets a URL and still never learns a path.
- */
-export const bannerUrl = (filename: string): string => `${MEDIA_SCHEME}://banner/${encodeURIComponent(filename)}`
-
-/**
- * A changelog's illustrations, over the same scheme and for a third reason: the CSP
- * on the renderer allows an image from `self` and from a data URL and nothing else,
- * and a screenshot of a whole screen is not a thing to inline as base64. The files
- * are bundled with the app rather than fetched, so what this serves is always
- * something the build put there — see `lib/changelog.ts` for the containment check.
- */
-export const changelogUrl = (relative: string): string => `${MEDIA_SCHEME}://changelog/${relative}`
-
-/*
- * A picture in a note is the fourth thing on the scheme, for the banner's reason: a
- * note is re-sent to the renderer on every save, and a screenshot inlined into it
- * would come across the bridge with every keystroke. `imageUrl()` lives in
- * `lib/images.ts`, beside the sweep, so the row mapper can build one without
- * importing Electron's protocol module.
- */
 
 /** Must run before the app is ready, which is why it is not part of the handler. */
 export const MEDIA_SCHEME_PRIVILEGES = {
@@ -55,157 +30,119 @@ export const MEDIA_SCHEME_PRIVILEGES = {
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
 }
 
-const RANGE = /^bytes=(\d*)-(\d*)$/
+/** Pictures under this size are remembered; anything larger is fetched each time. */
+const CACHE_ITEM_BYTES = 4 * 1024 * 1024
+/** And no more than this in all, oldest forgotten first. */
+const CACHE_TOTAL_BYTES = 96 * 1024 * 1024
+
+const cache = new Map<string, { bytes: Uint8Array; type: string }>()
+let cached = 0
+
+/** Everything fetched on behalf of an account, forgotten when it signs out. */
+export function forgetMedia(): void {
+  cache.clear()
+  cached = 0
+}
+
+const STORED_NAME = /^[0-9a-f-]{36}(\.[a-z0-9]{1,8})?$/i
+const SEGMENT_ID = /^[0-9a-f-]{36}$/i
 
 export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     const url = new URL(request.url)
-    if (url.hostname === 'banner') return serveBanner(url)
-    if (url.hostname === 'changelog') return serveChangelog(url)
-    if (url.hostname === 'image') return serveImage(url)
-    if (url.hostname !== 'segment') return new Response('Not found', { status: 404 })
+    const rest = decodeURIComponent(url.pathname.replace(/^\//, ''))
 
-    const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response('Not found', { status: 404 })
+    if (url.hostname === 'changelog') return serveChangelog(rest)
+    if (!loadSession()) return new Response('Not found', { status: 404 })
 
-    const row = await q1<{ path: string; recording_id: string; mime: string }>(
-      `SELECT s.path, s.recording_id, r.mime
-       FROM recording_segment s JOIN recording r ON r.id = s.recording_id
-       WHERE s.id = $1`,
-      [id]
-    )
-    // An empty path is a segment whose audio has been deleted on purpose. It is
-    // gone, not missing, and 404 is the honest answer either way.
-    if (!row?.path) return new Response('Not found', { status: 404 })
-
-    const type = row.mime || 'audio/webm'
-
-    try {
-      const total = await segmentBytes(row.recording_id, row.path)
-      if (total === 0) return new Response('Not found', { status: 404 })
-
-      const match = RANGE.exec(request.headers.get('range') ?? '')
-      if (!match) {
-        const { stream } = await readSegmentStream(row.recording_id, row.path)
-        return new Response(Readable.toWeb(stream as Readable) as ReadableStream, {
-          status: 200,
-          headers: {
-            'content-type': type,
-            'content-length': String(total),
-            'accept-ranges': 'bytes'
-          }
-        })
-      }
-
-      const start = match[1] ? Number(match[1]) : 0
-      const end = match[2] ? Math.min(Number(match[2]), total - 1) : total - 1
-      if (!Number.isFinite(start) || start >= total || end < start) {
-        return new Response('', { status: 416, headers: { 'content-range': `bytes */${total}` } })
-      }
-      const { stream } = await readSegmentStream(row.recording_id, row.path, start, end)
-      return new Response(Readable.toWeb(stream as Readable) as ReadableStream, {
-        status: 206,
-        headers: {
-          'content-type': type,
-          'content-length': String(end - start + 1),
-          'content-range': `bytes ${start}-${end}/${total}`,
-          'accept-ranges': 'bytes'
-        }
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
+    // `image` is what a note's Markdown has always said; `banner` is what older rows said.
+    if (url.hostname === 'file' || url.hostname === 'image' || url.hostname === 'banner') {
+      if (!STORED_NAME.test(rest)) return new Response('Not found', { status: 404 })
+      return serveFile(rest)
     }
+    if (url.hostname === 'segment') {
+      if (!SEGMENT_ID.test(rest)) return new Response('Not found', { status: 404 })
+      return passThrough(`/v1/recording-segments/${rest}/audio`, request.headers.get('range'))
+    }
+    return new Response('Not found', { status: 404 })
   })
 }
 
-/**
- * An illustration out of the bundled changelog.
- *
- * What makes a file servable here is that it resolves to somewhere inside the
- * changelog folder the build shipped — `changelogMedia()` does that check and
- * returns nothing at all otherwise, so a `../` typed into a URL reaches no further
- * than a 404. The folder is read-only and shipped with the app, which is why this
- * needs no database lookup the way a banner does.
- */
-async function serveChangelog(url: URL): Promise<Response> {
-  const path = changelogMedia(decodeURIComponent(url.pathname.replace(/^\//, '')))
-  if (!path) return new Response('Not found', { status: 404 })
+async function serveFile(name: string): Promise<Response> {
+  const hit = cache.get(name)
+  if (hit) return picture(hit.bytes, hit.type)
+
   try {
-    const bytes = await readFile(path)
-    return new Response(new Uint8Array(bytes), {
-      headers: {
-        'content-type': BANNER_MIME[extname(path).toLowerCase()] ?? 'application/octet-stream',
-        // Shipped with the build and therefore unchanging for the life of it.
-        'cache-control': 'private, max-age=31536000, immutable'
-      }
-    })
+    const response = await fetchRaw(`/v1/files/${encodeURIComponent(name)}`)
+    if (!response.ok) return new Response('Not found', { status: 404 })
+    const type = response.headers.get('content-type') ?? 'application/octet-stream'
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength <= CACHE_ITEM_BYTES) remember(name, bytes, type)
+    return picture(bytes, type)
   } catch {
     return new Response('Not found', { status: 404 })
   }
 }
 
-const BANNER_FILE = /^[0-9a-f-]{36}\.(png|jpg|jpeg|webp|gif|svg)$/i
+function picture(bytes: Uint8Array, type: string): Response {
+  return new Response(bytes, {
+    headers: { 'content-type': type, 'cache-control': 'private, max-age=31536000, immutable' }
+  })
+}
 
-/**
- * Serve a workspace's banner. The filename is checked against the shape this app
- * writes *and* against the database, so the only images reachable here are ones a
- * workspace actually points at — a URL typed by hand can name nothing else, and a
- * banner that has been replaced stops being served the moment the row changes.
- */
-async function serveBanner(url: URL): Promise<Response> {
-  const file = decodeURIComponent(url.pathname.replace(/^\//, ''))
-  if (!BANNER_FILE.test(file)) return new Response('Not found', { status: 404 })
+function remember(name: string, bytes: Uint8Array, type: string): void {
+  cache.set(name, { bytes, type })
+  cached += bytes.byteLength
+  for (const [key, value] of cache) {
+    if (cached <= CACHE_TOTAL_BYTES) break
+    cache.delete(key)
+    cached -= value.bytes.byteLength
+  }
+}
 
-  const row = await q1<{ banner_path: string }>(
-    'SELECT banner_path FROM workspace WHERE banner_path = $1 LIMIT 1',
-    [file]
-  )
-  if (!row) return new Response('Not found', { status: 404 })
-
+async function passThrough(path: string, range: string | null): Promise<Response> {
   try {
-    const bytes = await readFile(join(iconDir(), file))
-    return new Response(new Uint8Array(bytes), {
-      headers: {
-        'content-type': BANNER_MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        // The filename is a UUID and its contents never change, so the window may
-        // keep it: without this the photograph is re-read on every navigation.
-        'cache-control': 'private, max-age=31536000, immutable'
-      }
-    })
+    const response = await fetchRaw(path, { headers: range ? { Range: range } : {} })
+    if (!response.ok && response.status !== 206) {
+      return new Response('Not found', { status: response.status === 416 ? 416 : 404 })
+    }
+    const headers = new Headers()
+    for (const key of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+      const value = response.headers.get(key)
+      if (value) headers.set(key, value)
+    }
+    return new Response(response.body, { status: response.status, headers })
   } catch {
     return new Response('Not found', { status: 404 })
   }
 }
 
-const IMAGE_FILE = /^[0-9a-f-]{36}\.(png|jpg|jpeg|webp|gif)$/i
-
-/**
- * A note's picture, checked against the rows exactly as a banner is: only a file a
- * `note_image` row names is served, whatever is typed into the URL.
- */
-async function serveImage(url: URL): Promise<Response> {
-  const file = decodeURIComponent(url.pathname.replace(/^\//, ''))
-  if (!IMAGE_FILE.test(file)) return new Response('Not found', { status: 404 })
-  const row = await q1<{ path: string }>('SELECT path FROM note_image WHERE path = $1 LIMIT 1', [file])
-  if (!row) return new Response('Not found', { status: 404 })
-  try {
-    const bytes = await readFile(join(attachmentDir(), file))
-    return new Response(new Uint8Array(bytes), {
-      headers: {
-        'content-type': BANNER_MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        'cache-control': 'private, max-age=31536000, immutable'
-      }
-    })
-  } catch {
-    return new Response('Not found', { status: 404 })
-  }
-}
-
-const BANNER_MIME: Record<string, string> = {
+const IMAGE_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml'
+}
+
+/**
+ * An illustration out of the bundled changelog — the one kind of file on this scheme
+ * that is not in Neo Cloud, because it shipped with the app. `changelogMedia()` only
+ * answers for a path inside the changelog folder, so a `../` reaches a 404.
+ */
+async function serveChangelog(relative: string): Promise<Response> {
+  const path = changelogMedia(relative)
+  if (!path) return new Response('Not found', { status: 404 })
+  try {
+    const bytes = await readFile(path)
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        'content-type': IMAGE_MIME[extname(path).toLowerCase()] ?? 'application/octet-stream',
+        'cache-control': 'private, max-age=31536000, immutable'
+      }
+    })
+  } catch {
+    return new Response('Not found', { status: 404 })
+  }
 }

@@ -1,5 +1,5 @@
-import { ipcMain, __handlers, __notifications, __fetches } from 'electron'
-import { initDb, closeDb, clearStrandedTriggers, orphanedForeignKeys } from '../src/main/db/client'
+import { ipcMain, __dialog, __handlers, __notifications, __fetches } from 'electron'
+import { registerAccountHandlers } from '../src/main/ipc/account'
 import { registerWorkspaceHandlers } from '../src/main/ipc/workspaces'
 import { registerProjectHandlers } from '../src/main/ipc/projects'
 import { registerTaskHandlers } from '../src/main/ipc/tasks'
@@ -10,8 +10,7 @@ import { registerPeopleHandlers } from '../src/main/ipc/people'
 import { registerContentHandlers } from '../src/main/ipc/content'
 import { registerDashboardHandlers } from '../src/main/ipc/dashboard'
 import { registerSearchHandlers } from '../src/main/ipc/search'
-import { registerSettingsHandlers } from '../src/main/ipc/settings'
-import { registerSyncHandlers } from '../src/main/ipc/sync'
+import { registerSettingsHandlers, SIGNED_OUT_SETTINGS } from '../src/main/ipc/settings'
 import { registerWeatherHandlers } from '../src/main/ipc/weather'
 import { registerUpdateHandlers } from '../src/main/ipc/updates'
 import { registerChatHandlers } from '../src/main/ipc/chat'
@@ -20,11 +19,9 @@ import { TOOLS } from '../src/main/lib/ai/tools'
 import { PANELS, clampPanelWidth } from '../src/shared/panels'
 import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
 import { apiOnly } from '../src/main/lib/ai/run'
-import { invokeChannel, removeWhere, upsert } from '../src/main/ipc/util'
+import { invokeChannel } from '../src/main/ipc/util'
 import { announceChange, onChange } from '../src/main/lib/changes'
-import { attentionReason } from '../src/main/lib/attention'
-import { deliveryDue } from '../src/main/lib/notify'
-import { deliverNotifications } from '../src/main/lib/notifier'
+import { deliverNotifications, deliveryDue } from '../src/main/lib/notifier'
 import { splashDocument } from '../src/main/lib/splash'
 import { describeWeather } from '../src/shared/weather'
 import {
@@ -34,28 +31,32 @@ import {
 import { changelogMedia, listChangelog, readChangelog } from '../src/main/lib/changelog'
 import { checkForUpdate, setUpdatePreference, updateStatus } from '../src/main/lib/updater'
 import { resolveTemperature } from '../src/shared/formats'
-import { kick, reapDeadCaptures, recoverRecordings } from '../src/main/lib/recording/pipeline'
-import { recapMarkdown } from '../src/main/lib/recording/summarise'
-import { pruneRecordings, recordingDir } from '../src/main/lib/recording/store'
 import { helperPath, parseHelperLine } from '../src/main/lib/recording/systemAudio'
-import { addDays, attachmentDir, exec, iconDir, q, q1, today as todayDate } from '../src/main/db/client'
-import { pruneNoteImages } from '../src/main/lib/images'
-import { flushMirrors, mirrorStats } from '../src/main/lib/markdown'
-import {
-  adoptExistingRows, allBatches, deviceId, ingest, initOplog, onLocalWrite, pending, replayLog,
-  SYNC_ORDER
-} from '../src/main/db/oplog'
-import { DEVICE_ONLY_COLUMNS, DEVICE_TABLES, SCHEMA_VERSION } from '@shared/ops'
-import { randomUUID } from 'node:crypto'
-import {
-  blobKey, newMasterKey, open, passphraseComplaint, seal, unwrapMasterKey, workspaceKey, wrapMasterKey
-} from '../src/main/lib/sync/crypto'
+import { api, cloudUrl, fetchRaw, must } from '../src/main/lib/cloud/client'
+import { loadSession } from '../src/main/lib/cloud/session'
+import { today as todayDate } from '../src/main/lib/dates'
+import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { MARK } from '@shared/mark'
 import type { BridgeEndpoint } from '@shared/mcp'
+
+/*
+ * The main process's own handlers, run against a real Neo Cloud.
+ *
+ * Nothing here is a copy of what a handler does: every channel is called the way the
+ * renderer calls it, and what comes back is what the renderer would draw. The data
+ * lives in the server now, so this is also the check that the server's port of the
+ * old TypeScript behaves the way the app was written to expect — the assertions are,
+ * almost word for word, the ones the local database used to be held to.
+ *
+ *   NEO_CLOUD_URL=http://localhost:18080 npm run verify
+ *
+ * Each run registers an account of its own, so runs never see each other.
+ */
 
 const call = async (channel: string, input?: unknown): Promise<any> => {
   const fn = (__handlers as Map<string, any>).get(channel)
@@ -63,12 +64,13 @@ const call = async (channel: string, input?: unknown): Promise<any> => {
   return fn({}, input)
 }
 
-/** Poll until something is ready, for the pipeline, which runs on its own clock. */
-const until = async <T>(check: () => Promise<T | null>, tries = 60): Promise<T | null> => {
-  for (let i = 0; i < tries; i++) {
+/** Poll until something is ready, for the server's pipeline, which runs on its own clock. */
+const until = async <T>(check: () => Promise<T | null>, timeoutMs = 20_000): Promise<T | null> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
     const result = await check()
     if (result) return result
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 250))
   }
   return null
 }
@@ -83,6 +85,16 @@ const threw = async (fn: () => Promise<unknown>, contains: string): Promise<bool
   }
 }
 
+/** True when the call failed at all — for a refusal whose wording is not the point. */
+const refused = async (fn: () => Promise<unknown>): Promise<boolean> => {
+  try {
+    await fn()
+    return false
+  } catch {
+    return true
+  }
+}
+
 /** Today, at a given time, for asserting what happens at ten past nine. */
 const at = (hours: number, minutes: number): Date => {
   const when = new Date()
@@ -90,34 +102,66 @@ const at = (hours: number, minutes: number): Date => {
   return when
 }
 
-
-
-/** Where two snapshots first disagree, so a failure says what rather than that. */
-const firstDifference = (a: string, b: string): string => {
-  const left = a.split('\n')
-  const right = b.split('\n')
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
-    if (left[i] !== right[i]) {
-      const a2 = String(left[i]).split('|')
-      const b2 = String(right[i]).split('|')
-      const fields = a2
-        .map((f, j) => (f === b2[j] ? '' : `${f} -> ${b2[j] ?? '(gone)'}`))
-        .filter(Boolean)
-      return `${a2[0]} row ${i + 1}: ${fields.join('; ').slice(0, 300)}`
-    }
-  }
-  return ''
+/** A calendar day some number of days from another, as the app writes dates. */
+const addDays = (day: string, days: number): string => {
+  const [y, m, d] = day.split('-').map(Number)
+  return todayDate(new Date(y, m - 1, d + days))
 }
 
+/**
+ * The database, for the few facts no channel can reach: a heartbeat gone quiet, a
+ * transcript only a speech service could have written, a row that only exists to stop
+ * something being said twice. Used sparingly, and never for anything a channel answers.
+ *
+ * `NEO_VERIFY_DATABASE_URL` points it at a Postgres the machine can reach directly (CI's
+ * service container); otherwise it runs `psql` inside the development container that
+ * `docker compose up` in neo-sync-server starts.
+ */
+const psql = (sql: string): string => {
+  const url = process.env.NEO_VERIFY_DATABASE_URL
+  const args = ['-v', 'ON_ERROR_STOP=1', '-Atc', sql]
+  return (url
+    ? execFileSync('psql', [url, ...args], { encoding: 'utf8' })
+    : execFileSync('docker', ['exec', process.env.NEO_VERIFY_PG || 'neo-cloud-pg',
+        'psql', '-U', 'postgres', '-d', 'neocloud', ...args], { encoding: 'utf8' })
+  ).trim()
+}
+
+let passed = 0
+let failed = 0
+const failures: string[] = []
 const ok = (label: string, cond: boolean, extra = ''): void => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? ` — ${extra}` : ''}`)
-  if (!cond) process.exitCode = 1
+  if (cond) {
+    passed += 1
+  } else {
+    failed += 1
+    failures.push(label)
+    process.exitCode = 1
+  }
 }
 
+/**
+ * Every request the process made with Node's own `fetch`, which is what the client for
+ * Neo Cloud and the weather both use. The weather is the only thing allowed to reach
+ * anywhere else, and only when it is switched on — which in this run it never is — so
+ * the whole run must end with nothing in `outbound`.
+ */
+const outbound: string[] = []
+const realFetch = globalThis.fetch
+globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  if (!url.startsWith(cloudUrl())) outbound.push(url)
+  return realFetch(input, init)
+}) as typeof fetch
+
+/** One transparent pixel, which is a real PNG and the smallest picture there is. */
+const PIXEL =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
 async function main(): Promise<void> {
-  await initDb()
-  await initOplog()
   void ipcMain
+  registerAccountHandlers()
   registerWorkspaceHandlers()
   registerProjectHandlers()
   registerTaskHandlers()
@@ -129,28 +173,67 @@ async function main(): Promise<void> {
   registerNotificationHandlers()
   registerSearchHandlers()
   registerSettingsHandlers()
-  registerSyncHandlers()
-  registerWeatherHandlers()
   registerUpdateHandlers()
+  registerWeatherHandlers()
   registerMcpHandlers()
+  // Registered last, as in the app: the assistant's tools call the channels above by name.
   registerChatHandlers()
 
-  ok('a fresh database has no workspaces', (await call('workspace:list')).length === 0)
+  const scratch = mkdtempSync(join(tmpdir(), 'neo-verify-files-'))
+
+  /* ------------------------------------------------------------------ signing in */
+
+  /*
+   * Before anybody has signed in the window is the sign-in screen, and it still has to
+   * be drawn in a theme: settings answer with the defaults rather than failing, and
+   * nothing is asked of a server there is no token for.
+   */
+  const signedOutStatus = await call('account:status')
+  ok('a machine nobody has signed in on says so', signedOutStatus.signedIn === false &&
+     signedOutStatus.serverUrl === cloudUrl(), JSON.stringify(signedOutStatus))
+  const signedOutSettings = await call('settings:get')
+  ok('signed out, settings are the defaults the sign-in screen is drawn with',
+     signedOutSettings.theme === SIGNED_OUT_SETTINGS.theme &&
+     signedOutSettings.glassTransparency === 45 && signedOutSettings.onboardedAt === '' &&
+     signedOutSettings.appVersion === '0.0.0-test')
+  ok('and the weather is nobody\'s to ask for', (await call('weather:get', { workspaceId: 'anything' })) === null)
+
+  const username = `verify-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`
+  const password = 'a verify run password'
+  ok('a password too short to be worth anything is refused before an account exists',
+     await threw(() => call('account:register', { username, password: 'short' }), 'at least'))
+
+  const registered = await call('account:register', { username, password })
+  ok('registering signs this machine in as the new account',
+     registered.signedIn === true && registered.username === username && registered.offline === false,
+     JSON.stringify(registered))
+  ok('what the machine keeps is the session, and nothing else',
+     loadSession()?.username === username && Boolean(loadSession()?.token))
+  ok('a username can only be taken once',
+     await refused(() => call('account:register', { username, password })))
+
+  ok('this machine is one of the account\'s devices',
+     (await call('account:devices')).length >= 1)
+
+  await call('account:signOut')
+  ok('signing out forgets the session', loadSession() === null &&
+     (await call('account:status')).signedIn === false)
+  ok('a wrong password is refused and signs nobody in',
+     await refused(() => call('account:signIn', { username, password: 'not the password at all' })) &&
+     (await call('account:status')).signedIn === false)
+  const back = await call('account:signIn', { username, password })
+  ok('the right one signs back in', back.signedIn === true && back.username === username)
+
+  ok('a fresh account has no workspaces', (await call('workspace:list')).length === 0)
 
   // What the first-run introduction is gated on. It has to be written down rather
-  // than inferred from an empty database, because deleting your last workspace after
+  // than inferred from an empty account, because deleting your last workspace after
   // a year of use empties it too and must not re-pitch the app at you.
-  ok('a fresh database has never been through onboarding',
+  ok('a fresh account has never been through onboarding',
      (await call('settings:get')).onboardedAt === '')
   const machineName = await call('profile:suggestName')
   ok('the machine offers a name to start the profile off with',
      typeof machineName.name === 'string', JSON.stringify(machineName.name))
-
-  // A foreign-key trigger whose constraint has gone missing makes every insert into
-  // that table fail with "cache lookup failed for constraint", and the database opens
-  // perfectly beforehand — so the check that catches it has to run on every launch.
-  ok('the schema leaves no foreign key without its constraint',
-     (await orphanedForeignKeys()).length === 0, (await orphanedForeignKeys()).join(', '))
 
   await call('settings:loadSample')
   const workspaces = await call('workspace:list')
@@ -181,22 +264,48 @@ async function main(): Promise<void> {
      flagged.some((p: any) => /overdue item/.test(p.attention)),
      flagged.map((p: any) => p.attention).join(' | '))
 
-  // Only the most pressing fact is reported, so the tiers below it are exercised
-  // directly rather than by hunting for a sample project in each state.
-  const reason = (over: number, still: number, deadline: number | null = null): string | null =>
-    attentionReason({
-      status: 'active', openTasks: 2, overdueTasks: over,
-      worstOverdueDays: over > 0 ? 4 : 0, daysSinceActivity: still, deadlineDays: deadline
-    })
-  ok('overdue outranks everything else', /overdue item/.test(reason(2, 40, 1) ?? ''), String(reason(2, 40, 1)))
-  ok('a near deadline comes next', /deadline in 3 days/.test(reason(0, 40, 3) ?? ''), String(reason(0, 40, 3)))
-  ok('a project nobody has touched is standing still',
-     reason(0, 12) === 'standing still for 12 days', String(reason(0, 12)))
-  ok('a week is the line', reason(0, 6) === null && reason(0, 7) !== null)
-  ok('a project doing fine says nothing at all', reason(0, 1, 60) === null, String(reason(0, 1, 60)))
-  ok('and one paused on purpose is never dragged back',
-     attentionReason({ status: 'paused', openTasks: 9, overdueTasks: 9, worstOverdueDays: 90,
-                       daysSinceActivity: 90, deadlineDays: -5 }) === null)
+  /*
+   * Only the most pressing fact is reported, so the tiers below it are exercised with
+   * projects made to be in exactly one state each. The work is real; only how long
+   * ago somebody last touched a project is written straight into the row, because
+   * waiting twelve days is not a test.
+   */
+  {
+    const tiers = await call('workspace:save', { name: 'Attention tiers' })
+    const make = async (name: string, extra: Record<string, unknown> = {}): Promise<any> =>
+      call('project:save', { workspaceId: tiers.id, name, status: 'active', ...extra })
+    const late = await make('Late', { deadline: addDays(todayDate(), 1) })
+    await call('task:save', { projectId: late.id, title: 'Overdue', dueDate: addDays(todayDate(), -4) })
+    await call('task:save', { projectId: late.id, title: 'Also overdue', dueDate: addDays(todayDate(), -2) })
+    const near = await make('Near', { deadline: addDays(todayDate(), 3) })
+    const still12 = await make('Still twelve')
+    const still6 = await make('Still six')
+    const still7 = await make('Still seven')
+    const fine = await make('Fine', { deadline: addDays(todayDate(), 60) })
+    const resting = await make('Resting')
+    await call('task:save', { projectId: resting.id, title: 'Very late', dueDate: addDays(todayDate(), -90) })
+    await call('project:save', { id: resting.id, status: 'paused' })
+    psql(`UPDATE app.project SET last_activity_at = now() - (CASE id
+            WHEN '${still12.id}' THEN interval '12 days'
+            WHEN '${still6.id}' THEN interval '6 days'
+            WHEN '${still7.id}' THEN interval '7 days'
+            WHEN '${resting.id}' THEN interval '90 days'
+            ELSE interval '40 days' END)
+          WHERE workspace_id = '${tiers.id}' AND id <> '${fine.id}'`)
+    const reasons = new Map<string, string | null>(
+      (await call('project:list', { workspaceId: tiers.id, status: 'all' })).map((p: any) => [p.name, p.attention]))
+    const reason = (name: string): string => String(reasons.get(name))
+    ok('overdue outranks everything else',
+       /^2 overdue items, oldest 4 days past due$/.test(reason('Late')), reason('Late'))
+    ok('a near deadline comes next', /deadline in 3 days/.test(reason('Near')), reason('Near'))
+    ok('a project nobody has touched is standing still',
+       reason('Still twelve') === 'standing still for 12 days', reason('Still twelve'))
+    ok('a week is the line', reasons.get('Still six') === null && reasons.get('Still seven') !== null,
+       `${reason('Still six')} / ${reason('Still seven')}`)
+    ok('a project doing fine says nothing at all', reasons.get('Fine') === null, reason('Fine'))
+    ok('and one paused on purpose is never dragged back', reasons.get('Resting') === null, reason('Resting'))
+    await call('workspace:delete', { id: tiers.id })
+  }
 
   const idle = projects.find((p: any) => p.name === 'Internal tooling')
 
@@ -249,7 +358,7 @@ async function main(): Promise<void> {
 
   // Workspace isolation is the one boundary nothing crosses, filing included.
   const elsewhere = await call('folder:save', { workspaceId: own, name: 'Somewhere else' })
-  ok('a project cannot be filed in another workspace\u2019s folder',
+  ok('a project cannot be filed in another workspace’s folder',
      await threw(() => call('project:save', { id: idle.id, folderId: elsewhere.id }), 'another workspace'))
   ok('and a folder cannot be moved into one either',
      await threw(() => call('folder:save', { id: acme.id, parentId: elsewhere.id }), 'another workspace'))
@@ -285,9 +394,9 @@ async function main(): Promise<void> {
   /*
    * The other half of grouping: a named band on the page you are already on, which
    * folds shut rather than taking you somewhere. It is furniture, like the order of the
-   * cards — nothing derives from it and nothing reaches the mirror — but one thing has
-   * to hold or the two ways of grouping start disagreeing about where a card is: a band
-   * is drawn at one level and holds only projects filed at that level.
+   * cards — nothing derives from it — but one thing has to hold or the two ways of
+   * grouping start disagreeing about where a card is: a band is drawn at one level and
+   * holds only projects filed at that level.
    */
   ok('a workspace starts with no collapsibles',
      (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
@@ -318,7 +427,7 @@ async function main(): Promise<void> {
      await threw(() => call('collapsible:save', { id: later.id, folderId: acme.id }),
                  'stays on the page'))
   const foreignBand = await call('collapsible:save', { workspaceId: own, name: 'Somewhere else' })
-  ok('a project cannot be grouped in another workspace\u2019s collapsible',
+  ok('a project cannot be grouped in another workspace’s collapsible',
      await threw(() => call('project:save', { id: grouped.id, collapsibleId: foreignBand.id }),
                  'another workspace'))
   await call('collapsible:delete', { id: foreignBand.id })
@@ -356,45 +465,6 @@ async function main(): Promise<void> {
   await call('collapsible:delete', { id: deepBand.id })
   ok('and the workspace is back to no collapsibles at all',
      (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
-
-  /* -------------------------------------------------------------- adoption order */
-
-  /*
-   * A project can reference its folder and collapsible. When existing rows are taken
-   * into the log, the referenced rows must be emitted first: a project batch applied
-   * before its folder batch defers, and because sync applies one batch at a time the
-   * deferral becomes a drop.
-   */
-  const adoptWsId = randomUUID()
-  const adoptFolderId = randomUUID()
-  const adoptProjectId = randomUUID()
-  await exec(
-    `INSERT INTO workspace (id, name, color) VALUES ($1, 'Adopt order', '#6366f1')`,
-    [adoptWsId]
-  )
-  await exec(
-    `INSERT INTO project_folder (id, workspace_id, name, sort_order) VALUES ($1, $2, 'Adopted folder', 0)`,
-    [adoptFolderId, adoptWsId]
-  )
-  await exec(
-    `INSERT INTO project (id, workspace_id, name, folder_id, status, summary) VALUES ($1, $2, 'Adopted project', $3, 'active', '')`,
-    [adoptProjectId, adoptWsId, adoptFolderId]
-  )
-  await adoptExistingRows()
-  const folderSeq = await q1<{ seq: string }>(
-    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project_folder'
-     ORDER BY seq DESC LIMIT 1`
-  )
-  const projectSeq = await q1<{ seq: string }>(
-    `SELECT seq FROM op_batch WHERE origin = 'local' AND ops->0->>'table' = 'project'
-     ORDER BY seq DESC LIMIT 1`
-  )
-  ok('adoption emits folders before the projects that point at them',
-     folderSeq !== undefined && projectSeq !== undefined && Number(folderSeq.seq) < Number(projectSeq.seq),
-     `folder=${folderSeq?.seq} project=${projectSeq?.seq}`)
-
-  // Clean up so later workspace-counting tests are not thrown off.
-  await call('workspace:delete', { id: adoptWsId })
 
   /*
    * Arranging the cards by hand. Zero means nobody has said, so a workspace nobody
@@ -472,13 +542,8 @@ async function main(): Promise<void> {
   ok('you sort first in a project cast', detail.cast[0].isMe === true, detail.cast[0].name)
   ok('project detail: nobody carries a hand-set escalation flag any more',
      detail.cast.every((c: any) => !('isEscalation' in c)), Object.keys(detail.cast[0]).join(', '))
-  let refusedSelfRemoval = false
-  try {
-    await call('membership:delete', { id: detail.cast[0].id })
-  } catch {
-    refusedSelfRemoval = true
-  }
-  ok('you cannot be removed from your own project', refusedSelfRemoval)
+  ok('you cannot be removed from your own project',
+     await refused(() => call('membership:delete', { id: detail.cast[0].id })))
   ok('project detail: links', detail.links.length === 5)
   ok('project detail: decisions', detail.decisions.length === 2)
   ok('project detail: notes', detail.notes.length === 2 && detail.notes[0].isPinned === true)
@@ -544,17 +609,21 @@ async function main(): Promise<void> {
 
   /* ----------------------------------------------------------- pictures in notes */
 
-  // One transparent pixel. The bytes go to attachments/, the row to the log, and
-  // the note carries only the URL — which is what the mirror later turns into a path.
-  const PIXEL =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  // The bytes go to Neo Cloud, the row names the file, and the note carries only the
+  // app's own address for it — which the window's protocol handler fetches with the token.
   const picture = await call('noteImage:save', {
     projectId: checkout.id,
     file: { name: 'shot.png', mime: 'image/png', data: PIXEL }
   })
   ok('a picture dropped into a note is stored and given an app URL',
-     picture.url === `neo-media://image/${picture.path}` && existsSync(join(attachmentDir(), picture.path)),
+     picture.url === `neo-media://image/${picture.path}` && /^[0-9a-f-]{36}\.png$/.test(picture.path),
      picture.url)
+  const pictureBack = await fetchRaw(`/v1/files/${encodeURIComponent(picture.path)}`)
+  const pictureBytes = Buffer.from(await pictureBack.arrayBuffer())
+  ok('and the file comes back from Neo Cloud byte for byte, as a picture',
+     pictureBack.status === 200 && pictureBytes.equals(Buffer.from(PIXEL, 'base64')) &&
+     (pictureBack.headers.get('content-type') ?? '').startsWith('image/png'),
+     `${pictureBack.status} ${pictureBack.headers.get('content-type')} ${pictureBytes.length} bytes`)
   ok('anything that is not a picture is refused',
      await threw(() => call('noteImage:save', {
        projectId: checkout.id, file: { name: 'x.txt', mime: 'text/plain', data: 'aGk=' }
@@ -562,35 +631,58 @@ async function main(): Promise<void> {
   const illustrated = await call('note:save', {
     projectId: checkout.id, title: 'With a picture', body: `Look:\n\n![shot|300](${picture.url})\n`
   })
-  const unused = await call('noteImage:save', {
-    projectId: checkout.id,
-    file: { name: 'unused.png', mime: 'image/png', data: PIXEL }
-  })
-  ok('a picture nothing refers to yet is left alone', (await pruneNoteImages()) === 0)
-  await exec("UPDATE note_image SET created_at = now() - interval '2 days' WHERE id = $1", [unused.id])
-  ok('after a day it is swept, and the one a note shows is kept',
-     (await pruneNoteImages()) === 1 &&
-       !existsSync(join(attachmentDir(), unused.path)) &&
-       existsSync(join(attachmentDir(), picture.path)))
+  ok('a note keeps the address of its picture exactly as written',
+     illustrated.body.includes(`![shot|300](neo-media://image/${picture.path})`))
 
-  // The note page saves every 800 ms of typing; the mirror must not be torn down and
-  // rebuilt on every one of them. It waits for the burst to end, and quitting flushes it.
-  await flushMirrors()
-  const writesBefore = mirrorStats.writes
-  await call('note:save', { id: illustrated.id, body: `Look again:\n\n![shot|300](${picture.url})\n` })
-  await call('note:save', { id: illustrated.id, body: `Look once more:\n\n![shot|300](${picture.url})\n` })
-  ok('a burst of saves does not rewrite the mirror on each one', mirrorStats.writes === writesBefore)
-  await flushMirrors()
-  ok('the rewrite happens once the burst is over', mirrorStats.writes === writesBefore + 1,
-     `${writesBefore} -> ${mirrorStats.writes}`)
-  {
-    const projectDir = join((await call('settings:get')).markdownDir, 'Day job', 'Checkout rewrite')
-    const noteFile = join(projectDir, 'notes', `with-a-picture-${illustrated.id.slice(0, 8)}.md`)
-    ok('the mirror copies the picture beside the notes and points the note at it',
-       existsSync(join(projectDir, 'media', picture.path)) &&
-         readFileSync(noteFile, 'utf8').includes(`![shot|300](../media/${picture.path})`),
-       noteFile)
-  }
+  /* --------------------------------------------------------- one account, not two */
+
+  /*
+   * The boundary a server adds that a database on one Mac never needed. Another
+   * account signed in on this same machine sees none of the first one's work, cannot
+   * open it by id, and cannot write to it by id either — even knowing every id.
+   */
+  const intruder = `verify-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}b`
+  await call('account:signOut')
+  await call('account:register', { username: intruder, password })
+  ok('a second account starts with none of the first one\'s workspaces',
+     (await call('workspace:list')).length === 0)
+  ok('and cannot open the first one\'s project by id',
+     await refused(() => call('project:get', { id: checkout.id, touch: false })))
+  ok('nor list its work by asking for its workspace',
+     (await call('project:list', { workspaceId: dayJob, status: 'all' }).catch(() => [])).length === 0 &&
+     (await call('task:list', { projectId: checkout.id }).catch(() => [])).length === 0)
+  ok('nor change it by id',
+     await refused(() => call('project:save', { id: checkout.id, name: 'Taken over' })) &&
+     await refused(() => call('task:setStatus', { id: openTask.id, status: 'open' })))
+  ok('nor fetch its files by name',
+     (await fetchRaw(`/v1/files/${encodeURIComponent(picture.path)}`)).status === 404)
+
+  // A password is changed only by somebody who knows the current one.
+  const newPassword = 'another verify run password'
+  ok('a password is not changed by somebody who does not know the current one',
+     await refused(() => call('account:changePassword', { currentPassword: 'wrong wrong wrong', newPassword })))
+  await call('account:changePassword', { currentPassword: password, newPassword })
+  await call('account:signOut')
+  ok('and once changed, the old one no longer signs in and the new one does',
+     await refused(() => call('account:signIn', { username: intruder, password })) &&
+     (await call('account:signIn', { username: intruder, password: newPassword })).signedIn === true)
+
+  /*
+   * A device signed out from somewhere else. The token stops working, and the next
+   * request that is refused for it is what tells this machine: the session is
+   * forgotten rather than held on to, and the window goes back to the sign-in screen.
+   */
+  const thisDevice = loadSession()?.deviceId ?? ''
+  await refused(() => call('account:revokeDevice', { deviceId: thisDevice }))
+  ok('a device revoked elsewhere finds itself signed out on its next request',
+     thisDevice !== '' && loadSession() === null && (await call('account:status')).signedIn === false)
+
+  await call('account:signIn', { username, password })
+  ok('and signing back in as the first finds everything where it was',
+     (await call('project:get', { id: checkout.id, touch: false })).project.name === 'Checkout rewrite' &&
+     (await call('task:list', { projectId: checkout.id })).find((t: any) => t.id === openTask.id)?.status === 'done')
+
+  /* -------------------------------------------------------------------- canvases */
 
   const flow = await call('canvas:save', {
     projectId: checkout.id,
@@ -621,6 +713,8 @@ async function main(): Promise<void> {
   await call('canvas:delete', { id: flow.id })
   ok('a canvas can be deleted', !(await call('project:get', { id: checkout.id })).canvases.some((c: any) => c.id === flow.id))
 
+  /* ----------------------------------------------------------------------- board */
+
   const todoColumn = detail.columns[0]
   const doingColumn = detail.columns[1]
   const doneColumn = detail.columns[3]
@@ -633,7 +727,10 @@ async function main(): Promise<void> {
      movedBack.columnId === doingColumn.id && movedBack.status === 'open')
   const ticked = await call('task:setStatus', { id: boardTask.id, status: 'done' })
   ok('ticking it elsewhere moves the card to the done column', ticked.columnId === doneColumn.id)
-  await call('task:setStatus', { id: boardTask.id, status: 'open' })
+  const reopenedCard = await call('task:setStatus', { id: boardTask.id, status: 'open' })
+  ok('and unticking it puts the card back at the start of the board',
+     reopenedCard.status === 'open' && reopenedCard.columnId === todoColumn.id && reopenedCard.completedAt === null,
+     `${reopenedCard.columnId} ${reopenedCard.completedAt}`)
 
   // --- columns are the project's own
   const extra = await call('column:save', { projectId: checkout.id, name: 'Blocked' })
@@ -656,17 +753,14 @@ async function main(): Promise<void> {
      afterColumnDelete.tasks.find((t: any) => t.id === boardTask.id).columnId ===
        afterColumnDelete.columns[0].id)
 
-  let refusedLastColumn = false
   const soloProject = await call('project:save', { workspaceId: dayJob, name: 'Solo board', status: 'active' })
   const soloColumns = (await call('project:get', { id: soloProject.id })).columns
   for (const c of soloColumns.slice(1)) await call('column:delete', { id: c.id })
-  try {
-    await call('column:delete', { id: soloColumns[0].id })
-  } catch {
-    refusedLastColumn = true
-  }
-  ok('a board keeps at least one column', refusedLastColumn)
+  ok('a board keeps at least one column',
+     await refused(() => call('column:delete', { id: soloColumns[0].id })))
   await call('project:delete', { id: soloProject.id })
+
+  /* -------------------------------------------------------------------- meetings */
 
   const newMeeting = await call('meeting:save', {
     projectId: checkout.id,
@@ -791,16 +885,16 @@ async function main(): Promise<void> {
   // The two boundaries. A folder in another project would file the note somewhere no
   // screen can draw it; a folder of the other kind would file it on a page that never
   // draws notes at all.
-  ok('a note cannot be filed in a meeting\u2019s folder',
+  ok('a note cannot be filed in a meeting’s folder',
      await threw(() => call('note:save', { id: filedNote.id, folderId: steering.id }),
                  'do not share folders'))
-  ok('nor a meeting in a note\u2019s folder',
+  ok('nor a meeting in a note’s folder',
      await threw(() => call('meeting:save', { id: filedMeeting.id, folderId: research.id }),
                  'do not share folders'))
   const foreignFolder = await call('contentFolder:save', {
     projectId: checkout.id, kind: 'note', name: 'Somewhere else'
   })
-  ok('and neither can be filed in another project\u2019s folder',
+  ok('and neither can be filed in another project’s folder',
      await threw(() => call('note:save', { id: filedNote.id, folderId: foreignFolder.id }),
                  'another project'))
   await call('contentFolder:delete', { id: foreignFolder.id })
@@ -846,12 +940,12 @@ async function main(): Promise<void> {
 
   /* ------------------------------------------------------------------ recording
    *
-   * The pipeline itself is not exercised here — it calls out to a transcription
-   * service, and a test that needs one is a test that does not run. What *is*
-   * exercised is everything that has to be true whether or not that service ever
-   * answers: that the audio is on disk, that the timeline adds up, that a capture
-   * cut off by a power failure comes back as something you can resume, and that a
-   * transcript survives its audio being deleted.
+   * The pipeline's model calls are not exercised here — they call out to a
+   * transcription service, and a test that needs one is a test that does not run.
+   * What *is* exercised is everything that has to be true whether or not that service
+   * ever answers: that every second handed over is stored, that the timeline adds up,
+   * that a capture whose window went quiet comes back as something you can resume,
+   * and that a transcript survives its audio being deleted.
    */
   const recMeeting = await call('meeting:save', {
     projectId: checkout.id,
@@ -865,20 +959,20 @@ async function main(): Promise<void> {
   ok('pressing record twice picks the same capture back up rather than opening a second',
      (await call('recording:start', { meetingId: recMeeting.id })).id === started.id)
 
-  // What the renderer does every second: claim a file, hand over bytes, and be told
-  // how big the file is now. Every byte is flushed before the call resolves.
+  // What the renderer does every second: claim a segment, hand over bytes, and be told
+  // how much of it Neo Cloud now holds. Every chunk is stored before the call resolves.
   const seg1 = await call('recording:openSegment', { id: started.id })
   const appended = await call('recording:appendChunk', {
     segmentId: seg1.segmentId,
     data: Buffer.from('first-second-of-audio').toString('base64')
   })
-  await call('recording:appendChunk', {
+  const appendedMore = await call('recording:appendChunk', {
     segmentId: seg1.segmentId,
     data: Buffer.from('-and-the-next').toString('base64')
   })
-  ok('audio is appended to the segment file and its size reported back',
-     appended.bytes === 21 && existsSync(join(recordingDir(), started.id, '0000.webm')),
-     `${appended.bytes} bytes after the first chunk`)
+  ok('audio is stored a chunk at a time and the size so far reported back',
+     appended.bytes === 21 && appendedMore.bytes === 34 && seg1.ord === 0,
+     `${appended.bytes} then ${appendedMore.bytes} bytes`)
 
   await call('recording:closeSegment', { segmentId: seg1.segmentId, durationMs: 300_000 })
   const seg2 = await call('recording:openSegment', { id: started.id })
@@ -889,22 +983,37 @@ async function main(): Promise<void> {
   await call('recording:closeSegment', { segmentId: seg2.segmentId, durationMs: 120_000 })
 
   const twoParts = await call('recording:get', { meetingId: recMeeting.id })
-  ok('a rolled-over recording is two files on one timeline',
+  ok('a rolled-over recording is two segments on one timeline',
      twoParts.recording.segments.length === 2 &&
      twoParts.recording.segments[0].offsetMs === 0 &&
      twoParts.recording.segments[1].offsetMs === 300_000 &&
      twoParts.recording.durationMs === 420_000,
      `${twoParts.recording.durationMs} ms across ${twoParts.recording.segments.length} parts`)
-  ok('the size shown is the size on disk, summed over the parts',
+  ok('the size shown is what is stored, summed over the parts',
      twoParts.recording.bytes === 34 + 18, String(twoParts.recording.bytes))
 
-  // The machine loses power. Nothing gets to run; the rows are simply as they were.
-  const interruptedCount = await recoverRecordings()
-  const afterCrash = await call('recording:get', { meetingId: recMeeting.id })
-  ok('a capture that was running when the app died comes back as interrupted, not lost',
-     interruptedCount === 1 && afterCrash.recording.captureState === 'interrupted' &&
-     afterCrash.recording.bytes === 52,
-     afterCrash.recording.captureState)
+  // The segment's seconds were joined into one file when it closed; playback reads it.
+  const joined = await fetchRaw(`/v1/recording-segments/${seg1.segmentId}/audio`)
+  ok('a closed segment is one file of exactly the seconds that were handed over',
+     joined.ok && Buffer.from(await joined.arrayBuffer()).toString('utf8') === 'first-second-of-audio-and-the-next')
+  const ranged = await fetchRaw(`/v1/recording-segments/${seg1.segmentId}/audio`, { headers: { Range: 'bytes=0-4' } })
+  ok('and it is served a range at a time, the way an audio element asks for it',
+     ranged.status === 206 && Buffer.from(await ranged.arrayBuffer()).toString('utf8') === 'first',
+     String(ranged.status))
+
+  /*
+   * The window goes away — a renderer that crashed, a machine that lost power — and
+   * its heartbeat stops. Nothing on this side gets to say so; the server notices the
+   * silence on its own and the capture comes back as interrupted, not lost.
+   */
+  psql(`UPDATE app.recording SET heartbeat_at = now() - interval '5 minutes' WHERE id = '${started.id}'`)
+  const reaped = await until(async () => {
+    const view = await call('recording:get', { meetingId: recMeeting.id })
+    return view.recording.captureState === 'interrupted' ? view : null
+  })
+  ok('a capture whose window went quiet is marked interrupted by the server on its own',
+     reaped?.recording.captureState === 'interrupted' && reaped?.recording.bytes === 52,
+     reaped?.recording.captureState ?? 'still recording')
 
   // ...and it can be picked back up, appending to the audio that is already there.
   await call('recording:resume', { id: started.id })
@@ -916,23 +1025,25 @@ async function main(): Promise<void> {
   await call('recording:closeSegment', { segmentId: seg3.segmentId, durationMs: 60_000 })
   const resumed = await call('recording:get', { meetingId: recMeeting.id })
   ok('resuming an interrupted capture keeps what was already recorded and adds to it',
+     resumed.recording.captureState === 'recording' &&
      resumed.recording.segments.length === 3 &&
      resumed.recording.segments[2].offsetMs === 420_000 &&
-     resumed.recording.durationMs === 480_000)
+     resumed.recording.durationMs === 480_000,
+     `${resumed.recording.segments.length} parts, ${resumed.recording.durationMs} ms`)
 
-  // A renderer that dies without the app dying stops sending its heartbeat.
-  await exec(`UPDATE recording SET heartbeat_at = now() - interval '5 minutes' WHERE id = $1`, [
-    started.id
-  ])
-  await reapDeadCaptures()
-  ok('a capture whose window went away is marked interrupted by main on its own',
-     (await call('recording:get', { meetingId: recMeeting.id })).recording.captureState === 'interrupted')
-
-  const stopped = await call('recording:stop', { id: started.id, durationMs: 480_000 })
+  // The window closes on a segment it has not got round to closing: stopping has to
+  // finish it, or its last seconds would never be joined into anything playable.
+  const seg4 = await call('recording:openSegment', { id: started.id })
+  await call('recording:appendChunk', {
+    segmentId: seg4.segmentId,
+    data: Buffer.from('last-words').toString('base64')
+  })
+  const stopped = await call('recording:stop', { id: started.id, durationMs: 490_000 })
   ok('stopping closes every open segment and hands the recording to the pipeline',
-     stopped.captureState === 'stopped' &&
-     (await q<any>('SELECT closed FROM recording_segment WHERE recording_id = $1', [stopped.id]))
-       .every((row: any) => row.closed))
+     stopped.captureState === 'stopped' && stopped.stoppedAt !== null && stopped.segments.length === 4 &&
+     psql(`SELECT count(*) FROM app.recording_segment WHERE recording_id = '${stopped.id}' AND NOT closed`) === '0' &&
+     stopped.bytes === 52 + 22 + 10,
+     `${stopped.segments.length} parts, ${stopped.bytes} bytes`)
 
   /*
    * This workspace has no API key, so the pipeline that just picked the recording up
@@ -941,13 +1052,12 @@ async function main(): Promise<void> {
    * the end of time.
    */
   const settled = await until(async () => {
-    const row = (await q<any>('SELECT transcript_state, transcript_error FROM recording WHERE id = $1',
-                              [stopped.id]))[0]
-    return ['done', 'failed'].includes(row.transcript_state) ? row : null
+    const view = await call('recording:get', { meetingId: recMeeting.id })
+    return ['done', 'failed'].includes(view.recording.transcriptState) ? view.recording : null
   })
   ok('a recording it cannot transcribe fails once, permanently, and says what to fix',
-     settled?.transcript_state === 'failed' && /API key/i.test(settled.transcript_error ?? ''),
-     settled?.transcript_error)
+     settled?.transcriptState === 'failed' && /API key/i.test(settled.transcriptError ?? ''),
+     settled?.transcriptError)
   ok('a stopped recording refuses to be recorded over',
      await threw(() => call('recording:start', { meetingId: recMeeting.id }), 'already has a recording'))
   // Deleting the audio is only ever a trade of sound for words. Before the words
@@ -955,54 +1065,50 @@ async function main(): Promise<void> {
   ok('audio cannot be thrown away before it has been turned into words',
      await threw(() => call('recording:deleteAudio', { id: stopped.id }), 'not been transcribed'))
 
-  // Stand in for the transcription and the recap, which need a service to produce.
+  /*
+   * Stand in for the transcription and the recap, which need a service to produce.
+   * `next_attempt_at` is pushed out so the runner leaves the row alone until this test
+   * says otherwise: the fold-in below is asserted by calling the channel first, and a
+   * runner that got there a moment earlier would make that a race.
+   */
   const recordingId = stopped.id
-  for (const [i, line] of ['Shall we ship on Friday?', 'Yes. I will do the release notes.'].entries()) {
-    await exec(
-      `INSERT INTO transcript_cue (recording_id, ord, start_ms, end_ms, speaker, text)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [recordingId, i, i * 5000, i * 5000 + 4000, `Speaker ${i + 1}`, line]
-    )
-  }
-  // Written straight in, like sample data, so it is taken into the log the same way.
-  await adoptExistingRows()
-  await upsert('recording', {
-    transcriptState: 'done',
-    transcriptModel: 'whisper-1',
-    speakerState: 'done',
-    speakers: JSON.stringify({
-      'Speaker 1': { name: '', personId: null },
-      'Speaker 2': { name: '', personId: null }
-    }),
-    summaryState: 'done',
-    summary: 'A short call about the release.',
-    recap: JSON.stringify({
-      decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
-      commitments: [{ who: 'Ida', what: 'Write the release notes', due: '' }],
-      insights: ['Nobody has checked the migration yet.']
-    })
-  }, recordingId)
+  psql(`INSERT INTO app.transcript_cue (account_id, recording_id, ord, start_ms, end_ms, speaker, text)
+          SELECT account_id, id, v.ord, v.ord * 5000, v.ord * 5000 + 4000, v.speaker, v.text
+            FROM app.recording,
+                 (VALUES (0, 'Speaker 1', 'Shall we ship on Friday?'),
+                         (1, 'Speaker 2', 'Yes. I will do the release notes.')) AS v(ord, speaker, text)
+           WHERE id = '${recordingId}';
+        UPDATE app.recording SET
+          transcript_state = 'done', transcript_error = '', transcript_model = 'whisper-1',
+          speaker_state = 'done',
+          speakers = '{"Speaker 1": {"name": "", "personId": null}, "Speaker 2": {"name": "", "personId": null}}',
+          summary_state = 'done', summary = 'A short call about the release.',
+          recap = '{"decisions": [{"what": "Ship on Friday", "who": "Ida"}],
+                    "commitments": [{"who": "Ida", "what": "Write the release notes", "due": "2024-05-03"}],
+                    "insights": ["Nobody has checked the migration yet."]}',
+          suggested_title = 'Friday release call',
+          next_attempt_at = now() + interval '1 hour'
+         WHERE id = '${recordingId}';
+        UPDATE app.meeting SET title = '' WHERE id = '${recMeeting.id}';`)
 
   const speakerNamed = await call('recording:nameSpeaker', {
     id: recordingId,
     label: 'Speaker 2',
     name: 'Ida Berg'
   })
+  const cuesAfterNaming = await call('recording:get', { meetingId: recMeeting.id })
   ok('a speaker is named once, against the label rather than against every line',
      speakerNamed.speakers['Speaker 2'].name === 'Ida Berg' &&
-     (await q<any>('SELECT speaker FROM transcript_cue WHERE recording_id = $1 ORDER BY ord', [recordingId]))[1]
-       .speaker === 'Speaker 2')
+     cuesAfterNaming.cues[1].speaker === 'Speaker 2',
+     JSON.stringify(speakerNamed.speakers))
 
   /*
    * A recap that sits behind a button on a second screen is a recap nobody reads, so
    * the pipeline folds it into the meeting itself the moment it is written: into the
    * write-up, onto the name if there is not one, and onto the to-do list for every
-   * commitment somebody made out loud. All of it through the ordinary channels, so
-   * what arrives is indistinguishable from what you would have typed.
+   * commitment somebody made out loud. All of it through the same code the meeting
+   * endpoints run, so what arrives is indistinguishable from what you would have typed.
    */
-  await upsert('recording', { suggestedTitle: 'Friday release call' }, recordingId)
-  await upsert('meeting', { title: '' }, recMeeting.id)
-
   ok('a recap that has not been folded into its meeting yet says so',
      (await call('recording:get', { meetingId: recMeeting.id })).recording.recapWrittenAt === null)
 
@@ -1010,6 +1116,9 @@ async function main(): Promise<void> {
   ok('the recap lands in the write-up on its own, as ordinary Markdown',
      applied.body.includes('Ship on Friday') && applied.body.includes('release notes'),
      applied.body.replace(/\n/g, ' ').slice(0, 70))
+  ok('the recap renders a commitment the same way everywhere it is written',
+     applied.body.includes('- **Ida**: Write the release notes (by 2024-05-03)'),
+     applied.body.replace(/\n/g, ' | '))
   ok('and a meeting nobody named is given the name the recap suggested',
      applied.title === 'Friday release call', applied.title)
   ok('someone saying they will do something becomes one of the meeting\'s to-do items',
@@ -1024,10 +1133,10 @@ async function main(): Promise<void> {
      again.body === applied.body && again.todos.length === applied.todos.length)
 
   // A name you typed is never replaced by one a model came up with.
-  await upsert('recording', { recapWrittenAt: null, suggestedTitle: 'Something else' }, recordingId)
-  await upsert('meeting', { title: 'The name I gave it' }, recMeeting.id)
+  psql(`UPDATE app.recording SET recap_written_at = NULL, suggested_title = 'Something else' WHERE id = '${recordingId}';
+        UPDATE app.meeting SET title = 'The name I gave it' WHERE id = '${recMeeting.id}';`)
   const renamed = await call('recording:applyRecap', { id: recordingId })
-  ok('a meeting you have named keeps the name you gave it', renamed.title === 'The name I gave it')
+  ok('a meeting you have named keeps the name you gave it', renamed.title === 'The name I gave it', renamed.title)
   ok('and a commitment already on the list is not added to it again',
      renamed.todos.filter((t: any) => t.text.includes('release notes')).length === 1,
      renamed.todos.map((t: any) => t.text).join(' | '))
@@ -1038,17 +1147,10 @@ async function main(): Promise<void> {
    * and finishes on its own — which is what carries a recap written by an older build,
    * or one whose meeting was busy at the time, over the line.
    */
-  await upsert('recording', {
-    recapWrittenAt: null,
-    recapTodosAt: null,
-    recap: JSON.stringify({
-      decisions: [],
-      commitments: [{ who: 'Tom', what: 'Book the migration window', due: '' }],
-      insights: []
-    })
-  }, recordingId)
-  await upsert('meeting', { body: '' }, recMeeting.id)
-  kick()
+  psql(`UPDATE app.recording SET recap_written_at = NULL, recap_todos_at = NULL, next_attempt_at = NULL,
+          recap = '{"decisions": [], "commitments": [{"who": "Tom", "what": "Book the migration window", "due": ""}], "insights": []}'
+         WHERE id = '${recordingId}';
+        UPDATE app.meeting SET body = '' WHERE id = '${recMeeting.id}';`)
 
   const folded = await until(async () => {
     const view = await call('recording:get', { meetingId: recMeeting.id })
@@ -1067,7 +1169,7 @@ async function main(): Promise<void> {
    * of the recap. Clearing only the to-do marker is exactly that situation.
    */
   const bodyOnce = runnerMeeting.body
-  await upsert('recording', { recapTodosAt: null }, recordingId)
+  psql(`UPDATE app.recording SET recap_todos_at = NULL, next_attempt_at = now() + interval '1 hour' WHERE id = '${recordingId}'`)
   await call('recording:applyRecap', { id: recordingId })
   const retried = (await call('project:get', { id: checkout.id, touch: false }))
     .meetings.find((m: any) => m.id === recMeeting.id)
@@ -1078,25 +1180,20 @@ async function main(): Promise<void> {
   // Asking for the recap again means you want the new answer on the to-do list — but
   // not a second copy of it in a write-up you have been editing.
   await call('recording:retry', { id: recordingId, step: 'summary' })
-  const afterRetry = (await q<any>(
-    'SELECT recap_written_at, recap_todos_at FROM recording WHERE id = $1', [recordingId]
-  ))[0]
-  ok('asking for the recap again reopens the to-do list but not the write-up',
-     afterRetry.recap_written_at !== null && afterRetry.recap_todos_at === null)
+  const markers = psql(`SELECT (recap_written_at IS NOT NULL)::text || ',' || (recap_todos_at IS NULL)::text
+                          FROM app.recording WHERE id = '${recordingId}'`)
+  ok('asking for the recap again reopens the to-do list but not the write-up', markers === 'true,true', markers)
   // Put it back the way it was: what follows is about a finished recording, and a
   // test that leaves the world half-rewritten behind it is a test that fails the
   // next one for reasons that have nothing to do with the next one.
-  await upsert('recording', { summaryState: 'done', recapTodosAt: new Date() }, recordingId)
+  psql(`UPDATE app.recording SET summary_state = 'done', summary_error = '', recap_todos_at = now(),
+          next_attempt_at = now() + interval '1 hour' WHERE id = '${recordingId}'`)
 
   ok('a meeting carries its recording, so a list can say what state it is in',
      (await call('project:get', { id: checkout.id, touch: false }))
        .meetings.find((m: any) => m.id === recMeeting.id)?.recording?.summaryState === 'done')
 
-  /*
-   * A cascade in the database frees no disk. Deleting a meeting takes its recording
-   * row with it through the foreign keys, and the audio — the only large thing this
-   * app writes — would sit in the folder forever if nothing went and got it.
-   */
+  // A recording started by mistake goes with its meeting, however much audio it holds.
   const mistake = await call('meeting:save', {
     projectId: checkout.id,
     title: 'Recorded by mistake',
@@ -1108,39 +1205,29 @@ async function main(): Promise<void> {
     segmentId: scrapSegment.segmentId,
     data: Buffer.from('forty-minutes-of-a-keyboard').toString('base64')
   })
-  const scrapDir = join(recordingDir(), scrap.id)
-  ok('a recording in progress has a folder of its own on disk', existsSync(scrapDir))
-
   await call('meeting:delete', { id: mistake.id })
-  ok('deleting a meeting takes its audio off the disk, not just its rows',
-     !existsSync(scrapDir))
-
-  // The backstop, for audio orphaned by a route that forgot to sweep — and it must
-  // only ever take the folders that no row answers for.
-  const orphan = join(recordingDir(), '00000000-0000-4000-8000-00000000dead')
-  mkdirSync(orphan, { recursive: true })
-  writeFileSync(join(orphan, '0000.webm'), 'stale')
-  const survivor = join(recordingDir(), recordingId)
-  const swept = await pruneRecordings()
-  ok('the sweep removes audio no recording answers for, and only that',
-     swept === 1 && !existsSync(orphan) && existsSync(survivor),
-     `${swept} folder(s) swept`)
+  ok('deleting a meeting takes its recording and its audio with it',
+     psql(`SELECT count(*) FROM app.recording WHERE id = '${scrap.id}'`) === '0' &&
+     psql(`SELECT count(*) FROM app.recording_chunk WHERE segment_id = '${scrapSegment.segmentId}'`) === '0')
 
   // The whole point of keeping the words separately from the sound.
   const stripped = await call('recording:deleteAudio', { id: recordingId })
   const stillThere = await call('recording:get', { meetingId: recMeeting.id })
-  ok('deleting the audio frees the disk and keeps every word of the transcript',
+  ok('deleting the audio frees the space and keeps every word of the transcript',
      stripped.bytes === 0 && stripped.audioDeletedAt !== null &&
-     !existsSync(join(recordingDir(), recordingId)) &&
      stillThere.cues.length === 2 && stillThere.recording.summary !== '',
      `${stillThere.cues.length} lines kept`)
+  ok('and the audio is no longer served',
+     !(await fetchRaw(`/v1/recording-segments/${seg1.segmentId}/audio`)).ok)
 
-  ok('the recap renders the same Markdown everywhere it is written',
-     recapMarkdown('A short call.', {
-       decisions: [{ what: 'Ship on Friday', who: 'Ida' }],
-       commitments: [{ who: 'Ida', what: 'Write the release notes', due: '2024-05-03' }],
-       insights: []
-     }).includes('- **Ida**: Write the release notes (by 2024-05-03)'))
+  await call('recording:delete', { id: recordingId })
+  const noRecording = await call('recording:get', { meetingId: recMeeting.id })
+  ok('deleting the recording leaves the meeting and its write-up behind, with no recording on it',
+     noRecording.recording === null && noRecording.cues.length === 0 &&
+     (await call('project:get', { id: checkout.id, touch: false }))
+       .meetings.find((m: any) => m.id === recMeeting.id)?.title === 'The name I gave it')
+  ok('and a meeting whose recording is gone can be recorded again',
+     (await call('recording:start', { meetingId: recMeeting.id })).captureState === 'recording')
 
   /*
    * The native audio tap: a helper binary, not a module, so the question the app has
@@ -1163,11 +1250,11 @@ async function main(): Promise<void> {
    */
   {
     const ready = parseHelperLine('{"type":"ready","sampleRate":24000,"channels":1,"format":"s16le"}')
-    const moved = parseHelperLine('{"type":"format","sampleRate":48000}')
+    const movedRate = parseHelperLine('{"type":"format","sampleRate":48000}')
     const bare = parseHelperLine('{"type":"ready"}')
     ok('the helper\'s rate is read off its own report, and a change of rate is its own event',
        ready?.type === 'ready' && ready.sampleRate === 24000 &&
-       moved?.type === 'format' && moved.sampleRate === 48000 &&
+       movedRate?.type === 'format' && movedRate.sampleRate === 48000 &&
        bare?.type === 'ready' && bare.sampleRate === 48000 &&
        parseHelperLine('not json at all') === null &&
        parseHelperLine('{"type":"error","message":"no"}')?.type === 'error')
@@ -1179,7 +1266,7 @@ async function main(): Promise<void> {
     captureSystemAudio: false,
     systemAudioDevice: 'BlackHole 2ch'
   })
-  ok('what a recording listens to is remembered on this machine',
+  ok('what a recording listens to is remembered',
      audio.captureSystemAudio === false && audio.systemAudioDevice === 'BlackHole 2ch')
   ok('and trying to catch the computer\'s own sound is on until it is turned off',
      (await call('settings:save', { captureSystemAudio: true })).captureSystemAudio === true)
@@ -1192,7 +1279,7 @@ async function main(): Promise<void> {
   const formats = await call('settings:save', {
     clockFormat: '24', dateFormat: 'ymd', temperatureUnits: 'f'
   })
-  ok('how a date, a clock and a temperature read is remembered on this machine',
+  ok('how a date, a clock and a temperature read is remembered',
      formats.clockFormat === '24' && formats.dateFormat === 'ymd' &&
      formats.temperatureUnits === 'f')
   ok('and a value that is not one of the choices falls back to the system\'s own',
@@ -1219,28 +1306,46 @@ async function main(): Promise<void> {
 
   /*
    * All of this is decoration, and that is the point: nothing here is read by
-   * attention, by the mirror or by anything that decides what to do next, which is
-   * why it is the one part of the app the user gets to arrange. What it must still
-   * do is behave like everything else — clean up after itself, stay inside its
-   * workspace, and never make a network request nobody asked for.
+   * attention or by anything that decides what to do next, which is why it is the one
+   * part of the app the user gets to arrange. What it must still do is behave like
+   * everything else — stay inside its workspace, and never make a network request
+   * nobody asked for.
    */
-  mkdirSync(iconDir(), { recursive: true })
-  const firstBanner = '11111111-1111-4111-8111-111111111111.png'
-  const secondBanner = '22222222-2222-4222-8222-222222222222.png'
-  for (const file of [firstBanner, secondBanner]) writeFileSync(join(iconDir(), file), 'x')
+  const bannerFile = join(scratch, 'banner.png')
+  writeFileSync(bannerFile, Buffer.from(PIXEL, 'base64'))
 
-  const bannered = await call('workspace:save', { id: dayJob, bannerPath: firstBanner })
-  ok('a banner comes back as a URL the renderer can draw and not as a path it could read',
-     bannered.banner === `neo-media://banner/${firstBanner}` && !bannered.banner.includes(iconDir()),
+  ok('a picker that is cancelled stores nothing', (await call('banner:pick')) === null)
+
+  __dialog.open = { canceled: false, filePaths: [bannerFile] }
+  const pickedBanner = await call('banner:pick')
+  __dialog.open = { canceled: true, filePaths: [] }
+  ok('a banner chosen from the disk is sent to Neo Cloud and named by it',
+     /^[0-9a-f-]{36}\.png$/.test(pickedBanner?.bannerPath ?? '') &&
+     pickedBanner.url === `neo-media://file/${pickedBanner.bannerPath}`,
+     JSON.stringify(pickedBanner))
+
+  const bannered = await call('workspace:save', { id: dayJob, bannerPath: pickedBanner.bannerPath })
+  ok('a banner comes back as an address the renderer can draw and not as a path it could read',
+     bannered.banner === `neo-media://file/${pickedBanner.bannerPath}` && !bannered.banner.includes(scratch),
      bannered.banner)
+  ok('and the picture is really there to be drawn',
+     (await fetchRaw(`/v1/files/${encodeURIComponent(pickedBanner.bannerPath)}`)).status === 200)
 
-  await call('workspace:save', { id: dayJob, bannerPath: secondBanner })
-  ok('replacing a banner takes the old file with it',
-     !existsSync(join(iconDir(), firstBanner)) && existsSync(join(iconDir(), secondBanner)))
+  const notAPicture = join(scratch, 'notes.txt')
+  writeFileSync(notAPicture, 'not a picture')
+  __dialog.open = { canceled: false, filePaths: [notAPicture] }
+  ok('a file that is not a picture is refused before it is sent anywhere',
+     await threw(() => call('icon:pick'), 'Unsupported image type'))
+  __dialog.open = { canceled: false, filePaths: [bannerFile] }
+  const pickedIcon = await call('icon:pick')
+  __dialog.open = { canceled: true, filePaths: [] }
+  ok('an icon is stored the same way',
+     pickedIcon?.dataUrl === `neo-media://file/${pickedIcon?.iconPath}` &&
+     (await call('workspace:save', { id: own, iconPath: pickedIcon.iconPath })).icon === pickedIcon.dataUrl)
+  await call('workspace:save', { id: own, iconPath: '' })
 
   const bare = await call('workspace:save', { id: dayJob, bannerPath: '' })
-  ok('and removing one leaves nothing behind to draw',
-     bare.banner === null && !existsSync(join(iconDir(), secondBanner)))
+  ok('and removing one leaves nothing behind to draw', bare.banner === null)
 
   const panned = await call('workspace:save', { id: dayJob, bannerX: 20, bannerY: 140 })
   ok('a banner remembers which part of it is seen, and cannot be moved off its own edge',
@@ -1284,11 +1389,13 @@ async function main(): Promise<void> {
    * The weather is the only thing in this application that talks to the internet
    * without a key of yours, so switching it off has to mean *no request* rather
    * than a request whose answer is dropped. This assertion is what keeps that true:
-   * it returns null, and it returns it without a socket, which is also why the whole
-   * verify run stays offline.
+   * it returns null, and it returns it without a request to anywhere but Neo Cloud,
+   * which is also why the whole verify run stays off the rest of the internet.
    */
+  const outboundBefore = outbound.length
   ok('weather switched off asks nobody anything',
-     (await call('weather:get', { workspaceId: dayJob })) === null)
+     (await call('weather:get', { workspaceId: dayJob })) === null && outbound.length === outboundBefore,
+     outbound.slice(outboundBefore).join(', '))
 
   ok('a weather code becomes the same words and the same picture on both sides',
      describeWeather(0, true).icon === 'weatherSun' &&
@@ -1308,7 +1415,7 @@ async function main(): Promise<void> {
   // counts them — asking the row's own `done` would report closed work as owing.
   await call('meetingTodo:promote', { id: item.id })
   const promotedCard = (await call('project:get', { id: checkout.id, touch: false }))
-    .meetings[0].todos[3]
+    .meetings.find((m: any) => m.id === sync.id).todos[3]
   await call('task:setStatus', { id: promotedCard.taskId, status: 'done' })
   const afterClosing = await call('dashboard:today', { workspaceId: dayJob })
   ok('closing the card it became stops Today counting it',
@@ -1325,7 +1432,7 @@ async function main(): Promise<void> {
 
   await call('meetingTodo:delete', { id: item.id })
   ok('a to-do can be removed',
-     (await call('project:get', { id: checkout.id })).meetings[0].todos.length === 3)
+     (await call('project:get', { id: checkout.id })).meetings.find((m: any) => m.id === sync.id).todos.length === 3)
   await call('task:delete', { id: card.taskId })
 
   const created = await call('task:save', { projectId: checkout.id, title: 'Lands in the first column' })
@@ -1338,6 +1445,35 @@ async function main(): Promise<void> {
   ok('search cannot reach another workspace',
      (await call('search:query', { workspaceId: dayJob, q: 'Lena' })).length === 0 &&
      (await call('search:query', { workspaceId: consultancy, q: 'Lena' })).length > 0)
+  ok('an empty search is no search at all, and asks nothing',
+     (await call('search:query', { workspaceId: dayJob, q: '   ' })).length === 0)
+
+  /*
+   * The filters every list takes. Each is optional and each only ever narrows, and the
+   * workspace one is the fence: a list asked for by workspace holds nothing from any
+   * other.
+   */
+  {
+    const everyTask = await call('task:list', { workspaceId: dayJob })
+    const delegated = await call('task:list', { workspaceId: dayJob, kind: 'delegated' })
+    const closed = await call('task:list', { workspaceId: dayJob, status: 'done' })
+    ok('a task list narrows by workspace, by kind and by status, and never widens',
+       everyTask.length > 0 && everyTask.every((t: any) => dayJobNames.has(t.projectName)) &&
+       delegated.length > 0 && delegated.length < everyTask.length && delegated.every((t: any) => t.kind === 'delegated') &&
+       closed.length > 0 && closed.every((t: any) => t.status === 'done'),
+       `${everyTask.length} / ${delegated.length} delegated / ${closed.length} done`)
+    ok('a project list can be searched by name or by what it says about itself',
+       (await call('project:list', { workspaceId: dayJob, query: 'checkout' })).map((p: any) => p.name).join() === 'Checkout rewrite' &&
+       (await call('project:list', { workspaceId: dayJob, query: 'rota' })).map((p: any) => p.name).join() === 'Internal tooling' &&
+       (await call('project:list', { workspaceId: own, query: 'checkout' })).length === 0)
+    ok('and narrowed to one status, with "all" meaning every status',
+       (await call('project:list', { workspaceId: dayJob, status: 'paused' })).length === 0 &&
+       (await call('project:list', { workspaceId: dayJob, status: 'active' })).length === 3)
+    ok('people can be searched by name, organisation or address',
+       (await call('person:list', { workspaceId: dayJob, query: 'priya' })).map((p: any) => p.name).join() === 'Priya Raman' &&
+       (await call('person:list', { workspaceId: dayJob, query: 'acme.example' })).some((p: any) => p.name === 'Priya Raman') &&
+       (await call('person:list', { workspaceId: own, query: 'priya' })).length === 0)
+  }
 
   const dayJobPeople = await call('person:list', { workspaceId: dayJob })
   ok('people are fenced to their workspace',
@@ -1392,61 +1528,42 @@ async function main(): Promise<void> {
   ok('the summary is what a project says about itself',
      saved.summary === 'Rewritten by the verification run.')
 
-  /*
-   * A killed process can leave a foreign-key trigger behind whose constraint is gone.
-   * The table then refuses every insert with "cache lookup failed for constraint N"
-   * and keeps refusing, so the repair has to tell two cases apart: debris left by a
-   * table that no longer exists, which is safe to remove, and a real foreign key that
-   * lost its row, which must not be quietly abandoned.
-   */
-  {
-    const { PGlite } = await import('@electric-sql/pglite')
-    const scratch = new PGlite()
-    await scratch.waitReady
-    await scratch.exec(`
-      CREATE TABLE parent (id int PRIMARY KEY);
-      CREATE TABLE gone (id int PRIMARY KEY);
-      CREATE TABLE child (
-        id int PRIMARY KEY,
-        parent_id int REFERENCES parent(id),
-        gone_id int REFERENCES gone(id)
-      );
-      INSERT INTO parent VALUES (1);
-    `)
-    // Debris: the constraint row goes, and the table it referenced is no longer
-    // anything pg_class answers to — which is what a dropped table leaves behind.
-    const goneFk = (await scratch.query<any>(
-      `SELECT oid FROM pg_constraint WHERE conname = 'child_gone_id_fkey'`)).rows[0].oid
-    // A dropped table takes its own two triggers with it; the two on the other side
-    // are the ones left stranded, which is exactly the shape the real damage had.
-    await scratch.query(`DELETE FROM pg_trigger WHERE tgconstraint = $1 AND tgrelid = 'gone'::regclass`, [goneFk])
-    await scratch.query(`UPDATE pg_trigger SET tgconstrrelid = 999999 WHERE tgconstraint = $1`, [goneFk])
-    await scratch.query(`DELETE FROM pg_constraint WHERE oid = $1`, [goneFk])
-    // A real one: the referenced table is alive, only the constraint row is missing.
-    await scratch.query(`DELETE FROM pg_constraint WHERE conname = 'child_parent_id_fkey'`)
+  /* -------------------------------------------------------------------- decisions, links, journal */
 
-    const before = await orphanedForeignKeys(scratch)
-    ok('a lost foreign key is noticed', before.includes('child'), before.join(', '))
+  const decided = await call('decision:save', {
+    projectId: checkout.id, title: 'Ship behind a flag', rationale: 'So it can be turned off.', decidedOn: '2026-01-10'
+  })
+  const linked = await call('link:save', { projectId: checkout.id, label: 'Spec', url: 'https://example.com/spec' })
+  const written = await call('journal:save', { projectId: checkout.id, body: 'Wrote the verify run.' })
+  const withRecords = await call('project:get', { id: checkout.id, touch: false })
+  ok('a decision, a link and a journal entry each land on their project',
+     withRecords.decisions.some((d: any) => d.id === decided.id && d.title === 'Ship behind a flag') &&
+     withRecords.links.some((l: any) => l.id === linked.id && l.url === 'https://example.com/spec') &&
+     withRecords.journal.some((j: any) => j.id === written.id && j.body === 'Wrote the verify run.'),
+     `${withRecords.decisions.length} decisions, ${withRecords.links.length} links, ${withRecords.journal.length} entries`)
+  ok('and can be edited in place',
+     (await call('decision:save', { id: decided.id, title: 'Ship behind a flag, off by default' })).title ===
+       'Ship behind a flag, off by default' &&
+     (await call('link:save', { id: linked.id, label: 'The spec' })).label === 'The spec' &&
+     (await call('journal:save', { id: written.id, body: 'Rewrote the verify run.' })).body === 'Rewrote the verify run.')
+  await call('decision:delete', { id: decided.id })
+  await call('link:delete', { id: linked.id })
+  await call('journal:delete', { id: written.id })
+  const withoutRecords = await call('project:get', { id: checkout.id, touch: false })
+  ok('and taken off again',
+     withoutRecords.decisions.length === detail.decisions.length &&
+     withoutRecords.links.length === detail.links.length &&
+     withoutRecords.journal.length === detail.journal.length)
 
-    const cleared = await clearStrandedTriggers(scratch)
-    ok('only the debris is removed', cleared === 2, `${cleared} trigger(s)`)
-    ok('a foreign key whose table still exists is left alone, not silently abandoned',
-       (await orphanedForeignKeys(scratch)).includes('child'))
-
-    const survivors = await scratch.query<any>(
-      `SELECT count(*)::int AS n FROM pg_trigger t
-       WHERE t.tgrelid = 'child'::regclass AND t.tgconstraint <> 0`)
-    ok('the surviving triggers are the real key\'s', survivors.rows[0].n === 2, String(survivors.rows[0].n))
-    await scratch.close()
-  }
+  /* -------------------------------------------------------------------- settings */
 
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })
   ok('settings round-trip', settings.theme === 'dark' && settings.activeWorkspaceId === consultancy)
 
   /*
-   * Liquid Glass is a theme like any other as far as the database is concerned, and
-   * one number beside it. The number is clamped on the way out rather than on the way
-   * in, so a value written before the slider existed — or by hand — still draws.
+   * Liquid Glass is a theme like any other as far as settings are concerned, and one
+   * number beside it. The number is clamped on the way out rather than on the way in,
+   * so a value written before the slider existed — or by hand — still draws.
    */
   ok('the glass amount defaults before it is ever set',
      settings.glassTransparency === 45, String(settings.glassTransparency))
@@ -1504,7 +1621,8 @@ async function main(): Promise<void> {
   const afterDelete = await call('workspace:list')
   const dayJobPeopleAfter = await call('person:list', { workspaceId: dayJob })
   ok('deleting a workspace takes its projects and people with it',
-     afterDelete.length === 3 && dayJobPeopleAfter.length === 6,
+     afterDelete.length === 3 && dayJobPeopleAfter.length === 6 &&
+     psql(`SELECT count(*) FROM app.project WHERE workspace_id = '${throwaway.id}'`) === '0',
      `${afterDelete.length} workspaces (${afterDelete.map((w: any) => w.name).join('/')}), ${dayJobPeopleAfter.length} day-job people`)
 
   // --- you, as a person in every workspace
@@ -1512,21 +1630,15 @@ async function main(): Promise<void> {
   ok('there is a profile', typeof profile.name === 'string', profile.name)
   const renamedProfile = await call('profile:save', { name: 'Johan' })
   ok('the profile can be renamed', renamedProfile.name === 'Johan')
-  for (const ws of [dayJob, own, consultancy]) {
-    const mine = (await call('person:list', { workspaceId: ws })).filter((p: any) => p.isMe)
+  for (const w of [dayJob, own, consultancy]) {
+    const mine = (await call('person:list', { workspaceId: w })).filter((p: any) => p.isMe)
     ok(`exactly one of you exists in each workspace`, mine.length === 1 && mine[0].name === 'Johan',
        `${mine.length} in one workspace`)
   }
   ok('you are listed first among people',
      (await call('person:list', { workspaceId: dayJob }))[0].isMe === true)
   const mePerson = (await call('person:list', { workspaceId: dayJob })).find((p: any) => p.isMe)
-  let refusedSelfDelete = false
-  try {
-    await call('person:delete', { id: mePerson.id })
-  } catch {
-    refusedSelfDelete = true
-  }
-  ok('you cannot delete yourself', refusedSelfDelete)
+  ok('you cannot delete yourself', await refused(() => call('person:delete', { id: mePerson.id })))
 
   ok('you carry roles on a project', checkout.myRoles === 'Project manager', checkout.myRoles)
   const mineUpdated = await call('membership:saveMine', {
@@ -1581,8 +1693,70 @@ async function main(): Promise<void> {
   ok('projects carry a deadline', checkout.deadline !== null, String(checkout.deadline))
   ok('a project with work behind it reports that, deadline or no deadline',
      /overdue item/.test(payDetail.project.attention ?? ''), String(payDetail.project.attention))
-  const cleared = await call('project:save', { id: payments.id, deadline: null })
-  ok('and can be cleared', cleared.deadline === null)
+  const clearedDeadline = await call('project:save', { id: payments.id, deadline: null })
+  ok('and can be cleared', clearedDeadline.deadline === null)
+
+  /*
+   * The rest of what the screens rearrange and take away. A drag writes the whole
+   * visible set, numbered from one; a meeting's attendees are diffed rather than
+   * replaced, so the ones who stay keep their rows; and taking somebody off a project
+   * or out of a workspace takes exactly that and nothing more.
+   */
+  {
+    const order = (await call('workspace:list')).map((w: any) => w.id)
+    await call('workspace:reorder', { ids: [consultancy, own, dayJob] })
+    ok('workspaces are drawn in the order they were dragged into',
+       (await call('workspace:list')).map((w: any) => w.id).join() === [consultancy, own, dayJob].join())
+    await call('workspace:reorder', { ids: order })
+
+    const second = await call('folder:save', { workspaceId: dayJob, name: 'Second' })
+    await call('folder:reorder', { ids: [second.id, clients.id] })
+    ok('folders at one level are drawn in the order they were dragged into',
+       (await call('folder:list', { workspaceId: dayJob })).filter((f: any) => f.depth === 0)
+         .map((f: any) => f.id).join() === [second.id, clients.id].join())
+    await call('folder:delete', { id: second.id })
+
+    const cards = (await call('task:list', { projectId: payments.id })).slice(0, 2)
+    const pair = [cards[1]?.id, cards[0]?.id]
+    await call('task:reorder', { ids: pair })
+    const renumbered = await call('task:list', { projectId: payments.id })
+    ok('cards are numbered from one in the order they were dropped',
+       cards.length === 2 &&
+       renumbered.find((t: any) => t.id === pair[0]).sortOrder === 1 &&
+       renumbered.find((t: any) => t.id === pair[1]).sortOrder === 2,
+       `${cards.length} cards`)
+
+    const castIds = checkoutDetail.cast.map((c: any) => c.personId)
+    const standup = await call('meeting:save', {
+      projectId: checkout.id, title: 'Attendance', attendeeIds: castIds.slice(0, 3)
+    })
+    // An attendee's row is not on the view, so whether it survived is read off the table.
+    const attendeeRow = (): string => psql(
+      `SELECT id FROM app.meeting_attendee WHERE meeting_id = '${standup.id}' AND person_id = '${castIds[1]}'`)
+    const kept = attendeeRow()
+    const reshuffled = await call('meeting:save', { id: standup.id, attendeeIds: [castIds[1], castIds[3]] })
+    ok('changing who was at a meeting keeps the ones who stayed and swaps only the rest',
+       standup.attendees.length === 3 && reshuffled.attendees.length === 2 &&
+       reshuffled.attendees.some((a: any) => a.id === castIds[3]) &&
+       reshuffled.attendees.some((a: any) => a.id === castIds[1]) &&
+       kept !== '' && attendeeRow() === kept,
+       reshuffled.attendees.map((a: any) => a.name).join(', '))
+    ok('and a save that does not mention attendees leaves them alone',
+       (await call('meeting:save', { id: standup.id, title: 'Attendance, renamed' })).attendees.length === 2)
+    await call('meeting:delete', { id: standup.id })
+
+    const passing = await call('person:save', { workspaceId: dayJob, name: 'Passing Through' })
+    const onPayments = await call('membership:save', { personId: passing.id, projectId: payments.id, role: 'Observer' })
+    await call('membership:delete', { id: onPayments.id })
+    ok('taking somebody off a project leaves them in the workspace',
+       !(await call('project:get', { id: payments.id, touch: false })).cast.some((c: any) => c.personId === passing.id) &&
+       (await call('person:list', { workspaceId: dayJob })).some((p: any) => p.id === passing.id))
+    await call('membership:save', { personId: passing.id, projectId: payments.id, role: 'Observer' })
+    await call('person:delete', { id: passing.id })
+    ok('and deleting a person takes them off every project they were on',
+       !(await call('person:list', { workspaceId: dayJob })).some((p: any) => p.id === passing.id) &&
+       !(await call('project:get', { id: payments.id, touch: false })).cast.some((c: any) => c.personId === passing.id))
+  }
 
   ok('people expose an avatar field everywhere they appear',
      'avatar' in detail.cast[0] && 'avatar' in detail.meetings[0].attendees[0] &&
@@ -1689,18 +1863,18 @@ async function main(): Promise<void> {
   ok('sending without a key says so rather than failing obscurely',
      await threw(() => call('chat:send', { workspaceId: own, text: 'hello' }), 'no API key'))
 
-  // Conversations are rows like anything else, so they are checked without a model.
-  const conversation = await q<{ id: string }>(
-    'INSERT INTO conversation (workspace_id, title) VALUES ($1, $2) RETURNING id', [dayJob, 'A chat'])
-  const conversationId = conversation[0].id
+  // Conversations are rows like anything else, so they are checked without a model —
+  // written through the same two requests the run loop makes before it calls one.
+  const conversation = await must(api.POST('/v1/conversations', { body: { workspaceId: dayJob } }))
+  const conversationId = conversation.id
   ok('conversations are listed in their own workspace only',
      (await call('chat:list', { workspaceId: dayJob })).length === 1 &&
      (await call('chat:list', { workspaceId: own })).length === 0)
 
-  await exec(
-    `INSERT INTO chat_message (conversation_id, role, blocks, tools, sort_order)
-     VALUES ($1, 'user', $2::jsonb, '{}'::jsonb, 0)`,
-    [conversationId, JSON.stringify([{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }])])
+  await must(api.POST('/v1/conversations/{id}/messages', {
+    params: { path: { id: conversationId } },
+    body: { role: 'user', blocks: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }], tools: {} }
+  }))
   const loaded = await call('chat:get', { id: conversationId })
   ok('a conversation replays its turns as the API sent them',
      loaded.messages.length === 1 && loaded.messages[0].blocks[0].content[0].text === 'hi')
@@ -1758,13 +1932,12 @@ async function main(): Promise<void> {
 
   // Reading a project must not count as visiting it — the re-entry brief measures
   // the gap since *you* last opened it, and the assistant is not you.
-  const clockBefore = await q<{ last_opened_at: string | null }>(
-    'SELECT last_opened_at FROM project WHERE id = $1', [seenProject.id])
+  const openedAt = async (): Promise<string | null> =>
+    (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === seenProject.id).lastOpenedAt
+  const clockBefore = await openedAt()
   await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
-  const clockAfter = await q<{ last_opened_at: string | null }>(
-    'SELECT last_opened_at FROM project WHERE id = $1', [seenProject.id])
   ok('the assistant reading a project does not roll the re-entry clock',
-     String(clockBefore[0].last_opened_at) === String(clockAfter[0].last_opened_at))
+     clockBefore !== null && clockBefore === (await openedAt()), String(clockBefore))
 
   ok('an ambiguous name is reported rather than guessed at',
      await threw(() => tool('get_project').run({ project: 'e' }, dayJobCtx), 'Ask which one'))
@@ -1781,21 +1954,23 @@ async function main(): Promise<void> {
 
   // The whole point of routing writes through the app's own channels: a task the
   // assistant makes has to be indistinguishable from one made by a click.
-  const activityBefore = (await call('dashboard:activity', { workspaceId: dayJob })).length
+  const activityBefore = (await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })).length
   const made = await tool('create_task').run(
     { project: 'Checkout rewrite', title: 'Written by the assistant', dueDate: '2026-10-01' }, dayJobCtx)
   const madeTask = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)
   ok('a task the assistant writes lands on the board like any other',
      Boolean(madeTask) && madeTask.columnId !== null && madeTask.dueDate === '2026-10-01')
+  const activityAfter = await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })
   ok('and logs activity, because it went through the same channel',
-     (await call('dashboard:activity', { workspaceId: dayJob })).length === activityBefore + 1)
+     activityAfter.length === activityBefore + 1 && activityAfter[0].summary.includes('Written by the assistant'),
+     `${activityBefore} -> ${activityAfter.length}: ${activityAfter[0]?.summary}`)
 
   /*
    * A tool's write has nobody in the renderer waiting on it, so the screen is told
    * separately or it shows yesterday's board until you navigate away and back. The
-   * signal comes from the database having actually changed, which is what a read has
-   * to be checked against: announcing on every tool call would refetch the whole app
-   * every time the assistant looked something up.
+   * signal comes from a request that changed something having succeeded, which is what
+   * a read has to be checked against: announcing on every tool call would refetch the
+   * whole app every time the assistant looked something up.
    */
   let announced = 0
   const stopWatching = onChange(() => { announced += 1 })
@@ -1807,12 +1982,12 @@ async function main(): Promise<void> {
   await tool('list_projects').run({}, dayJobCtx)
   await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
   await settle()
-  ok('the assistant reading things does not make the screen refetch', announced === 0)
+  ok('the assistant reading things does not make the screen refetch', announced === 0, String(announced))
 
   await tool('create_task').run(
     { project: 'Checkout rewrite', title: 'Watched for', dueDate: '2026-10-02' }, dayJobCtx)
   await settle()
-  ok('a task made by a tool tells the screen to catch up', announced === 1)
+  ok('a task made by a tool tells the screen to catch up', announced === 1, String(announced))
 
   // Several writes close together are one refetch, not one each — a tool that saves a
   // project, moves a card and logs activity must not make the app reload three times.
@@ -1827,7 +2002,7 @@ async function main(): Promise<void> {
   await threw(() => tool('create_task').run({ project: 'Nowhere at all', title: 'x' }, dayJobCtx),
               'No project in this workspace')
   await settle()
-  ok('a tool that refused before writing anything says nothing either', announced === 0)
+  ok('a tool that refused before writing anything says nothing either', announced === 0, String(announced))
   stopWatching()
 
   await tool('set_task_status').run({ id: made.id, status: 'done' }, dayJobCtx)
@@ -1836,18 +2011,19 @@ async function main(): Promise<void> {
      tickedCard.status === 'done' && tickedCard.columnId !== madeTask.columnId)
 
   const foreignTask = (await invokeChannel('task:list', { projectId: otherProject.id }))[0]
-  const refused = await threw(
+  const refusedForeign = await threw(
     () => tool('set_task_status').run({ id: foreignTask.id, status: 'done' }, dayJobCtx),
     'in this workspace')
   const stillOpen = (await invokeChannel('task:list', { projectId: otherProject.id }))
     .find((t: any) => t.id === foreignTask.id)
   ok('a task in another workspace cannot be touched by id, even a real one',
-     refused && stillOpen?.status === foreignTask.status)
+     refusedForeign && stillOpen?.status === foreignTask.status)
 
   await call('chat:delete', { id: conversationId })
   ok('deleting a conversation takes its turns with it',
      (await call('chat:list', { workspaceId: dayJob })).length === 0 &&
-     (await q('SELECT id FROM chat_message WHERE conversation_id = $1', [conversationId])).length === 0)
+     await refused(() => call('chat:get', { id: conversationId })) &&
+     psql(`SELECT count(*) FROM app.chat_message WHERE conversation_id = '${conversationId}'`) === '0')
 
   /* --------------------------------------------------- folders, from the assistant */
 
@@ -1888,26 +2064,30 @@ async function main(): Promise<void> {
      await threw(() => tool('update_folder').summary({ folder: 'Somewhere else' }, dayJobCtx),
                  'No folder in this workspace'))
 
-  const mirrorCanvas = await call('canvas:save', {
-    projectId: checkout.id,
-    title: 'Process flow',
-    data: {
-      nodes: [{ id: 'm1', type: 'text', text: 'Step one', x: 0, y: 0, width: 250, height: 60 }],
-      edges: []
-    }
-  })
+  /* ------------------------------------------------------------------ the export */
 
-  const md = await call('settings:exportMarkdown')
-  ok('markdown mirror writes files', md.files >= 20, `${md.files} files`)
-  const filedOverview = join((await call('settings:get')).markdownDir,
-                             'Day job', 'Clients', 'Acme', 'Internal tooling', '_overview.md')
-  ok('a filed project is mirrored inside its folders on disk', existsSync(filedOverview), filedOverview)
-  const canvasFile = join((await call('settings:get')).markdownDir,
-                          'Day job', 'Checkout rewrite', 'notes',
-                          `process-flow-${mirrorCanvas.id.slice(0, 8)}.canvas`)
-  ok('a canvas is mirrored as a .canvas file', existsSync(canvasFile), canvasFile)
+  /*
+   * The one file the app writes, and only where the person says. The dialog is the
+   * whole of the permission: cancelled, nothing is fetched or written.
+   */
+  ok('an export whose dialog was cancelled writes nothing', (await call('settings:exportJson')) === null)
+  ok('and suggests the downloads folder, named for the day',
+     /neo-\d{4}-\d{2}-\d{2}\.json$/.test(String(__dialog.lastSave?.defaultPath ?? '')),
+     String(__dialog.lastSave?.defaultPath))
+  const exportPath = join(scratch, 'everything.json')
+  __dialog.save = { canceled: false, filePath: exportPath }
   const json = await call('settings:exportJson')
-  ok('json export writes', typeof json.path === 'string', json.path)
+  __dialog.save = { canceled: true, filePath: undefined }
+  const dumped = existsSync(exportPath) ? JSON.parse(readFileSync(exportPath, 'utf8')) : null
+  const dumpedText = dumped ? JSON.stringify(dumped) : ''
+  ok('json export writes the account, table by table, where it was told to',
+     json?.path === exportPath && dumped !== null && typeof dumped.exportedAt === 'string' &&
+     Array.isArray(dumped.data?.project) && Array.isArray(dumped.data?.transcript_cue) &&
+     dumpedText.includes('Checkout rewrite') && dumpedText.includes('Consultancy'),
+     `${json?.path} ${dumpedText.length} characters`)
+  ok('and it is this account\'s rows as the database has them, with nobody else\'s id on them',
+     dumped !== null && dumped.data.workspace.length === 3 &&
+     dumped.data.project.every((p: any) => 'workspace_id' in p && !('account_id' in p)))
 
   /* ------------------------------------------------------- a project's start date */
 
@@ -1920,7 +2100,7 @@ async function main(): Promise<void> {
      await threw(() => call('project:save', { id: seenProject.id, createdAt: 'last spring' }),
                  'YYYY-MM-DD'))
   ok('changing the start date leaves the rest of the project alone',
-     born.name === seenProject.name && born.deadline === seenProject.deadline)
+     born.name === seenProject.name && born.deadline === checkout.deadline)
 
 
   /* -------------------------------------------------------------- notifications */
@@ -2016,6 +2196,13 @@ async function main(): Promise<void> {
      !deliveryDue(saturday, '09:00', false) && deliveryDue(saturday, '09:00', true) &&
      deliveryDue(monday, '09:00', false))
 
+  /*
+   * The sample workspaces have deadlines of their own, and the assertions below are
+   * about one workspace's sentences, so the others are told to keep quiet — which is
+   * also the switch being honoured by the runner and not only by the pending list.
+   */
+  for (const w of [dayJob, own, consultancy]) await call('workspace:save', { id: w, notify: false })
+
   await call('settings:save', { notifications: false, notifyWeekends: true, onboardedAt: '' })
   ok('a machine that has never finished the introduction is never interrupted by one',
      (await deliverNotifications(at(10, 0))) === 0)
@@ -2026,30 +2213,33 @@ async function main(): Promise<void> {
 
   await call('settings:save', { notifications: true })
   const delivered = await deliverNotifications(at(10, 0))
-  ok('the morning delivery puts the day on the desktop', delivered > 0, `${delivered} shown`)
+  ok('the morning delivery puts the day on the desktop', delivered === said.length, `${delivered} shown`)
   ok('and what it showed is what the workspace said it would',
      __notifications.some((n: any) => n.title === 'Send the deck is due today'),
      __notifications.map((n: any) => n.title).join(' | '))
 
   // The whole of the once-a-day guarantee is a row and a unique index, so a machine
-  // restarted four times before lunch is the same as one left running.
+  // restarted four times before lunch is the same as one left running — and a second
+  // Mac signed in to the same account is the same as this one asking again.
   const shownOnce = __notifications.length
   ok('running it again the same day says nothing twice',
      (await deliverNotifications(at(11, 30))) === 0 && __notifications.length === shownOnce)
 
+  const claimedAgain = await must(api.POST('/v1/notifications', {
+    body: { workspaceId: quiet.id, kind: 'task-day', onDate: now, title: 'Send the deck is due today', body: '' }
+  }))
+  ok('Neo Cloud is what says it has already been said, to any device that asks',
+     claimedAgain.claimed === false, JSON.stringify(claimedAgain))
+
   ok('what was said is written down, once per kind per day',
-     (await q<{ n: number }>(
-       `SELECT count(*)::int AS n FROM notification WHERE workspace_id = $1 AND on_date = $2`,
-       [quiet.id, now]
-     ))[0]?.n === said.length,
+     psql(`SELECT count(*) FROM app.notification WHERE workspace_id = '${quiet.id}' AND on_date = '${now}'`) ===
+       String(said.length),
      `${said.length} kinds`)
 
   // Something new arriving after the delivery is still told, because its kind has
   // not been claimed today. What cannot happen is the same kind arriving twice.
   await call('workspace:save', { id: quiet.id, notifyTaskDayAfter: false })
-  // Through removeWhere so it leaves a tombstone: a bare delete here would be
-  // resurrected on replay and then collide with the claim made straight afterwards.
-  await removeWhere('notification', { workspaceId: quiet.id, kind: 'task-day' })
+  psql(`DELETE FROM app.notification WHERE workspace_id = '${quiet.id}' AND kind = 'task-day'`)
   await call('task:save', { projectId: rollout.id, title: 'One more', dueDate: now })
   const laterThatDay = await deliverNotifications(at(12, 0))
   ok('a kind whose day has not been claimed is still delivered',
@@ -2066,8 +2256,7 @@ async function main(): Promise<void> {
      __notifications[__notifications.length - 1]?.title)
 
   ok('and it is a test rather than a delivery, so it claims no day',
-     (await q<{ n: number }>(
-       `SELECT count(*)::int AS n FROM notification WHERE title = 'Neo can reach you here'`))[0]?.n === 0)
+     psql(`SELECT count(*) FROM app.notification WHERE title = 'Neo can reach you here'`) === '0')
 
   // Only macOS puts a question in front of an app before it may show one, and that is
   // the whole of what decides whether the first-run flow has a panel about it.
@@ -2078,8 +2267,8 @@ async function main(): Promise<void> {
 
   await call('workspace:delete', { id: quiet.id })
   ok('deleting the workspace takes what it was told with it',
-     (await q<{ n: number }>('SELECT count(*)::int AS n FROM notification WHERE workspace_id = $1',
-                             [quiet.id]))[0]?.n === 0)
+     psql(`SELECT count(*) FROM app.notification WHERE workspace_id = '${quiet.id}'`) === '0')
+  for (const w of [dayJob, own, consultancy]) await call('workspace:save', { id: w, notify: true })
 
   /* ------------------------------------------------- the bridge Claude Desktop uses */
 
@@ -2119,6 +2308,8 @@ async function main(): Promise<void> {
   ok('a write over the bridge reports what it did in plain words',
      madeOverBridge.ok && (madeOverBridge.summary ?? '').includes('Checkout rewrite') &&
      (madeOverBridge.summary ?? '').includes('Written through the bridge'))
+  ok('and it is a real card in Neo Cloud, not a copy of one',
+     (await call('task:list', { projectId: seenProject.id })).some((t: any) => t.title === 'Written through the bridge'))
 
   // The confirmation line is built before the write, so bad input fails before it lands.
   const tasksBefore = (await call('task:list', { projectId: seenProject.id })).length
@@ -2144,10 +2335,14 @@ async function main(): Promise<void> {
   ok('starting the bridge leaves an endpoint for the connector to find',
      Boolean(socket) && info.endpoint === socket && info.token.length > 0 && info.pid === process.pid)
 
-  const knock = async (token: string, path = '/tools'): Promise<{ status: number; body: any }> =>
+  const knock = async (token: string, path = '/tools', body?: unknown): Promise<{ status: number; body: any }> =>
     new Promise((resolve, reject) => {
+      const payload = body === undefined ? '' : JSON.stringify(body)
       const req = request(
-        { socketPath: info.endpoint, path, method: 'GET', headers: { 'x-neo-token': token } },
+        {
+          socketPath: info.endpoint, path, method: body === undefined ? 'GET' : 'POST',
+          headers: { 'x-neo-token': token, 'content-type': 'application/json' }
+        },
         (res) => {
           const chunks: Buffer[] = []
           res.on('data', (c: Buffer) => chunks.push(c))
@@ -2158,7 +2353,7 @@ async function main(): Promise<void> {
         }
       )
       req.on('error', reject)
-      req.end()
+      req.end(payload)
     })
 
   const served = await knock(info.token)
@@ -2169,6 +2364,12 @@ async function main(): Promise<void> {
   ok('the bridge names the workspaces so a client can choose one',
      greeted.status === 200 && greeted.body.app === 'neo' &&
      greeted.body.workspaces.some((w: any) => w.name === 'Day job'))
+
+  const overSocket = await knock(info.token, '/call', { tool: 'today', arguments: { workspace: 'Day job' } })
+  ok('a tool called over the socket reaches Neo Cloud and answers with what it found',
+     overSocket.status === 200 && overSocket.body.ok === true && overSocket.body.workspace === 'Day job' &&
+     Array.isArray(overSocket.body.result?.overdue),
+     JSON.stringify(overSocket.body).slice(0, 160))
 
   ok('a caller without the token gets nothing',
      (await knock('not-the-token')).status === 401)
@@ -2216,18 +2417,18 @@ async function main(): Promise<void> {
   }, null, 2))
 
   const connected = await call('mcp:connect')
-  const written = JSON.parse(readFileSync(claudeConfig, 'utf8'))
+  const writtenConfig = JSON.parse(readFileSync(claudeConfig, 'utf8'))
   ok('connecting adds Neo to Claude Desktop and says so',
-     connected.connected === true && Boolean(written.mcpServers.neo))
+     connected.connected === true && Boolean(writtenConfig.mcpServers.neo))
   ok('and leaves everything else in that file exactly as it was',
-     written.globalShortcut === 'Alt+Space' && written.mcpServers.filesystem.command === 'npx')
+     writtenConfig.globalShortcut === 'Alt+Space' && writtenConfig.mcpServers.filesystem.command === 'npx')
   ok('the entry runs the connector on this copy of the app',
-     written.mcpServers.neo.env.ELECTRON_RUN_AS_NODE === '1' &&
-     written.mcpServers.neo.args[0].endsWith('neo-mcp.mjs'))
+     writtenConfig.mcpServers.neo.env.ELECTRON_RUN_AS_NODE === '1' &&
+     writtenConfig.mcpServers.neo.args[0].endsWith('neo-mcp.mjs'))
 
   // A copy of Neo that moved leaves an entry pointing at where it used to be.
   writeFileSync(claudeConfig, JSON.stringify({
-    mcpServers: { ...written.mcpServers, neo: { ...written.mcpServers.neo, args: ['/gone/neo-mcp.mjs'] } }
+    mcpServers: { ...writtenConfig.mcpServers, neo: { ...writtenConfig.mcpServers.neo, args: ['/gone/neo-mcp.mjs'] } }
   }, null, 2))
   const relocated = await call('mcp:status')
   ok('an entry pointing at another copy of Neo is reported as stale, not as connected',
@@ -2255,9 +2456,9 @@ async function main(): Promise<void> {
      !existsSync(endpointFile()) && !existsSync(info.endpoint))
 
   /*
-   * The splash screen is loaded as a `data:` URL before the database is open, so
-   * anything it referenced would resolve against nothing and silently not appear —
-   * and it has one job, which is to be on screen immediately.
+   * The splash screen is loaded as a `data:` URL before Neo Cloud has answered
+   * anything, so anything it referenced would resolve against nothing and silently not
+   * appear — and it has one job, which is to be on screen immediately.
    */
   const splash = splashDocument(false)
   ok('the splash screen references nothing it would have to fetch',
@@ -2266,20 +2467,6 @@ async function main(): Promise<void> {
   ok('the splash screen draws the same mark the sidebar does',
      splash.includes(`rx="${MARK.face.r}"`) &&
      MARK.steps.every((s) => splash.includes(`x="${s.x}" y="${s.y}"`)))
-
-  /*
-   * A fresh install lands in the home directory, not in Documents. The database is
-   * the application's working state rather than one of your files, and Documents on
-   * a Mac may be an iCloud-synced folder — which is a poor place for something being
-   * written to constantly. `verify:upgrade` asserts the other half: that an older
-   * install is *moved* here rather than left behind.
-   */
-  const where = await call('settings:get')
-  ok('a new install keeps its data in a dotfolder at home',
-     // `basename`, not a trailing '/.neo': Windows separates with a backslash, and
-     // the literal made this assertion unfailable there — it was simply always false.
-     basename(where.dataDir) === '.neo' && where.markdownDir === join(where.dataDir, 'markdown'),
-     where.dataDir)
 
   /* ------------------------------------------------------------------ updating */
 
@@ -2359,11 +2546,11 @@ async function main(): Promise<void> {
      (() => {
        const full = parseChangelog('1.2.0', '---\ntitle: Big news\ndate: 2026-09-06\n---\n\nHello.')
        const heading = parseChangelog('1.1.0', '# From the heading\n\nBody.')
-       const bare = parseChangelog('1.0.0', 'Just a sentence.')
+       const bareEntry = parseChangelog('1.0.0', 'Just a sentence.')
        return full.title === 'Big news' && full.date === '2026-09-06' && full.body === 'Hello.' &&
          // The heading becomes the title and leaves the body, so it is not drawn twice.
          heading.title === 'From the heading' && heading.body === 'Body.' &&
-         bare.title === 'Version 1.0.0' && bare.body === 'Just a sentence.'
+         bareEntry.title === 'Version 1.0.0' && bareEntry.body === 'Just a sentence.'
      })())
 
   ok('a changelog illustration is pointed at the only scheme that can serve it',
@@ -2406,340 +2593,46 @@ async function main(): Promise<void> {
      updateSettings.updates === 'notify' &&
      (await call('settings:save', { updates: 'nonsense' })).updates === 'automatic')
 
-  /* ------------------------------------------------------------------ *
-   * The operation log
-   *
-   * The gate for the whole of Stage 0. Everything above this point has been
-   * writing through the same handlers the app uses, so by now the log holds a
-   * complete account of a working session — which is exactly the claim being
-   * tested.
-   * ------------------------------------------------------------------ */
-
-  const unlogged: string[] = []
-  for (const table of SYNC_ORDER) {
-    const gap = await q1<{ n: number }>(
-      `SELECT count(*)::int AS n FROM ${table} t
-        WHERE NOT EXISTS (
-          SELECT 1 FROM sync_row s WHERE s.table_name = $1 AND s.row_id = t.id::text
-        )`,
-      [table]
-    )
-    if ((gap?.n ?? 0) > 0) unlogged.push(`${table}:${gap?.n}`)
-  }
-  ok('every row in a synced table is accounted for in the log', unlogged.length === 0,
-     unlogged.join(', '))
-
-  ok('the log is not empty and every batch carries its schema version',
-     (await allBatches()).length > 0 &&
-     (await allBatches()).every((b) => b.schema === SCHEMA_VERSION && b.hlc.length > 20))
-
-  ok('a batch belongs to exactly one workspace',
-     (await allBatches()).filter((b) => b.origin === 'local' && b.ops.length > 0)
-       .every((b) => b.workspaceId !== null || b.ops.every((o) => o.table === 'workspace')))
-
-  ok('device-only columns never reach an op',
-     (await allBatches()).every((b) =>
-       b.ops.every((o) =>
-         o.table !== 'recording' ||
-         !Object.keys(o.fields ?? {}).some((f) =>
-           ['transcript_state', 'speaker_state', 'summary_state', 'next_attempt_at',
-            'capture_state', 'heartbeat_at'].includes(f)))))
-
-  ok('a device-local table produces no ops at all',
-     (await allBatches()).every((b) =>
-       b.ops.every((o) => !(DEVICE_TABLES as readonly string[]).includes(o.table))),
-     `device tables: ${DEVICE_TABLES.join(', ')}`)
-
-  // A delete has to leave something behind, or a device that still holds the row
-  // would hand it back the next time it synced.
-  const doomedProject = await call('project:save', { name: 'To be deleted', workspaceId: dayJob })
-  await call('task:save', { projectId: doomedProject.id, title: 'Goes with it' })
-  const doomedTask = (await q<{ id: string }>(
-    'SELECT id FROM task WHERE project_id = $1', [doomedProject.id]))[0]
-  await call('project:delete', { id: doomedProject.id })
-  const graveA = await q1<{ deleted_hlc: string }>(
-    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'project' AND row_id = $1`,
-    [doomedProject.id])
-  const graveB = await q1<{ deleted_hlc: string }>(
-    `SELECT deleted_hlc FROM sync_row WHERE table_name = 'task' AND row_id = $1`,
-    [doomedTask.id])
-  ok('deleting a project tombstones it and everything the cascade takes with it',
-     Boolean(graveA?.deleted_hlc) && Boolean(graveB?.deleted_hlc))
-
-  /*
-   * The whole point of the tombstone. The other Mac edited the task before the delete
-   * reached it — so its stamp is older than the delete and newer than the task — and
-   * the row must stay gone.
-   */
-  const staleEdit = graveA?.deleted_hlc.replace(/^(\d+)/, (m) => String(Number(m) - 1).padStart(15, '0')) ?? ''
-  await ingest({
-    id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: staleEdit,
-    ops: [{
-      table: 'task', rowId: doomedTask.id, kind: 'put',
-      fields: { project_id: doomedProject.id, title: 'Back from the dead' },
-      hlc: staleEdit
-    }]
-  })
-  ok('an op from an offline device cannot resurrect a deleted row',
-     (await q('SELECT id FROM task WHERE id = $1', [doomedTask.id])).length === 0)
-
-  /*
-   * Last-write-wins is per field and on the clock, not on arrival order.
-   *
-   * The stamps here are causally ordered — created, then edited on the other Mac,
-   * then edited again here — because that is the only order they can really occur
-   * in: the other Mac cannot have edited a project it had not yet received.
-   */
-  const contested = await call('project:save', { name: 'Contested', workspaceId: dayJob })
-  const remoteStamp = `${String(Date.now()).padStart(15, '0')}.00000.another-mac`
-  await ingest({
-    id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: remoteStamp,
-    ops: [{
-      table: 'project', rowId: contested.id, kind: 'put',
-      fields: { name: 'Stale name', summary: 'But a summary nobody else set' },
-      hlc: remoteStamp
-    }]
-  })
-  await call('project:save', { id: contested.id, name: 'Contested again' })
-  const afterMerge = await q1<{ name: string; summary: string }>(
-    'SELECT name, summary FROM project WHERE id = $1', [contested.id])
-  ok('a remote op wins the field nobody else touched and loses the one edited since',
-     afterMerge?.name === 'Contested again' && afterMerge?.summary === 'But a summary nobody else set')
-
-  ok('a batch already seen is not applied twice', await (async () => {
-    const stamp = `${String(Date.now() + 1000).padStart(15, '0')}.00000.another-mac`
-    const batch = {
-      id: randomUUID(), workspaceId: dayJob, deviceId: 'another-mac', actorId: null,
-      schema: SCHEMA_VERSION, hlc: stamp,
-      ops: [{
-        table: 'project' as const, rowId: contested.id, kind: 'put' as const,
-        fields: { summary: 'Once' }, hlc: stamp
-      }]
-    }
-    await ingest(batch)
-    const second = await ingest(batch)
-    return second.applied === 0
-  })())
-
-  ok('what this device has written is offered to a transport in order', await (async () => {
-    const batches = await pending('0', 5000)
-    return batches.length > 0 &&
-      batches.every((b) => b.origin === 'local') &&
-      batches.every((b, i) => i === 0 || Number(b.seq) > Number(batches[i - 1].seq))
-  })())
-
-  ok('adoption is idempotent — a second pass finds nothing',
-     (await adoptExistingRows()).rows === 0)
-
-  ok('this machine has an identity that survives being asked twice',
-     deviceId().length === 36 && deviceId() === deviceId())
-
-  /*
-   * And the assertion the rest of it exists for. Throw the whole database away and
-   * rebuild it from what was written down: if that reproduces the state exactly,
-   * then the log is a complete account of the work and every device, restore and
-   * new phone that reads it gets the same answer.
-   */
-  const shapshot = async (): Promise<string> => {
-    const out: string[] = []
-    for (const table of SYNC_ORDER) {
-      const rows = await q<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY id`)
-      for (const row of rows) {
-        const fields = Object.keys(row).sort()
-          .filter((k) => !DEVICE_ONLY_COLUMNS.includes(k))
-          .map((k) => `${k}=${JSON.stringify(row[k] instanceof Date ? (row[k] as Date).toISOString() : row[k])}`)
-        out.push(`${table}|${fields.join('|')}`)
-      }
-    }
-    return out.join('\n')
-  }
-  const counts = async (): Promise<Record<string, number>> => {
-    const out: Record<string, number> = {}
-    for (const table of SYNC_ORDER) {
-      out[table] = (await q1<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))?.n ?? 0
-    }
-    return out
-  }
-  const countsBefore = await counts()
-  const stateBefore = await shapshot()
-  const replayed = await replayLog()
-  const stateAfter = await shapshot()
-  const countsAfter = await counts()
-  const missing = Object.keys(countsBefore)
-    .filter((t) => countsBefore[t] !== countsAfter[t])
-    .map((t) => `${t} ${countsBefore[t]}->${countsAfter[t]}`)
-  ok('replay restores every row', missing.length === 0, missing.join(', '))
-  ok('replaying the log into an empty database reproduces the state exactly',
-     stateBefore === stateAfter && stateBefore.length > 0,
-     stateBefore === stateAfter
-       ? `${replayed.batches} batches, ${replayed.ops} ops`
-       : firstDifference(stateBefore, stateAfter))
-
-  /* ------------------------------------------------------------------ *
-   * Sealing what leaves the machine
-   * ------------------------------------------------------------------ */
-
-  const master = newMasterKey()
-  ok('a master key is 256 bits', master.length === 32)
-
-  const wsKey = workspaceKey(master, dayJob)
-  ok('sealing and opening returns exactly what went in',
-     open(wsKey, seal(wsKey, 'the quick brown fox')).toString('utf8') === 'the quick brown fox')
-
-  ok('the same plaintext seals differently every time',
-     seal(wsKey, 'same') !== seal(wsKey, 'same'),
-     'a repeated nonce would leak that two batches are identical')
-
-  ok('another workspace key cannot open it', await (async () => {
-    try {
-      open(workspaceKey(master, own), seal(wsKey, 'private'))
-      return false
-    } catch {
-      return true
-    }
-  })())
-
-  ok('a single altered byte is refused rather than half-opened', await (async () => {
-    const sealed = Buffer.from(seal(wsKey, 'do not change me'), 'base64')
-    sealed[sealed.length - 20] ^= 0x01
-    try {
-      open(wsKey, sealed.toString('base64'))
-      return false
-    } catch {
-      return true
-    }
-  })())
-
-  // The workspace is the unit of encryption because it is already the unit of
-  // isolation. Two workspaces must never share a key.
-  ok('a workspace key is derived, not stored, and is its own',
-     workspaceKey(master, dayJob).equals(workspaceKey(master, dayJob)) &&
-     !workspaceKey(master, dayJob).equals(workspaceKey(master, own)))
-
-  ok('a file is named the same way on every device, and differently in every workspace',
-     blobKey(master, dayJob, 'abc123') === blobKey(master, dayJob, 'abc123') &&
-     blobKey(master, dayJob, 'abc123') !== blobKey(master, own, 'abc123'))
-
-  const wrapped = wrapMasterKey(master, 'a passphrase worth typing')
-  ok('the master key comes back from its wrapping',
-     unwrapMasterKey(wrapped, 'a passphrase worth typing')?.equals(master) === true)
-
-  // A wrong passphrase is an ordinary thing a person does, not a fault to throw at
-  // them: the screen has to be able to say so and let them try again.
-  ok('a wrong passphrase returns nothing rather than throwing',
-     unwrapMasterKey(wrapped, 'not the passphrase') === null)
-
-  ok('the same passphrase wraps to different bytes on a different device',
-     wrapMasterKey(master, 'a passphrase worth typing').sealed !== wrapped.sealed,
-     'the salt is what stops two accounts sharing a wrapping')
-
-  ok('a passphrase too short to be worth anything is refused',
-     passphraseComplaint('short') !== null && passphraseComplaint('a passphrase worth typing') === null)
-
-  /* ------------------------------------------------------------------ *
-   * The one time syncing is mentioned
-   * ------------------------------------------------------------------ */
-
-  // Not in onboarding, and not to somebody who has barely started: the offer only
-  // makes sense once there is work that would be worth losing.
-  ok('a fresh install is not nudged about syncing',
-     (await call('sync:nudge')).show === false)
-
-  await exec(`UPDATE workspace SET created_at = now() - interval '30 days'`)
-  ok('one that has been in use, with work in it, is',
-     (await call('sync:nudge')).show === true)
-
-  await call('sync:dismissNudge')
-  ok('and having answered once, it is never asked again',
-     (await call('sync:nudge')).show === false)
-
-  ok('the answer survives a restart, because it is written down rather than remembered',
-     (await q<{ value: string }>(
-       `SELECT value FROM setting WHERE key = 'syncNudgeShownAt'`)).length === 1)
-
-  ok('syncing is off, and says so, until a server is named',
-     (await call('sync:status')).phase === 'off' &&
-     (await call('sync:status')).serverUrl === '')
-
-  /* ------------------------------------------------------------------ *
-   * What makes syncing feel immediate
-   * ------------------------------------------------------------------ */
-
-  /*
-   * The log tells whoever is listening that this device wrote something, and that is
-   * the whole mechanism behind a change reaching the other Mac in about a second
-   * rather than on the next minute's poll. It is a listener rather than a call so the
-   * log still knows nothing about a network: with nothing attached — Local — this
-   * fires into an empty set and costs nothing.
-   */
-  let woke = 0
-  const stopListening = onLocalWrite(() => { woke += 1 })
-
-  await call('task:save', { projectId: contested.id, title: 'Written while somebody is listening' })
-  ok('the log says when this device has written, so a push does not wait for the poll',
-     woke > 0, `${woke} signals`)
-
-  // The other direction must not: a device that pushed everything it received would
-  // echo, and two devices echoing each other never stop.
-  const quietSoFar = woke
-  const fromAway = (await allBatches()).slice(-1)[0].hlc.replace(
-    /^(\d+)/, (m) => String(Number(m) + 1000).padStart(15, '0'))
-  await ingest({
-    id: randomUUID(),
-    workspaceId: dayJob,
-    deviceId: 'another-mac',
-    actorId: null,
-    schema: SCHEMA_VERSION,
-    hlc: fromAway,
-    ops: [{
-      table: 'task', rowId: randomUUID(), kind: 'put',
-      fields: { project_id: contested.id, title: 'Written on the other Mac' },
-      hlc: fromAway
-    }]
-  })
-  ok('and stays quiet about what arrived from somewhere else, which would be an echo',
-     woke === quietSoFar, `${woke - quietSoFar} signals`)
-
-  stopListening()
-  await call('task:save', { projectId: contested.id, title: 'Written after nobody is listening' })
-  ok('a listener that has gone stops being called', woke === quietSoFar)
-
-  // A server that does not charge for anything, and a machine that has never been
-  // asked for a passphrase: the pane has to be able to draw both without guessing.
-  const off = await call('sync:status')
-  ok('with nothing connected there is no plan to speak of and no passphrase yet set',
-     off.billing.billed === false && off.billing.mayWrite && off.firstDevice)
+  /* --------------------------------------------------------------- the last of it */
 
   // Destructive, so it runs last.
   await call('workspace:delete', { id: consultancy })
   ok('a deleted active workspace falls back to a real one',
-     [dayJob, own].includes((await call('settings:get')).activeWorkspaceId))
+     [dayJob, own].includes((await call('settings:get')).activeWorkspaceId),
+     (await call('settings:get')).activeWorkspaceId)
 
-  await closeDb()
+  ok('the whole run asked nobody but Neo Cloud', outbound.length === 0, outbound.join(', '))
+
+  await call('settings:wipe')
+  ok('wiping empties the account of every workspace and all their work',
+     (await call('workspace:list')).length === 0 &&
+     await refused(() => call('project:get', { id: checkout.id, touch: false })))
+  ok('but leaves the account itself, still signed in',
+     (await call('account:status')).signedIn === true)
+
+  const out = await call('account:signOut')
+  ok('signing out at the end leaves this machine signed out',
+     out.signedIn === false && loadSession() === null && (await call('account:status')).signedIn === false)
+  ok('and settings are the defaults again, with nothing of the account left in them',
+     (await call('settings:get')).theme === SIGNED_OUT_SETTINGS.theme &&
+     (await call('settings:get')).activeWorkspaceId === '')
 }
 
-main().catch((e) => {
-  console.error('THREW', e)
-  /*
-   * Leave at once, rather than setting an exit code and letting the loop drain.
-   *
-   * A throw part-way through skips `closeDb()`, and by then the MCP bridge is
-   * listening on its socket — so nothing is left to finish but nothing lets go
-   * either, and the process sits there forever. Locally that is a terminal you
-   * press Ctrl-C in; on a runner it is six hours of a job nobody is watching,
-   * billed at ten times the rate on macOS. A failed assertion says FAIL and
-   * carries on; anything that reaches here has already given up, so there is
-   * nothing left to tidy.
-   */
-  process.exit(1)
-})
+main()
+  .catch((e) => {
+    console.error('THREW', e)
+    failed += 1
+    failures.push(`threw: ${(e as Error)?.message ?? e}`)
+  })
+  .finally(() => {
+    console.log(`\n${passed} passed, ${failed} failed`)
+    if (failures.length) console.log(failures.map((f) => `  - ${f}`).join('\n'))
+    /*
+     * Leave at once, rather than letting the loop drain. A throw part-way through can
+     * leave the MCP bridge listening on its socket or the event stream open to Neo
+     * Cloud — nothing is left to finish but nothing lets go either, and the process
+     * sits there forever. Locally that is a terminal you press Ctrl-C in; on a runner
+     * it is six hours of a job nobody is watching.
+     */
+    void stopBridge().catch(() => {}).finally(() => process.exit(failed > 0 ? 1 : 0))
+  })

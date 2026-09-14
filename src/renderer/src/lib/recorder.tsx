@@ -198,10 +198,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }): R
         // number worth showing: it is what the recording actually costs.
         if (segmentId.current === target) openBytes.current = result.bytes
         return result
-      }).catch(() => {
-        // A failed append is a disk problem, and the next second will fail too. Say
-        // so once rather than tearing the recording down under the user.
-        patch({ error: 'Could not write the audio to disk. Check that there is space free.' })
+      }).catch((error: unknown) => {
+        // Main holds on to a chunk it could not send and keeps trying, so this is the
+        // connection, not lost audio. Say so rather than tearing the recording down.
+        patch({
+          error: error instanceof Error && error.message
+            ? error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+            : 'Neo Cloud cannot be reached. The audio is being held and will be sent when the connection returns.'
+        })
       })
     }
 

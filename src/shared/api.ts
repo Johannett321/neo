@@ -1,4 +1,4 @@
-import type { SyncBilling, SyncStatus } from './sync'
+import type { AccountDevice, AccountStatus } from './account'
 import type {
   Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, Conversation, NoteImage,
   Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
@@ -369,23 +369,32 @@ export interface ApiMap {
   /** What to put in the name field on first run, from the machine's own account. */
   'profile:suggestName': { in: void; out: { name: string } }
 
-  'sync:status': { in: void; out: SyncStatus }
-  'sync:signIn': { in: { serverUrl: string }; out: { connected: boolean; handle: string } }
-  'sync:unlock': { in: { passphrase: string }; out: { ok: boolean; reason: string } }
-  'sync:nudge': { in: void; out: { show: boolean } }
-  'sync:dismissNudge': { in: void; out: { show: boolean } }
-  'sync:now': { in: void; out: SyncStatus }
-  'sync:disconnect': { in: void; out: SyncStatus }
-  /** What the plans cost, which is the only thing the server has to ask Stripe. */
-  'sync:prices': { in: void; out: SyncBilling }
-  /** Opens Stripe in the real browser and answers whether it went. */
-  'sync:pay': { in: { kind: 'monthly' | 'yearly' | 'manage' }; out: { opened: boolean } }
+  /* ------------------------------------------------------------------ the account */
+
+  /**
+   * Who is signed in to Neo Cloud. Asked before anything else is drawn: signed out, the
+   * window is the sign-in screen and nothing else.
+   */
+  'account:status': { in: void; out: AccountStatus }
+  /** Make an account with a username and a password, and sign this machine in. */
+  'account:register': { in: { username: string; password: string }; out: AccountStatus }
+  'account:signIn': { in: { username: string; password: string }; out: AccountStatus }
+  /**
+   * Sign in, or make an account, with a passkey — in the person's own browser, where a
+   * passkey belongs to them rather than to this Mac. Resolves when the browser hands
+   * the token back, or signed out if it is abandoned.
+   */
+  'account:passkey': { in: void; out: AccountStatus }
+  /** Sign this machine out. Nothing in the account is touched. */
+  'account:signOut': { in: void; out: AccountStatus }
+  'account:changePassword': { in: { currentPassword?: string; newPassword: string }; out: AccountStatus }
+  'account:devices': { in: void; out: AccountDevice[] }
+  'account:revokeDevice': { in: { deviceId: string }; out: AccountDevice[] }
 
   'settings:get': { in: void; out: Settings }
   'settings:save': { in: Partial<Settings>; out: Settings }
-  'settings:revealData': { in: void; out: void }
-  'settings:exportMarkdown': { in: void; out: { files: number; dir: string } }
-  'settings:exportJson': { in: void; out: { path: string } }
+  /** Everything in the account as JSON, saved wherever the person chooses. Null if cancelled. */
+  'settings:exportJson': { in: void; out: { path: string } | null }
   'settings:loadSample': { in: void; out: void }
   'settings:wipe': { in: void; out: void }
 
