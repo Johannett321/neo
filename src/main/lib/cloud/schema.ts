@@ -108,6 +108,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand this sign-in to an app on a phone, as a code rather than a token.
+         * @description `/connect.html` runs the passkey ceremony in a browser, and on a phone the browser
+         *     and the app are different programs: what the page gets back has to reach the app
+         *     through a URL, and a URL can be read by whatever else claims the same scheme. So the
+         *     page does not put the token in it. It asks for a code here, bound to the hash of a
+         *     secret the app made (PKCE, RFC 7636), and only the code travels. Called with the
+         *     token the ceremony just issued; that token stops working when the code is redeemed.
+         */
+        post: operations["startHandoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/handoff/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Swap a handed-off code, and the secret it was bound to, for this device's token. */
+        post: operations["redeemHandoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -1767,6 +1809,18 @@ export interface components {
             /** @description Optional. Without it the browser offers whichever Neo passkey it holds. */
             username?: string;
         };
+        HandoffStart: {
+            /** @description base64url(SHA-256(code verifier)), without padding. */
+            codeChallenge: string;
+        };
+        HandoffCode: {
+            code: string;
+            expiresInSeconds: number;
+        };
+        HandoffRedeem: {
+            code: string;
+            codeVerifier: string;
+        };
         Plan: {
             /** @description `free` for everybody, for now. */
             id: string;
@@ -2737,6 +2791,14 @@ export interface components {
         RecordingStart: {
             /** Format: uuid */
             meetingId: string;
+            /**
+             * @description What the audio is. A desktop's MediaRecorder writes WebM, which is the default; a
+             *     phone records AAC in an MPEG-4 container (`audio/mp4`). Fixed for the life of a
+             *     recording, because every segment's file is named and served by it and a
+             *     transcription service reads the format off the name. Only the formats listed in
+             *     the server are accepted.
+             */
+            mime?: string;
         };
         Duration: {
             /** Format: int64 */
@@ -3070,6 +3132,56 @@ export interface operations {
         };
         responses: {
             /** @description Signed in. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    startHandoff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffStart"];
+            };
+        };
+        responses: {
+            /** @description A code, good for one redemption within two minutes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoffCode"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    redeemHandoff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffRedeem"];
+            };
+        };
+        responses: {
+            /** @description Signed in. The token is new; the one the page held no longer works. */
             200: {
                 headers: {
                     [name: string]: unknown;

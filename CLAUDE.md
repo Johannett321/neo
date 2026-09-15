@@ -142,7 +142,10 @@ A passkey happens in the person's real browser (`lib/cloud/passkey.ts`, the serv
 `/connect.html`): Neo's window is `file://`, so it cannot run a ceremony against the
 server's domain, and a passkey Electron made itself would be bound to one Mac's Secure
 Enclave, which iCloud Keychain does not sync. The page hands the token back to a loopback
-port guarded by a `state` nonce — RFC 8252's arrangement, and `gh auth login`'s. A 401 from
+port guarded by a `state` nonce — RFC 8252's arrangement, and `gh auth login`'s. The phone
+app (`../mobile`) uses the same page from the system's authentication browser, but has no
+loopback port and a custom scheme anyone can claim, so there the page trades the token for a
+PKCE-bound code (`/v1/auth/handoff`) and only the code travels. A 401 from
 any request means this device was signed out elsewhere: the session is forgotten and the
 window hears `account` and goes back to the sign-in screen.
 
