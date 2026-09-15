@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import type { AiEvent } from '@shared/types'
 import { api, must } from '../lib/cloud/client'
+import { messageOf } from '../lib/cloud/documents'
 import { cancelRun, respondToRun, startRun } from '../lib/ai/run'
 import { handle } from './util'
 
@@ -25,7 +26,10 @@ export function registerChatHandlers(): void {
   handle('chat:list', ({ workspaceId }) =>
     must(api.GET('/v1/conversations', { params: { query: { workspaceId } } })))
 
-  handle('chat:get', ({ id }) => must(api.GET('/v1/conversations/{id}', { params: { path: { id } } })))
+  handle('chat:get', async ({ id }) => {
+    const { conversation, messages } = await must(api.GET('/v1/conversations/{id}', { params: { path: { id } } }))
+    return { conversation, messages: messages.map(messageOf) }
+  })
 
   handle('chat:rename', ({ id, title }) =>
     must(api.PATCH('/v1/conversations/{id}', {

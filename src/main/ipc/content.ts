@@ -1,4 +1,5 @@
 import { api, must, upload } from '../lib/cloud/client'
+import { canvasDraftOf, canvasOf } from '../lib/cloud/documents'
 import { handle, withoutId } from './util'
 
 export function registerContentHandlers(): void {
@@ -15,13 +16,10 @@ export function registerContentHandlers(): void {
     upload('/v1/note-images', { projectId, filename: file.name, mime: file.mime },
       new Uint8Array(Buffer.from(file.data, 'base64'))))
 
-  handle('canvas:save', (draft) =>
-    draft.id
-      ? must(api.PATCH('/v1/canvases/{id}', {
-          params: { path: { id: draft.id } },
-          body: withoutId(draft) as never
-        }))
-      : must(api.POST('/v1/canvases', { body: withoutId(draft) as never })))
+  handle('canvas:save', async (draft) =>
+    canvasOf(await (draft.id
+      ? must(api.PATCH('/v1/canvases/{id}', { params: { path: { id: draft.id } }, body: canvasDraftOf(draft) }))
+      : must(api.POST('/v1/canvases', { body: canvasDraftOf(draft) })))))
 
   handle('canvas:delete', async ({ id }) => {
     await must(api.DELETE('/v1/canvases/{id}', { params: { path: { id } } }))

@@ -35,6 +35,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Against the contract Neo Cloud publishes, which needs no token: the committed
+      # client must be exactly what production's spec generates. Once is enough.
+      - name: The client matches Neo Cloud's published contract
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run check:contract
+
   verify:
     name: Verify against Neo Cloud
     # The main process's handlers run headless in plain Node with Electron stubbed out,
@@ -108,13 +114,11 @@ jobs:
       - run: npm ci
         if: env.HAS_SERVER == 'true'
 
-      - name: The generated client matches the server's contract
+      - name: The client matches the contract of the server being verified
         if: env.HAS_SERVER == 'true'
         env:
           NEO_CLOUD_SPEC: neo-sync-server/src/main/resources/openapi/neo-cloud.yaml
-        run: |
-          npm run gen:api
-          git diff --exit-code src/main/lib/cloud/schema.ts
+        run: npm run check:contract
 
       - name: Verify
         if: env.HAS_SERVER == 'true'

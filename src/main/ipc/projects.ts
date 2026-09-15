@@ -1,4 +1,5 @@
 import { api, must } from '../lib/cloud/client'
+import { detailOf } from '../lib/cloud/documents'
 import { handle, withoutId } from './util'
 
 export function registerProjectHandlers(): void {
@@ -10,10 +11,10 @@ export function registerProjectHandlers(): void {
    * rolls — and reading one for some other reason is not. Two endpoints, because a GET
    * that writes is a GET a proxy can repeat.
    */
-  handle('project:get', ({ id, touch = true }) =>
-    touch
+  handle('project:get', async ({ id, touch = true }) =>
+    detailOf(await (touch
       ? must(api.POST('/v1/projects/{id}/visits', { params: { path: { id } } }))
-      : must(api.GET('/v1/projects/{id}', { params: { path: { id } } })))
+      : must(api.GET('/v1/projects/{id}', { params: { path: { id } } })))))
 
   handle('project:save', (draft) =>
     draft.id

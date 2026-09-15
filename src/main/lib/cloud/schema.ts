@@ -2273,13 +2273,19 @@ export interface components {
             /** @description The day the project began, YYYY-MM-DD (a timestamp is cut to its day). */
             createdAt?: string;
         };
+        /**
+         * @description What an entry in a project's activity log records. `lane_added` is from when a board
+         *     had lanes; nothing writes it any more, but entries from then are still in accounts
+         *     and still come back.
+         * @enum {string}
+         */
+        ActivityKind: "task_created" | "task_completed" | "note" | "canvas" | "decision" | "journal" | "meeting" | "state_updated" | "person_added" | "link_added" | "project_created" | "lane_added";
         Activity: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             projectId: string;
-            /** @description task_created, task_completed, note, canvas, decision, journal, meeting, state_updated, person_added, link_added or project_created. */
-            kind: string;
+            kind: components["schemas"]["ActivityKind"];
             summary: string;
             /** Format: date-time */
             createdAt: string;
@@ -2348,6 +2354,11 @@ export interface components {
              */
             sourceMeetingId: string | null;
         };
+        /**
+         * @description What a project's link points at. `staging` is any running environment.
+         * @enum {string}
+         */
+        LinkKind: "repo" | "board" | "design" | "docs" | "chat" | "drive" | "staging" | "other";
         Link: {
             /** Format: uuid */
             id: string;
@@ -2355,8 +2366,7 @@ export interface components {
             projectId: string;
             label: string;
             url: string;
-            /** @description repo, board, design, docs, chat, drive, staging or other. */
-            kind: string;
+            kind: components["schemas"]["LinkKind"];
             sortOrder: number;
         };
         Note: {
@@ -2737,7 +2747,7 @@ export interface components {
             projectId?: string;
             label?: string;
             url?: string;
-            kind?: string;
+            kind?: components["schemas"]["LinkKind"];
             sortOrder?: number;
         };
         JournalEntryDraft: {
@@ -2855,9 +2865,10 @@ export interface components {
             projectName: string;
             workspaceColor: string;
         };
+        /** @enum {string} */
+        SearchHitKind: "project" | "task" | "person" | "note" | "canvas" | "decision" | "journal";
         SearchHit: {
-            /** @description project, task, person, note, canvas, decision or journal. */
-            kind: string;
+            kind: components["schemas"]["SearchHitKind"];
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -2867,9 +2878,15 @@ export interface components {
             snippet: string;
             color: string;
         };
+        /**
+         * @description The five moments Neo is willing to interrupt you at: a project's deadline some days
+         *     ahead and on the day, a card's due date some days ahead and on the day, and the
+         *     morning after a card was due.
+         * @enum {string}
+         */
+        NotificationKind: "project-ahead" | "project-day" | "task-ahead" | "task-day" | "task-after";
         PendingNotification: {
-            /** @description project-ahead, project-day, task-ahead, task-day or task-after. */
-            kind: string;
+            kind: components["schemas"]["NotificationKind"];
             /** Format: uuid */
             workspaceId: string;
             title: string;

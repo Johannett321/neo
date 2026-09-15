@@ -35,7 +35,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
-    "gen:api": "openapi-typescript ${NEO_CLOUD_SPEC:-../neo-sync-server/src/main/resources/openapi/neo-cloud.yaml} -o src/main/lib/cloud/schema.ts"
+    "gen:api": "node scripts/contract.mjs",
+    "check:contract": "node scripts/contract.mjs --check"
   },
   "dependencies": {
     "openai": "^7.10.0",

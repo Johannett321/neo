@@ -35,6 +35,8 @@ export type LinkKind =
 export type ActivityKind =
   | 'task_created' | 'task_completed' | 'note' | 'canvas' | 'decision' | 'journal' | 'meeting'
   | 'state_updated' | 'person_added' | 'link_added' | 'project_created'
+  /** From when a board had lanes. Nothing writes it now, but old entries still come back. */
+  | 'lane_added'
 
 export interface Workspace {
   id: string

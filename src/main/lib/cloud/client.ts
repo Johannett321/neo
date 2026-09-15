@@ -86,19 +86,16 @@ async function send(request: Request): Promise<Response> {
  * else — a proxy's HTML page, an empty body — is reported by status instead.
  */
 /*
- * The answer is typed loosely on purpose. What a handler returns is typed by the IPC
- * contract in `shared/api.ts` — the types the renderer is written against — and the
- * OpenAPI contract was written to match them; requiring the generated types to be
- * assignable to the hand-written ones as well would mean a cast at every call site
- * saying the same thing. The request side stays strictly typed.
+ * The answer carries the spec's response type. A handler returns it to a channel whose
+ * output `shared/api.ts` declares, so the hand-written types the renderer uses are
+ * checked against Neo Cloud's contract at every call site — a field the server stops
+ * sending, or a value it starts sending, is a compile error rather than a surprise.
  */
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-export async function must(
-  pending: Promise<{ data?: unknown; error?: unknown; response: Response }>
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-): Promise<any> {
+export async function must<T>(
+  pending: Promise<{ data?: T; error?: unknown; response: Response }>
+): Promise<T> {
   const { data, error, response } = await pending
-  if (response.ok) return data
+  if (response.ok) return data as T
   const sentence = (error as { error?: string } | undefined)?.error
   throw new CloudError(response.status, sentence || `Neo Cloud answered ${response.status}.`)
 }
