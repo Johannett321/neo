@@ -760,6 +760,41 @@ async function main(): Promise<void> {
      await refused(() => call('column:delete', { id: soloColumns[0].id })))
   await call('project:delete', { id: soloProject.id })
 
+  // --- a card taken to another project's board
+  const sameSide = await call('project:save', { workspaceId: dayJob, name: 'Move target', status: 'active' })
+  const otherSide = await call('project:save', { workspaceId: own, name: 'Far target', status: 'active' })
+  const boardPeople = await call('person:list', { workspaceId: dayJob })
+  const boardMe = boardPeople.find((p: any) => p.isMe)
+  const colleague = boardPeople.find((p: any) => !p.isMe)
+  const farMe = (await call('person:list', { workspaceId: own })).find((p: any) => p.isMe)
+
+  const traveller = await call('task:save', {
+    projectId: checkout.id, title: 'Wrong board', assigneePersonId: colleague.id
+  })
+  const within = await call('task:setProject', { id: traveller.id, projectId: sameSide.id })
+  const sameSideColumns = (await call('project:get', { id: sameSide.id })).columns
+  ok('a card moved to another project lands in its first column',
+     within.projectId === sameSide.id && within.columnId === sameSideColumns[0].id)
+  ok('within a workspace the assignee comes along', within.assigneePersonId === colleague.id)
+  ok('the project it arrived in logs it',
+     (await call('project:get', { id: sameSide.id })).activity.some((a: any) =>
+       a.summary === `Moved in from ${checkout.name}: Wrong board`),
+     (await call('project:get', { id: sameSide.id })).activity.map((a: any) => a.summary).join(' | '))
+
+  const across = await call('task:setProject', { id: traveller.id, projectId: otherSide.id })
+  ok('across workspaces somebody else is let go',
+     across.projectId === otherSide.id && across.assigneePersonId === null)
+
+  const myCard = await call('task:save', { projectId: checkout.id, title: 'Mine, done', assigneePersonId: boardMe.id })
+  await call('task:setStatus', { id: myCard.id, status: 'done' })
+  const mineAcross = await call('task:setProject', { id: myCard.id, projectId: otherSide.id })
+  const otherSideColumns = (await call('project:get', { id: otherSide.id })).columns
+  ok('but you become that workspace\'s you', mineAcross.assigneePersonId === farMe.id)
+  ok('and a done card lands in the done column, still done',
+     mineAcross.status === 'done' && mineAcross.columnId === otherSideColumns.find((c: any) => c.isDone).id)
+  await call('project:delete', { id: sameSide.id })
+  await call('project:delete', { id: otherSide.id })
+
   /* -------------------------------------------------------------------- meetings */
 
   const newMeeting = await call('meeting:save', {

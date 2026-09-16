@@ -16,6 +16,9 @@ export function registerTaskHandlers(): void {
   handle('task:setColumn', ({ id, columnId }) =>
     must(api.PUT('/v1/tasks/{id}/column', { params: { path: { id } }, body: { columnId } })))
 
+  handle('task:setProject', ({ id, projectId }) =>
+    must(api.PUT('/v1/tasks/{id}/project', { params: { path: { id } }, body: { projectId } })))
+
   handle('task:delete', async ({ id }) => {
     await must(api.DELETE('/v1/tasks/{id}', { params: { path: { id } } }))
   })

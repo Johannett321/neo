@@ -7,6 +7,7 @@ import { useRevealed, useRevealTarget } from '@/lib/reveal'
 import { Icon } from '@/components/Icon'
 import { Avatar, ConfirmButton } from '@/components/primitives'
 import { CreateDialog } from '@/components/CreateDialog'
+import { MoveTaskModal } from '@/components/MoveTaskModal'
 import { TaskDialog } from '@/components/TaskDialog'
 import { useProject } from './ProjectLayout'
 
@@ -31,73 +32,80 @@ function Card({
   const remove = useApiMutation('task:delete')
   const openMenu = useContextMenu()
   const ref = useRevealTarget<HTMLDivElement>(revealed)
+  const [moving, setMoving] = useState(false)
   const overdue = task.daysUntilDue !== null && task.daysUntilDue < 0 && task.status !== 'done'
 
   return (
-    <div
-      ref={ref}
-      draggable
-      onDragStart={onDragStart}
-      onClick={onEdit}
-      onContextMenu={(e) =>
-        openMenu(e, [
-          { label: 'Edit…', icon: 'edit', onSelect: onEdit },
-          {
-            label: task.status === 'done' ? 'Mark as not done' : 'Mark as done',
-            icon: 'check',
-            onSelect: () =>
-              setStatus.mutate({ id: task.id, status: task.status === 'done' ? 'open' : 'done' })
-          },
-          'separator',
-          ...columns
-            .filter((c) => c.id !== task.columnId)
-            .map((c) => ({
-              label: `Move to ${c.name}`,
-              icon: 'arrowRight' as const,
-              onSelect: () => setColumn.mutate({ id: task.id, columnId: c.id })
-            })),
-          'separator',
-          {
-            label: 'Delete',
-            icon: 'trash',
-            danger: true,
-            onSelect: () => remove.mutate({ id: task.id }),
-            confirm: { title: 'Delete this item?', body: task.title }
-          }
-        ])
-      }
-      className={`hairline row-hover cursor-grab rounded-field border bg-base-100 px-2.5 py-2 active:cursor-grabbing ${
-        revealed ? 'reveal-flash' : ''
-      }`}
-    >
-      <div className={`text-[12px] leading-snug ${task.status === 'done' ? 'text-base-content/40' : ''}`}>
-        {task.title}
+    <>
+      <div
+        ref={ref}
+        draggable
+        onDragStart={onDragStart}
+        onClick={onEdit}
+        onContextMenu={(e) =>
+          openMenu(e, [
+            { label: 'Edit…', icon: 'edit', onSelect: onEdit },
+            {
+              label: task.status === 'done' ? 'Mark as not done' : 'Mark as done',
+              icon: 'check',
+              onSelect: () =>
+                setStatus.mutate({ id: task.id, status: task.status === 'done' ? 'open' : 'done' })
+            },
+            'separator',
+            ...columns
+              .filter((c) => c.id !== task.columnId)
+              .map((c) => ({
+                label: `Move to ${c.name}`,
+                icon: 'arrowRight' as const,
+                onSelect: () => setColumn.mutate({ id: task.id, columnId: c.id })
+              })),
+            { label: 'Move to another project…', icon: 'projects', onSelect: () => setMoving(true) },
+            'separator',
+            {
+              label: 'Delete',
+              icon: 'trash',
+              danger: true,
+              onSelect: () => remove.mutate({ id: task.id }),
+              confirm: { title: 'Delete this item?', body: task.title }
+            }
+          ])
+        }
+        className={`hairline row-hover cursor-grab rounded-field border bg-base-100 px-2.5 py-2 active:cursor-grabbing ${
+          revealed ? 'reveal-flash' : ''
+        }`}
+      >
+        <div className={`text-[12px] leading-snug ${task.status === 'done' ? 'text-base-content/40' : ''}`}>
+          {task.title}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-base-content/45">
+          {task.kind !== 'task' && (
+            <span className="flex items-center gap-1">
+              <Icon name={KIND_ICON[task.kind]} size={9} />
+              {KIND_LABEL[task.kind]}
+            </span>
+          )}
+          {task.assigneeName && (
+            <span className="flex items-center gap-1" title={`Assigned to ${task.assigneeName}`}>
+              <Avatar
+                name={task.assigneeName}
+                color={task.assigneeColor ?? '#64748b'}
+                image={task.assigneeAvatar}
+                size={14}
+              />
+              {task.assigneeIsMe ? 'Me' : task.assigneeName.split(' ')[0]}
+            </span>
+          )}
+          {task.dueDate && (
+            <span className={`ml-auto tabular-nums ${overdue ? 'font-medium text-error' : ''}`}>
+              {dueLabel(task.daysUntilDue)}
+            </span>
+          )}
+        </div>
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-base-content/45">
-        {task.kind !== 'task' && (
-          <span className="flex items-center gap-1">
-            <Icon name={KIND_ICON[task.kind]} size={9} />
-            {KIND_LABEL[task.kind]}
-          </span>
-        )}
-        {task.assigneeName && (
-          <span className="flex items-center gap-1" title={`Assigned to ${task.assigneeName}`}>
-            <Avatar
-              name={task.assigneeName}
-              color={task.assigneeColor ?? '#64748b'}
-              image={task.assigneeAvatar}
-              size={14}
-            />
-            {task.assigneeIsMe ? 'Me' : task.assigneeName.split(' ')[0]}
-          </span>
-        )}
-        {task.dueDate && (
-          <span className={`ml-auto tabular-nums ${overdue ? 'font-medium text-error' : ''}`}>
-            {dueLabel(task.daysUntilDue)}
-          </span>
-        )}
-      </div>
-    </div>
+      {/* Beside the card, not in it: a portal still bubbles its clicks to React parents,
+          and the card opens its editor on any click. */}
+      <MoveTaskModal open={moving} onClose={() => setMoving(false)} task={task} />
+    </>
   )
 }
 

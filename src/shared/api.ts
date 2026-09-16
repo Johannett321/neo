@@ -133,6 +133,12 @@ export interface ApiMap {
   'task:setStatus': { in: { id: string; status: TaskStatus }; out: Task }
   /** Moving a card. Dropping into or out of the done column flips `status` too. */
   'task:setColumn': { in: { id: string; columnId: string }; out: Task }
+  /**
+   * Take a card to another project's board, in this workspace or another. It lands in
+   * the first column (the done column if it was done), and an assignee from another
+   * workspace is dropped — except you, who become that workspace's you.
+   */
+  'task:setProject': { in: { id: string; projectId: string }; out: Task }
 
   'column:save': { in: Draft<BoardColumn>; out: BoardColumn }
   'column:delete': { in: { id: string }; out: void }

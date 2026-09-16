@@ -918,6 +918,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Move a card to another project's board, in this workspace or another. It lands in that board's first column, or its done column when it is done. An assignee who belongs to another workspace does not come along, except yourself. */
+        put: operations["moveTaskToProject"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/columns": {
         parameters: {
             query?: never;
@@ -2669,6 +2688,10 @@ export interface components {
         TaskColumnChange: {
             /** Format: uuid */
             columnId: string;
+        };
+        TaskProjectChange: {
+            /** Format: uuid */
+            projectId: string;
         };
         BoardColumnDraft: {
             /** Format: uuid */
@@ -4633,6 +4656,33 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["TaskColumnChange"];
+            };
+        };
+        responses: {
+            /** @description The task as it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    moveTaskToProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskProjectChange"];
             };
         };
         responses: {
