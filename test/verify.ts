@@ -14,12 +14,9 @@ import { registerSettingsHandlers, SIGNED_OUT_SETTINGS } from '../src/main/ipc/s
 import { registerWeatherHandlers } from '../src/main/ipc/weather'
 import { registerUpdateHandlers } from '../src/main/ipc/updates'
 import { registerChatHandlers } from '../src/main/ipc/chat'
-import { registerMcpHandlers } from '../src/main/ipc/mcp'
-import { TOOLS } from '../src/main/lib/ai/tools'
+import { registerClaudeHandlers } from '../src/main/ipc/claude'
+import { readEvents, refusalOf, startRun } from '../src/main/lib/cloud/assistant'
 import { PANELS, clampPanelWidth } from '../src/shared/panels'
-import { callTool, describeTools, endpointFile, startBridge, stopBridge } from '../src/main/lib/mcp/bridge'
-import { apiOnly } from '../src/main/lib/ai/run'
-import { invokeChannel } from '../src/main/ipc/util'
 import { announceChange, onChange } from '../src/main/lib/changes'
 import { deliverNotifications, deliveryDue } from '../src/main/lib/notifier'
 import { splashDocument } from '../src/main/lib/splash'
@@ -37,12 +34,11 @@ import { loadSession } from '../src/main/lib/cloud/session'
 import { today as todayDate } from '../src/main/lib/dates'
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { MARK } from '@shared/mark'
-import type { BridgeEndpoint } from '@shared/mcp'
+import { MCP_URL } from '@shared/claude'
 
 /*
  * The main process's own handlers, run against a real Neo Cloud.
@@ -175,9 +171,8 @@ async function main(): Promise<void> {
   registerSettingsHandlers()
   registerUpdateHandlers()
   registerWeatherHandlers()
-  registerMcpHandlers()
-  // Registered last, as in the app: the assistant's tools call the channels above by name.
   registerChatHandlers()
+  registerClaudeHandlers()
 
   const scratch = mkdtempSync(join(tmpdir(), 'neo-verify-files-'))
 
@@ -1098,18 +1093,40 @@ async function main(): Promise<void> {
      `${stopped.segments.length} parts, ${stopped.bytes} bytes`)
 
   /*
-   * This workspace has no API key, so the pipeline that just picked the recording up
-   * cannot transcribe it. What matters is that it stops and says why in words a
-   * person can act on, rather than retrying a wrong key every twenty seconds until
-   * the end of time.
+   * The pipeline picks a stopped recording up on its own and runs it on Neo Cloud's
+   * key — there is no key of the workspace's to be missing any more. Against a server
+   * with a transcription service (the local one's stand-in) it carries on through; on
+   * one with none it has to stop and say why in words, rather than retrying every
+   * twenty seconds until the end of time. Either is an ending, and neither is waiting.
    */
+  let lastSeen = ''
   const settled = await until(async () => {
-    const view = await call('recording:get', { meetingId: recMeeting.id })
-    return ['done', 'failed'].includes(view.recording.transcriptState) ? view.recording : null
-  })
-  ok('a recording it cannot transcribe fails once, permanently, and says what to fix',
-     settled?.transcriptState === 'failed' && /API key/i.test(settled.transcriptError ?? ''),
-     settled?.transcriptError)
+    const view = (await call('recording:get', { meetingId: recMeeting.id })).recording
+    lastSeen = `${view.transcriptState}/${view.speakerState}/${view.summaryState} written=${view.recapWrittenAt} ${view.transcriptError} ${view.summaryError}`
+    // Ended means failed, or recapped and folded into the meeting — nothing left to run.
+    const over = view.transcriptState === 'failed' || view.summaryState === 'failed' ||
+      (view.summaryState === 'done' && view.recapWrittenAt !== null)
+    // A service that cannot be reached is backed off from, and says so while it waits.
+    const backingOff = view.transcriptState === 'pending' && view.transcriptError !== ''
+    return over || backingOff ? view : null
+  }, 30_000)
+  ok('the pipeline picks a stopped recording up by itself, and says why whenever it cannot go on',
+     settled !== null && settled.waitingForAllowance === false &&
+     (settled.transcriptState === 'done' || settled.transcriptError !== ''),
+     lastSeen)
+
+  /*
+   * From here on the steps are stood in for by hand, so wind the recording back to
+   * "nothing transcribed yet" and keep the runner off it until this test says so —
+   * whatever the service above wrote is not what the assertions below are about.
+   */
+  psql(`DELETE FROM app.transcript_cue WHERE recording_id = '${stopped.id}';
+        DELETE FROM app.meeting_todo WHERE meeting_id = '${recMeeting.id}';
+        UPDATE app.recording SET transcript_state = 'pending', transcript_error = '', speaker_state = 'pending',
+          summary_state = 'pending', summary = '', recap_written_at = NULL, recap_todos_at = NULL,
+          lease_until = NULL, next_attempt_at = now() + interval '1 hour'
+         WHERE id = '${stopped.id}';
+        UPDATE app.meeting SET body = '' WHERE id = '${recMeeting.id}';`)
   ok('a stopped recording refuses to be recorded over',
      await threw(() => call('recording:start', { meetingId: recMeeting.id }), 'already has a recording'))
   // Deleting the audio is only ever a trade of sound for words. Before the words
@@ -1231,14 +1248,23 @@ async function main(): Promise<void> {
 
   // Asking for the recap again means you want the new answer on the to-do list — but
   // not a second copy of it in a write-up you have been editing.
+  // With a service to write it, Neo Cloud may have the new recap and its to-do half done
+  // before this can look, so "reopened" is the marker cleared *or* set again since.
+  const todosBefore = psql(`SELECT recap_todos_at FROM app.recording WHERE id = '${recordingId}'`)
   await call('recording:retry', { id: recordingId, step: 'summary' })
-  const markers = psql(`SELECT (recap_written_at IS NOT NULL)::text || ',' || (recap_todos_at IS NULL)::text
+  const markers = psql(`SELECT (recap_written_at IS NOT NULL)::text || ',' ||
+                               (recap_todos_at IS NULL OR recap_todos_at > '${todosBefore}')::text
                           FROM app.recording WHERE id = '${recordingId}'`)
   ok('asking for the recap again reopens the to-do list but not the write-up', markers === 'true,true', markers)
+  // Let a runner that took it finish before the row is put back under it.
+  await until(async () => psql(`SELECT (summary_state IN ('done', 'failed') AND recap_todos_at IS NOT NULL)
+                                   OR (summary_state = 'pending' AND next_attempt_at > now() + interval '1 minute')
+                                  FROM app.recording WHERE id = '${recordingId}'`) === 't' || null, 15_000)
   // Put it back the way it was: what follows is about a finished recording, and a
   // test that leaves the world half-rewritten behind it is a test that fails the
   // next one for reasons that have nothing to do with the next one.
   psql(`UPDATE app.recording SET summary_state = 'done', summary_error = '', recap_todos_at = now(),
+          summary = 'A short call about the release.', lease_until = NULL,
           next_attempt_at = now() + interval '1 hour' WHERE id = '${recordingId}'`)
 
   ok('a meeting carries its recording, so a list can say what state it is in',
@@ -1343,16 +1369,16 @@ async function main(): Promise<void> {
   // Put back, so the assertions below read dates the way the rest of the run does.
   await call('settings:save', { clockFormat: 'system', temperatureUnits: 'system' })
 
-  const engines = await call('workspace:save', {
+  const recapSettings = await call('workspace:save', {
     id: dayJob,
-    transcribeEngine: 'local',
-    transcribeBaseUrl: 'http://127.0.0.1:9000/v1',
+    transcribeLanguage: 'no',
     recapPrompt: 'Only the decisions, nothing else.'
   })
-  ok('a workspace chooses its own engines, and they come back on the workspace',
-     engines.transcribeEngine === 'local' &&
-     engines.transcribeBaseUrl === 'http://127.0.0.1:9000/v1' &&
-     engines.recapPrompt === 'Only the decisions, nothing else.')
+  ok('a workspace keeps its own language and recap prompt, and no engine, model or key',
+     recapSettings.transcribeLanguage === 'no' &&
+     recapSettings.recapPrompt === 'Only the decisions, nothing else.' &&
+     !('transcribeEngine' in recapSettings) && !('aiKeySet' in recapSettings) && !('aiModel' in recapSettings))
+  await call('workspace:save', { id: dayJob, transcribeLanguage: '' })
 
   /* ------------------------------------------- the Today page's own furniture */
 
@@ -1897,224 +1923,206 @@ async function main(): Promise<void> {
      !(await call('project:list', { workspaceId: dayJob, status: 'all' })).some((p: any) => p.id === doomed.id))
 
   /*
-   * The assistant. Everything except the model call itself is exercised here: the
-   * conversations, the tools, and the workspace fence they all sit behind. What is
-   * deliberately *not* tested is the run loop, which needs a key and a network.
+   * The assistant. The turn runs in Neo Cloud — the model, the tools, the confirmations
+   * and the fence around the workspace are the server's, and its own verify covers them.
+   * What is this app's is the relay: opening the run with the device's token, reading
+   * its server-sent events back as the `AiEvent`s the panel draws, mapping an answer and
+   * a cancel onto the run, and turning a spent allowance into the "Neo Pro" card rather
+   * than an error. The local server runs against a scripted stand-in for OpenAI, so all
+   * of it is exercised here for real.
    */
-  const otherProject = (await call('project:list', { workspaceId: own, status: 'all' }))[0]
+  const seenProject = (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.name === 'Checkout rewrite')
 
-  ok('a workspace starts with no key and no conversations',
-     (await call('workspace:list')).every((w: any) => w.aiKeySet === false) &&
+  ok('a workspace starts with no conversations',
      (await call('chat:list', { workspaceId: dayJob })).length === 0)
 
-  await call('chat:setKey', { workspaceId: dayJob, apiKey: 'sk-test-not-a-real-key' })
-  const keyed = (await call('workspace:list')).find((w: any) => w.id === dayJob)
-  ok('a saved key is reported as set but never handed back',
-     keyed.aiKeySet === true && !('aiApiKey' in keyed) && JSON.stringify(keyed).indexOf('sk-test') === -1)
+  // The stream parser on its own first, fed the awkward shapes a network hands over: an
+  // event split mid-line across chunks, CRLF line endings, a keep-alive comment, an
+  // `event:` line beside the data, and a stream that ends without a final blank line.
+  const chunked = (parts: string[]): ReadableStream<Uint8Array> => {
+    const encoder = new TextEncoder()
+    return new ReadableStream({
+      start(controller) {
+        for (const part of parts) controller.enqueue(encoder.encode(part))
+        controller.close()
+      }
+    })
+  }
+  const parsedEvents: any[] = []
+  for await (const event of readEvents(chunked([
+    ': keep-alive\n\n',
+    'event: started\ndata: {"type":"started","runId":"r1","conv',
+    'ersationId":"c1","messageId":"m1"}\r\n\r\n',
+    'event: text\r\ndata: {"type":"text","runId":"r1","delta":"Hel"}\n\ndata: not json\n\n',
+    'data: {"type":"done","runId":"r1","conversationId":"c1"}'
+  ]))) parsedEvents.push(event)
+  ok('the run\'s event stream is read back as the panel\'s own events, however the bytes arrive',
+     parsedEvents.length === 3 &&
+     parsedEvents[0].type === 'started' && parsedEvents[0].conversationId === 'c1' &&
+     parsedEvents[1].delta === 'Hel' && parsedEvents[2].type === 'done',
+     JSON.stringify(parsedEvents))
 
-  ok('sending without a key says so rather than failing obscurely',
-     await threw(() => call('chat:send', { workspaceId: own, text: 'hello' }), 'no API key'))
+  // The limit mapping on its own: a 429 is a card, anything else is an error in words.
+  const mapped = await refusalOf(new Response(
+    JSON.stringify({ error: 'You have used today\'s 5 assistant messages.', limit: 'assistant' }),
+    { status: 429, headers: { 'Content-Type': 'application/json' } }))
+  ok('a 429 from Neo Cloud becomes the "Neo Pro" card, carrying which allowance and its sentence',
+     mapped.started === false && mapped.limit === 'assistant' && mapped.message.includes('5 assistant messages'),
+     JSON.stringify(mapped))
+  const transcriptionMapped = await refusalOf(new Response(
+    JSON.stringify({ error: 'x', limit: 'transcription' }), { status: 429 }))
+  ok('and names the transcription allowance when that is the one spent',
+     transcriptionMapped.started === false && transcriptionMapped.limit === 'transcription')
+  ok('any other refusal is an error, in the server\'s own sentence',
+     await threw(() => refusalOf(new Response(JSON.stringify({ error: 'That workspace is not yours.' }), { status: 404 })),
+                 'That workspace is not yours.'))
 
-  // Conversations are rows like anything else, so they are checked without a model —
-  // written through the same two requests the run loop makes before it calls one.
-  const conversation = await must(api.POST('/v1/conversations', { body: { workspaceId: dayJob } }))
-  const conversationId = conversation.id
+  ok('a file the assistant cannot read is refused before anything is sent',
+     await threw(() => call('chat:send', {
+       workspaceId: dayJob, text: 'what is this',
+       files: [{ name: 'blob.bin', mime: 'application/octet-stream', data: 'AAAA' }]
+     }), 'not a kind of file'))
+
+  /** One turn, with every event it relayed kept, answered by `answer` when it asks. */
+  const turn = async (
+    input: { workspaceId: string; text: string; conversationId?: string; files?: unknown[] },
+    options: { answer?: (event: any) => Promise<void>; onText?: (event: any) => Promise<void> } = {}
+  ): Promise<{ result: any; events: any[] }> => {
+    const events: any[] = []
+    let first = true
+    const result = await startRun(input as any, (event) => {
+      events.push(event)
+      if (event.type === 'approval' && options.answer) void options.answer(event)
+      if (event.type === 'text' && first && options.onText) {
+        first = false
+        void options.onText(event)
+      }
+    })
+    if (result.started) await until(async () => events.some((e) => e.type === 'done') || null, 30_000)
+    return { result, events }
+  }
+
+  const note = Buffer.from('The launch moved to October.').toString('base64')
+  const hello = await turn({
+    workspaceId: dayJob, text: 'hello',
+    files: [{ name: 'notes.txt', mime: 'text/plain', data: note }]
+  })
+  const conversationId = hello.result.conversationId
+  const kinds = hello.events.map((e) => e.type)
+  ok('a run starts, relays its answer as it is written, and ends with done',
+     hello.result.started === true && Boolean(hello.result.runId) && Boolean(hello.result.messageId) &&
+     kinds[0] === 'started' && kinds[kinds.length - 1] === 'done' &&
+     hello.events.filter((e) => e.type === 'text').map((e) => e.delta).join('') === 'Hello from the stub.',
+     kinds.join(' '))
+  ok('every relayed event carries the run it belongs to',
+     hello.events.every((e) => e.runId === hello.result.runId))
+  ok('and done names the conversation, which is the one the file was put into',
+     hello.events[hello.events.length - 1].conversationId === conversationId)
+  ok('a first message names its conversation, and the panel hears the title',
+     hello.events.some((e) => e.type === 'title' && e.conversationId === conversationId && e.title.length > 0))
+  const loaded = await call('chat:get', { id: conversationId })
+  ok('the turn is saved in Neo Cloud, with the file it carried',
+     loaded.messages.length >= 2 && loaded.messages[0].role === 'user' &&
+     loaded.messages[0].attachments.some((a: any) => a.name === 'notes.txt'),
+     JSON.stringify(loaded.messages.map((m: any) => [m.role, m.attachments?.length])))
   ok('conversations are listed in their own workspace only',
      (await call('chat:list', { workspaceId: dayJob })).length === 1 &&
      (await call('chat:list', { workspaceId: own })).length === 0)
 
-  await must(api.POST('/v1/conversations/{id}/messages', {
-    params: { path: { id: conversationId } },
-    body: { role: 'user', blocks: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }], tools: {} }
-  }))
-  const loaded = await call('chat:get', { id: conversationId })
-  ok('a conversation replays its turns as the API sent them',
-     loaded.messages.length === 1 && loaded.messages[0].blocks[0].content[0].text === 'hi')
+  // A write stops and asks. The answer goes back through `chat:respond`, the channel
+  // the panel's buttons call, and nothing is written until it does.
+  let announced = 0
+  const stopWatching = onChange(() => { announced += 1 })
+  const activityBefore = (await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })).length
+  const approved = await turn(
+    { workspaceId: dayJob, conversationId, text: 'create task Written by the assistant in Checkout rewrite' },
+    { answer: (event) => call('chat:respond', { runId: event.runId, toolUseId: event.id, approved: true }) }
+  )
+  const asked = approved.events.find((e) => e.type === 'approval')
+  ok('a write is relayed as a question, in words, before anything is written',
+     Boolean(asked) && asked.name === 'create_task' && asked.label.includes('Written by the assistant'),
+     asked?.label)
+  ok('and the yes from chat:respond lets it run to done',
+     approved.events.some((e) => e.type === 'tool' && e.id === asked?.id && e.status === 'done'),
+     approved.events.map((e) => `${e.type}:${e.status ?? ''}`).join(' '))
+  const madeTask = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.title === 'Written by the assistant')
+  ok('the task it wrote is on the board like any other',
+     Boolean(madeTask) && madeTask.columnId !== null)
+  const activityAfter = await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })
+  ok('and logged activity, because Neo Cloud wrote it the way a click does',
+     activityAfter.length > activityBefore && activityAfter.some((a: any) => a.summary.includes('Written by the assistant')))
+  ok('a task the assistant wrote tells the screen to catch up, while it is still talking',
+     Boolean(await until(async () => announced > 0 || null, 5_000)), String(announced))
+  stopWatching()
 
-  /*
-   * The SDK's stream helper returns a parsed response, hanging `parsed_arguments` on
-   * every function call and `parsed` on every text part. Those are the client's, not
-   * the wire's, and echoing one back is a 400 on the *second* request of a turn — so
-   * a conversation with no tool call in it looks entirely healthy and the bug only
-   * shows the first time the assistant looks something up.
-   */
-  const parsed = [
-    { type: 'function_call', call_id: 'c1', name: 'today', arguments: '{}', parsed_arguments: { a: 1 } },
-    { type: 'message', role: 'assistant',
-      content: [{ type: 'output_text', text: 'hello', parsed: { b: 2 } }] }
-  ]
-  const cleaned = apiOnly(parsed)
-  ok('the SDK\'s own fields are stripped before a turn goes back to the API',
-     !('parsed_arguments' in cleaned[0]) && !('parsed' in cleaned[1].content[0]),
-     JSON.stringify(cleaned))
-  ok('and everything the API does want survives that',
-     cleaned[0].call_id === 'c1' && cleaned[0].arguments === '{}' &&
-     cleaned[1].content[0].text === 'hello')
-  ok('stripping does not mutate what it was given',
-     'parsed_arguments' in parsed[0] && 'parsed' in (parsed[1] as any).content[0])
+  let readsAnnounced = 0
+  const stopReads = onChange(() => { readsAnnounced += 1 })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  readsAnnounced = 0
+  const looked = await turn({ workspaceId: dayJob, conversationId, text: 'look at Checkout rewrite' })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  stopReads()
+  ok('the assistant reading something asks nothing and makes the screen refetch nothing',
+     looked.events.some((e) => e.type === 'tool' && e.name === 'get_project' && e.status === 'done') &&
+     !looked.events.some((e) => e.type === 'approval') && readsAnnounced === 0,
+     `${readsAnnounced} refetches; ${looked.events.map((e) => e.type).join(' ')}`)
+
+  const startedAt = Date.now()
+  const cancelled = await turn(
+    { workspaceId: dayJob, conversationId, text: 'slow' },
+    { onText: (event) => call('chat:cancel', { runId: event.runId }) }
+  )
+  const words = cancelled.events.filter((e) => e.type === 'text').length
+  ok('chat:cancel stops a run part-way, and the stream still says done',
+     cancelled.events.some((e) => e.type === 'done') && words < 40 && Date.now() - startedAt < 15_000,
+     `${words} words in ${Date.now() - startedAt} ms`)
+  ok('answering or stopping a run that has already finished is not an error',
+     !(await refused(() => call('chat:cancel', { runId: cancelled.result.runId }))) &&
+     !(await refused(() => call('chat:respond', { runId: cancelled.result.runId, toolUseId: 'call_gone', approved: true }))))
+
+  const usage = (await call('account:status')).usage.assistantMessages
+  ok('the account says how many of today\'s messages are used, for "N of 5 left today"',
+     usage.used === 4 && usage.limit === 5, JSON.stringify(usage))
+
+  const turnsBefore = (await call('chat:get', { id: conversationId })).messages.length
+  const viaChannel = await call('chat:send', { workspaceId: dayJob, conversationId, text: 'hello' })
+  ok('chat:send answers with the run, the conversation and the saved message',
+     viaChannel.started === true && Boolean(viaChannel.runId) && viaChannel.conversationId === conversationId &&
+     Boolean(viaChannel.messageId), JSON.stringify(viaChannel))
+  // Nobody is listening to this one's events, so its end is read off the saved turns.
+  await until(async () => {
+    const messages = (await call('chat:get', { id: conversationId })).messages
+    return (messages.length >= turnsBefore + 2 && messages[messages.length - 1].role === 'assistant') || null
+  }, 15_000)
+
+  const sixth = await call('chat:send', { workspaceId: dayJob, conversationId, text: 'hello again' })
+  ok('the sixth message of the day comes back as the limit, not as a thrown error',
+     sixth.started === false && sixth.limit === 'assistant' && sixth.message.length > 0, JSON.stringify(sixth))
+  ok('and the account agrees that none are left',
+     (await call('account:status')).usage.assistantMessages.used === 5)
 
   ok('a conversation can be renamed',
      (await call('chat:rename', { id: conversationId, title: 'Renamed' })).title === 'Renamed')
 
-  // Tool catalogue. A write with no confirmation line is the one bug in this feature
-  // that would matter, so it is asserted rather than trusted.
-  ok('every tool has a name, a description and a schema',
-     TOOLS.every((t) => t.name && t.description && t.parameters.type === 'object'))
-  ok('no two tools share a name', new Set(TOOLS.map((t) => t.name)).size === TOOLS.length)
-  ok('every tool that writes can say what it is about to do',
-     TOOLS.filter((t) => t.writes).every((t) => typeof t.summary === 'function'),
-     TOOLS.filter((t) => t.writes && !t.summary).map((t) => t.name).join(', '))
-  ok('reads never ask for confirmation',
-     TOOLS.filter((t) => !t.writes).every((t) => t.summary === undefined))
-
-  const tool = (name: string): any => TOOLS.find((t) => t.name === name)
-  const dayJobCtx = { workspaceId: dayJob }
-
-  const listed = await tool('list_projects').run({}, dayJobCtx)
-  ok('a tool sees only its own workspace', listed.length === 3 &&
-     !listed.some((p: any) => p.id === otherProject.id))
-
-  ok('a project in another workspace is simply not found',
-     await threw(() => tool('get_project').run({ project: otherProject.name }, dayJobCtx),
-                 'No project in this workspace'))
-
-  const seenProject = await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
-  ok('get_project carries the board, the people and the write-ups',
-     seenProject.board.length > 0 && seenProject.people.length > 0 && Array.isArray(seenProject.meetings))
-
-  // Reading a project must not count as visiting it — the re-entry brief measures
-  // the gap since *you* last opened it, and the assistant is not you.
-  const openedAt = async (): Promise<string | null> =>
-    (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === seenProject.id).lastOpenedAt
-  const clockBefore = await openedAt()
-  await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
-  ok('the assistant reading a project does not roll the re-entry clock',
-     clockBefore !== null && clockBefore === (await openedAt()), String(clockBefore))
-
-  ok('an ambiguous name is reported rather than guessed at',
-     await threw(() => tool('get_project').run({ project: 'e' }, dayJobCtx), 'Ask which one'))
-
-  const summary = await tool('create_task').summary(
-    { project: 'Checkout rewrite', title: 'Draft the brief', dueDate: '2026-10-01' }, dayJobCtx)
-  ok('a confirmation names the project rather than quoting an id',
-     summary.includes('Draft the brief') && summary.includes('Checkout rewrite') &&
-     summary.includes('2026-10-01') && !summary.includes(seenProject.id), summary)
-
-  ok('a bad date is refused before anything is written',
-     await threw(() => tool('create_task').summary(
-       { project: 'Checkout rewrite', title: 'x', dueDate: 'next Friday' }, dayJobCtx), 'YYYY-MM-DD'))
-
-  // The whole point of routing writes through the app's own channels: a task the
-  // assistant makes has to be indistinguishable from one made by a click.
-  const activityBefore = (await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })).length
-  const made = await tool('create_task').run(
-    { project: 'Checkout rewrite', title: 'Written by the assistant', dueDate: '2026-10-01' }, dayJobCtx)
-  const madeTask = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)
-  ok('a task the assistant writes lands on the board like any other',
-     Boolean(madeTask) && madeTask.columnId !== null && madeTask.dueDate === '2026-10-01')
-  const activityAfter = await call('dashboard:activity', { workspaceId: dayJob, limit: 1000 })
-  ok('and logs activity, because it went through the same channel',
-     activityAfter.length === activityBefore + 1 && activityAfter[0].summary.includes('Written by the assistant'),
-     `${activityBefore} -> ${activityAfter.length}: ${activityAfter[0]?.summary}`)
-
-  /*
-   * A tool's write has nobody in the renderer waiting on it, so the screen is told
-   * separately or it shows yesterday's board until you navigate away and back. The
-   * signal comes from a request that changed something having succeeded, which is what
-   * a read has to be checked against: announcing on every tool call would refetch the
-   * whole app every time the assistant looked something up.
-   */
-  let announced = 0
-  const stopWatching = onChange(() => { announced += 1 })
-  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 200))
-  // The task made just above is still in the coalescing window; let it land first.
-  await settle()
-  announced = 0
-
-  await tool('list_projects').run({}, dayJobCtx)
-  await tool('get_project').run({ project: 'Checkout rewrite' }, dayJobCtx)
-  await settle()
-  ok('the assistant reading things does not make the screen refetch', announced === 0, String(announced))
-
-  await tool('create_task').run(
-    { project: 'Checkout rewrite', title: 'Watched for', dueDate: '2026-10-02' }, dayJobCtx)
-  await settle()
-  ok('a task made by a tool tells the screen to catch up', announced === 1, String(announced))
-
   // Several writes close together are one refetch, not one each — a tool that saves a
   // project, moves a card and logs activity must not make the app reload three times.
-  announced = 0
+  let burst = 0
+  const stopBurst = onChange(() => { burst += 1 })
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 200))
+  await settle()
+  burst = 0
   announceChange()
   announceChange()
   announceChange()
   await settle()
-  ok('a burst of writes is folded into one refetch', announced === 1, String(announced))
-
-  announced = 0
-  await threw(() => tool('create_task').run({ project: 'Nowhere at all', title: 'x' }, dayJobCtx),
-              'No project in this workspace')
-  await settle()
-  ok('a tool that refused before writing anything says nothing either', announced === 0, String(announced))
-  stopWatching()
-
-  await tool('set_task_status').run({ id: made.id, status: 'done' }, dayJobCtx)
-  const tickedCard = (await call('task:list', { projectId: seenProject.id })).find((t: any) => t.id === made.id)
-  ok('ticking a card off through a tool also moves it to the done column',
-     tickedCard.status === 'done' && tickedCard.columnId !== madeTask.columnId)
-
-  const foreignTask = (await invokeChannel('task:list', { projectId: otherProject.id }))[0]
-  const refusedForeign = await threw(
-    () => tool('set_task_status').run({ id: foreignTask.id, status: 'done' }, dayJobCtx),
-    'in this workspace')
-  const stillOpen = (await invokeChannel('task:list', { projectId: otherProject.id }))
-    .find((t: any) => t.id === foreignTask.id)
-  ok('a task in another workspace cannot be touched by id, even a real one',
-     refusedForeign && stillOpen?.status === foreignTask.status)
+  ok('a burst of writes is folded into one refetch', burst === 1, String(burst))
+  stopBurst()
 
   await call('chat:delete', { id: conversationId })
   ok('deleting a conversation takes its turns with it',
      (await call('chat:list', { workspaceId: dayJob })).length === 0 &&
      await refused(() => call('chat:get', { id: conversationId })) &&
      psql(`SELECT count(*) FROM app.chat_message WHERE conversation_id = '${conversationId}'`) === '0')
-
-  /* --------------------------------------------------- folders, from the assistant */
-
-  const toolFolders = await tool('list_folders').run({}, dayJobCtx)
-  ok('the assistant sees the folder tree as paths, not ids',
-     toolFolders.some((f: any) => f.path === 'Clients / Acme'),
-     toolFolders.map((f: any) => f.path).join(', '))
-  ok('and a project says which folder it is filed in',
-     (await tool('list_projects').run({}, dayJobCtx)).find((p: any) => p.id === idle.id).folder === 'Clients / Acme')
-
-  ok('a folder is named the way a person names one',
-     (await tool('file_project').summary({ project: 'Internal tooling', folder: 'clients/acme' }, dayJobCtx))
-       .includes('Clients / Acme'))
-  ok('taking one out says so plainly',
-     (await tool('file_project').summary({ project: 'Internal tooling', folder: null }, dayJobCtx))
-       .includes('out of its folder'))
-  ok('a folder that is not there fails before the question is asked',
-     await threw(() => tool('file_project').summary({ project: 'Internal tooling', folder: 'Nowhere' }, dayJobCtx),
-                 'No folder in this workspace'))
-  ok('deleting a folder says what survives it',
-     (await tool('delete_folder').summary({ folder: 'Clients' }, dayJobCtx))
-       .includes('move up a level'))
-  ok('and a move that cannot be made is refused while it is still a question',
-     await threw(() => tool('update_folder').summary({ folder: 'Clients', parent: 'Clients' }, dayJobCtx),
-                 'inside itself'))
-
-  await tool('create_folder').run({ name: 'Archive box' }, dayJobCtx)
-  await tool('file_project').run({ project: 'Internal tooling', folder: 'Archive box' }, dayJobCtx)
-  ok('the assistant files a project through the same channel a drag does',
-     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === idle.id).folderId ===
-       (await call('folder:list', { workspaceId: dayJob })).find((f: any) => f.name === 'Archive box').id)
-  await tool('file_project').run({ project: 'Internal tooling', folder: 'Clients / Acme' }, dayJobCtx)
-  await tool('delete_folder').run({ folder: 'Archive box' }, dayJobCtx)
-  ok('and puts it back, and clears up after itself',
-     (await call('project:list', { workspaceId: dayJob })).find((p: any) => p.id === idle.id).folderId === acme.id &&
-     !(await call('folder:list', { workspaceId: dayJob })).some((f: any) => f.name === 'Archive box'))
-  ok('a folder in another workspace is invisible to a tool',
-     await threw(() => tool('update_folder').summary({ folder: 'Somewhere else' }, dayJobCtx),
-                 'No folder in this workspace'))
 
   /* ------------------------------------------------------------------ the export */
 
@@ -2322,127 +2330,17 @@ async function main(): Promise<void> {
      psql(`SELECT count(*) FROM app.notification WHERE workspace_id = '${quiet.id}'`) === '0')
   for (const w of [dayJob, own, consultancy]) await call('workspace:save', { id: w, notify: true })
 
-  /* ------------------------------------------------- the bridge Claude Desktop uses */
-
-  const described = describeTools()
-  ok('every tool the bridge offers names its workspace explicitly',
-     described.length === TOOLS.length &&
-     described.every((t) => Boolean((t.parameters as any).properties?.workspace)))
-  ok('reads are offered as read-only and deleting is offered as destructive',
-     described.find((t) => t.name === 'list_projects')!.writes === false &&
-     described.find((t) => t.name === 'create_task')!.writes === true &&
-     described.find((t) => t.name === 'delete_task')!.destroys === true &&
-     described.find((t) => t.name === 'delete_folder')!.destroys === true &&
-     described.filter((t) => t.destroys).length === 2)
-
-  const activeId = (await call('settings:get')).activeWorkspaceId
-  const activeName = (await call('workspace:list')).find((w: any) => w.id === activeId)?.name
-  const noWorkspace = await callTool({ tool: 'list_projects', arguments: {} })
-  ok('a call that names no workspace uses the one the app is showing, and says which',
-     noWorkspace.ok && noWorkspace.workspace === activeName, activeName)
-
-  const named = await callTool({ tool: 'list_projects', arguments: { workspace: 'My company' } })
-  ok('a call can name its workspace, and gets that one',
-     named.ok && named.workspace === 'My company' &&
-     (named.result as any[]).some((p) => p.id === otherProject.id))
-
-  const wrongWorkspace = await callTool({
-    tool: 'set_task_status',
-    arguments: { workspace: 'Day job', id: (await invokeChannel('task:list', { projectId: otherProject.id }))[0].id, status: 'done' }
-  })
-  ok('the workspace fence holds through the bridge as it does in the panel',
-     !wrongWorkspace.ok && wrongWorkspace.error.includes('in this workspace'))
-
-  const madeOverBridge = await callTool({
-    tool: 'create_task',
-    arguments: { workspace: 'Day job', project: 'Checkout rewrite', title: 'Written through the bridge', dueDate: '2026-10-02' }
-  })
-  ok('a write over the bridge reports what it did in plain words',
-     madeOverBridge.ok && (madeOverBridge.summary ?? '').includes('Checkout rewrite') &&
-     (madeOverBridge.summary ?? '').includes('Written through the bridge'))
-  ok('and it is a real card in Neo Cloud, not a copy of one',
-     (await call('task:list', { projectId: seenProject.id })).some((t: any) => t.title === 'Written through the bridge'))
-
-  // The confirmation line is built before the write, so bad input fails before it lands.
-  const tasksBefore = (await call('task:list', { projectId: seenProject.id })).length
-  const badDate = await callTool({
-    tool: 'create_task',
-    arguments: { workspace: 'Day job', project: 'Checkout rewrite', title: 'x', dueDate: 'next Friday' }
-  })
-  ok('a bad date over the bridge is refused before anything is written',
-     !badDate.ok && badDate.error.includes('YYYY-MM-DD') &&
-     (await call('task:list', { projectId: seenProject.id })).length === tasksBefore)
-
-  const unknownWorkspace = await callTool({ tool: 'list_projects', arguments: { workspace: 'Nowhere' } })
-  ok('a workspace that does not exist is named as such, with the ones that do',
-     !unknownWorkspace.ok && unknownWorkspace.error.includes('Day job'))
-
-  ok('an unknown tool is refused by name',
-     !(await callTool({ tool: 'drop_everything', arguments: {} })).ok)
-
-  /* The socket itself: what the connector actually talks to. */
-
-  const socket = await startBridge()
-  const info = JSON.parse(readFileSync(endpointFile(), 'utf8')) as BridgeEndpoint
-  ok('starting the bridge leaves an endpoint for the connector to find',
-     Boolean(socket) && info.endpoint === socket && info.token.length > 0 && info.pid === process.pid)
-
-  const knock = async (token: string, path = '/tools', body?: unknown): Promise<{ status: number; body: any }> =>
-    new Promise((resolve, reject) => {
-      const payload = body === undefined ? '' : JSON.stringify(body)
-      const req = request(
-        {
-          socketPath: info.endpoint, path, method: body === undefined ? 'GET' : 'POST',
-          headers: { 'x-neo-token': token, 'content-type': 'application/json' }
-        },
-        (res) => {
-          const chunks: Buffer[] = []
-          res.on('data', (c: Buffer) => chunks.push(c))
-          res.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8')
-            resolve({ status: res.statusCode ?? 0, body: text ? JSON.parse(text) : null })
-          })
-        }
-      )
-      req.on('error', reject)
-      req.end(payload)
-    })
-
-  const served = await knock(info.token)
-  ok('the bridge serves the tool list over its socket',
-     served.status === 200 && served.body.tools.length === TOOLS.length)
-
-  const greeted = await knock(info.token, '/')
-  ok('the bridge names the workspaces so a client can choose one',
-     greeted.status === 200 && greeted.body.app === 'neo' &&
-     greeted.body.workspaces.some((w: any) => w.name === 'Day job'))
-
-  const overSocket = await knock(info.token, '/call', { tool: 'today', arguments: { workspace: 'Day job' } })
-  ok('a tool called over the socket reaches Neo Cloud and answers with what it found',
-     overSocket.status === 200 && overSocket.body.ok === true && overSocket.body.workspace === 'Day job' &&
-     Array.isArray(overSocket.body.result?.overdue),
-     JSON.stringify(overSocket.body).slice(0, 160))
-
-  ok('a caller without the token gets nothing',
-     (await knock('not-the-token')).status === 401)
-
-  const mcp = await call('mcp:status')
-  ok('the connector reports where Claude Desktop keeps its configuration',
-     mcp.configPath.endsWith('claude_desktop_config.json'))
-  ok('and offers an entry that runs on a runtime we know exists',
-     mcp.entry.command === process.execPath && mcp.entry.env.ELECTRON_RUN_AS_NODE === '1')
+  /* ----------------------------------------------------------- connecting Claude */
 
   /*
-   * Connecting writes into a file Claude Desktop owns, so the real one is never the
-   * thing under test: the environment is moved somewhere disposable for the length
-   * of it.
+   * Claude connects to Neo Cloud directly now, so the app has nothing to run. What it
+   * still does is take the old local connector's entry out of Claude Desktop's own
+   * file — and that file is somebody else's, so the real one is never the thing under
+   * test: the environment is moved somewhere disposable for the length of it.
    *
    * Every variable the three platforms consult has to move, not just HOME — Windows
    * reads its home from USERPROFILE, and both it and Linux prefer APPDATA and
-   * XDG_CONFIG_HOME over the home directory anyway. Moving HOME alone left the two
-   * of them writing into the machine's own configuration and reading a macOS-shaped
-   * path back, so the assertions below held on one platform out of three and quietly
-   * failed on the other two.
+   * XDG_CONFIG_HOME over the home directory anyway.
    */
   const movedEnv = ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME'] as const
   const realEnv = new Map(movedEnv.map((key) => [key, process.env[key]]))
@@ -2452,60 +2350,55 @@ async function main(): Promise<void> {
   process.env.APPDATA = join(fakeHome, 'AppData', 'Roaming')
   process.env.XDG_CONFIG_HOME = join(fakeHome, '.config')
 
-  // Where that leaves the file is the app's own answer, never a second copy of the
-  // rule — asking it is also what proves the redirection took.
-  const claudeConfig = (await call('mcp:status')).configPath
-  ok('the file it would write is inside the disposable home, not the real one',
-     claudeConfig.startsWith(fakeHome))
+  const claudeConfig = (await call('claude:status')).configPath
+  ok('the file it would change is inside the disposable home, not the real one',
+     claudeConfig.startsWith(fakeHome) && claudeConfig.endsWith('claude_desktop_config.json'))
+  const empty = await call('claude:status')
+  ok('with no Claude Desktop, there is nothing installed and nothing to remove',
+     empty.claudeInstalled === false && empty.legacyEntry === false)
   mkdirSync(dirname(claudeConfig), { recursive: true })
+  ok('removing from a file that is not there writes nothing',
+     (await call('claude:removeLegacy')).legacyEntry === false && !existsSync(claudeConfig))
 
-  ok('with nothing in that file yet, Neo reports itself as not connected',
-     (await call('mcp:status')).connected === false)
-
-  // Somebody else's file, with their own server and their own settings in it.
-  writeFileSync(claudeConfig, JSON.stringify({
+  // Somebody else's file, with their own server, their own settings, and the old entry.
+  const theirs = {
     globalShortcut: 'Alt+Space',
-    mcpServers: { filesystem: { command: 'npx', args: ['-y', 'server-filesystem'] } }
-  }, null, 2))
+    mcpServers: {
+      filesystem: { command: 'npx', args: ['-y', 'server-filesystem'] },
+      neo: { command: '/Applications/Neo.app/Contents/MacOS/Neo', args: ['/Applications/Neo.app/Contents/Resources/mcp/neo-mcp.mjs'], env: { ELECTRON_RUN_AS_NODE: '1' } }
+    }
+  }
+  writeFileSync(claudeConfig, JSON.stringify(theirs, null, 2))
+  const found = await call('claude:status')
+  ok('the old local connector is found in Claude Desktop\'s file',
+     found.claudeInstalled === true && found.legacyEntry === true)
 
-  const connected = await call('mcp:connect')
-  const writtenConfig = JSON.parse(readFileSync(claudeConfig, 'utf8'))
-  ok('connecting adds Neo to Claude Desktop and says so',
-     connected.connected === true && Boolean(writtenConfig.mcpServers.neo))
+  const cleared = await call('claude:removeLegacy')
+  const afterClear = JSON.parse(readFileSync(claudeConfig, 'utf8'))
+  ok('removing it takes out the neo entry and says so',
+     cleared.legacyEntry === false && afterClear.mcpServers.neo === undefined)
   ok('and leaves everything else in that file exactly as it was',
-     writtenConfig.globalShortcut === 'Alt+Space' && writtenConfig.mcpServers.filesystem.command === 'npx')
-  ok('the entry runs the connector on this copy of the app',
-     writtenConfig.mcpServers.neo.env.ELECTRON_RUN_AS_NODE === '1' &&
-     writtenConfig.mcpServers.neo.args[0].endsWith('neo-mcp.mjs'))
+     afterClear.globalShortcut === 'Alt+Space' &&
+     JSON.stringify(afterClear.mcpServers.filesystem) === JSON.stringify(theirs.mcpServers.filesystem) &&
+     Object.keys(afterClear).length === 2)
 
-  // A copy of Neo that moved leaves an entry pointing at where it used to be.
-  writeFileSync(claudeConfig, JSON.stringify({
-    mcpServers: { ...writtenConfig.mcpServers, neo: { ...writtenConfig.mcpServers.neo, args: ['/gone/neo-mcp.mjs'] } }
-  }, null, 2))
-  const relocated = await call('mcp:status')
-  ok('an entry pointing at another copy of Neo is reported as stale, not as connected',
-     relocated.stale === true && relocated.connected === false)
-
-  await call('mcp:connect')
-  const disconnected = await call('mcp:disconnect')
-  const remaining = JSON.parse(readFileSync(claudeConfig, 'utf8'))
-  ok('disconnecting takes Neo out again and leaves the other server behind',
-     disconnected.connected === false && remaining.mcpServers.neo === undefined &&
-     Boolean(remaining.mcpServers.filesystem))
+  // A `neo` entry that is a remote connector is the new way in, and is not ours to remove.
+  const remote = JSON.stringify({ mcpServers: { neo: { type: 'http', url: MCP_URL } } }, null, 2)
+  writeFileSync(claudeConfig, remote)
+  ok('a neo entry that points at Neo Cloud is not the old connector, and is left alone',
+     (await call('claude:status')).legacyEntry === false &&
+     (await call('claude:removeLegacy')).legacyEntry === false &&
+     readFileSync(claudeConfig, 'utf8') === remote)
 
   writeFileSync(claudeConfig, '{ this is not json')
   ok('a configuration file we cannot parse is reported, never overwritten',
-     await threw(() => call('mcp:connect'), 'not valid JSON') &&
+     await threw(() => call('claude:removeLegacy'), 'not valid JSON') &&
      readFileSync(claudeConfig, 'utf8') === '{ this is not json')
 
   for (const [key, value] of realEnv) {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }
-
-  await stopBridge()
-  ok('closing the bridge takes the endpoint away, so the connector knows the app is shut',
-     !existsSync(endpointFile()) && !existsSync(info.endpoint))
 
   /*
    * The splash screen is loaded as a `data:` URL before Neo Cloud has answered
@@ -2686,10 +2579,10 @@ main()
     if (failures.length) console.log(failures.map((f) => `  - ${f}`).join('\n'))
     /*
      * Leave at once, rather than letting the loop drain. A throw part-way through can
-     * leave the MCP bridge listening on its socket or the event stream open to Neo
-     * Cloud — nothing is left to finish but nothing lets go either, and the process
-     * sits there forever. Locally that is a terminal you press Ctrl-C in; on a runner
-     * it is six hours of a job nobody is watching.
+     * leave the event stream open to Neo Cloud, or a run's stream still being read —
+     * nothing is left to finish but nothing lets go either, and the process sits there
+     * forever. Locally that is a terminal you press Ctrl-C in; on a runner it is six
+     * hours of a job nobody is watching.
      */
-    void stopBridge().catch(() => {}).finally(() => process.exit(failed > 0 ? 1 : 0))
+    process.exit(failed > 0 ? 1 : 0)
   })

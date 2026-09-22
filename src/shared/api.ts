@@ -1,6 +1,6 @@
 import type { AccountDevice, AccountStatus } from './account'
 import type {
-  Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ContentFolder, Conversation, NoteImage,
+  Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ChatSendResult, ContentFolder, Conversation, NoteImage,
   Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
@@ -488,19 +488,15 @@ export interface ApiMap {
    */
   'window:ready': { in: void; out: void }
 
-  /* -------------------------------------------------------- the Claude connector */
+  /* ------------------------------------------------------------ connecting Claude */
 
-  /** Where the Claude Desktop connector stands: installed, connected, or neither. */
-  'mcp:status': { in: void; out: import('./mcp').McpStatus }
+  /** Whether Claude Desktop is here, and whether an older Neo's local connector entry is still in its file. */
+  'claude:status': { in: void; out: import('./claude').ClaudeStatus }
   /**
-   * Add Neo to Claude Desktop's own list of servers, leaving everything else in that
-   * file alone. Claude Desktop has to be restarted before it reads it.
+   * Take the old local `neo` entry out of Claude Desktop's configuration, touching
+   * nothing else in the file, and refusing rather than rewriting one that does not parse.
    */
-  'mcp:connect': { in: void; out: import('./mcp').McpStatus }
-  /** Take Neo back out of it again. */
-  'mcp:disconnect': { in: void; out: import('./mcp').McpStatus }
-  /** Show Claude Desktop's configuration file in the Finder, for setting it up by hand. */
-  'mcp:revealConfig': { in: void; out: void }
+  'claude:removeLegacy': { in: void; out: import('./claude').ClaudeStatus }
 
   /* ---------------------------------------------------------------- assistant */
 
@@ -510,10 +506,11 @@ export interface ApiMap {
   'chat:rename': { in: { id: string; title: string }; out: Conversation }
   'chat:delete': { in: { id: string }; out: void }
   /**
-   * Ask. Returns as soon as the run has started — the reply itself arrives on the
-   * `ai` event channel, a token at a time, so it can be read while it is written.
-   * Without `conversationId` a new conversation is opened and named after the first
-   * exchange. `runId` is what `chat:respond` and `chat:cancel` refer to.
+   * Ask. The turn runs in Neo Cloud; this returns as soon as it has started, and the
+   * reply arrives on the `ai` event channel a token at a time, relayed by main from
+   * the run's event stream. Without `conversationId` a new conversation is opened and
+   * named after the first exchange. `runId` is what `chat:respond` and `chat:cancel`
+   * refer to. A spent daily allowance comes back as `started: false`, not a throw.
    */
   'chat:send': {
     in: {
@@ -526,13 +523,11 @@ export interface ApiMap {
     }
     /** `messageId` is the user's turn as saved, so the panel knows when to stop
      *  drawing its optimistic copy of it. */
-    out: { runId: string; conversationId: string; messageId: string }
+    out: ChatSendResult
   }
   /** Answer the confirmation a write tool is waiting on. */
   'chat:respond': { in: { runId: string; toolUseId: string; approved: boolean }; out: void }
   'chat:cancel': { in: { runId: string }; out: void }
-  /** Write-only: the key goes in and never comes back out. Empty string clears it. */
-  'chat:setKey': { in: { workspaceId: string; apiKey: string }; out: Workspace }
 }
 
 export type Channel = keyof ApiMap

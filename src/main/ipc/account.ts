@@ -33,6 +33,7 @@ export async function accountStatus(): Promise<AccountStatus> {
       plan: account.plan,
       features: account.features,
       storage: account.storage,
+      usage: account.usage,
       offline: false,
       serverUrl: cloudUrl()
     }

@@ -1,18 +1,18 @@
 import { BrowserWindow } from 'electron'
 import type { AiEvent } from '@shared/types'
 import { api, must } from '../lib/cloud/client'
+import { answerRun, cancelRun, startRun } from '../lib/cloud/assistant'
 import { messageOf } from '../lib/cloud/documents'
-import { cancelRun, respondToRun, startRun } from '../lib/ai/run'
 import { handle } from './util'
 
 /**
  * The assistant's channels.
  *
- * The conversations live in Neo Cloud; the run loop lives here. `chat:send` is the odd
- * one out in this app: it answers with an id and then talks over a second, one-way
- * channel for as long as the turn takes — a reply you can read while it is written is
- * the whole point, and a confirmation in the middle of one can sit unanswered for
- * minutes.
+ * The conversations and the run loop both live in Neo Cloud. `chat:send` is the odd one
+ * out in this app: it answers with an id and then talks over a second, one-way channel
+ * for as long as the turn takes — main reads the run's server-sent events and relays
+ * each one on `ai`, because a reply you can read while it is written is the whole point,
+ * and a confirmation in the middle of one can sit unanswered for minutes.
  */
 
 /** Pushed at every open window: the panel lives in whichever one is in front. */
@@ -41,28 +41,9 @@ export function registerChatHandlers(): void {
     await must(api.DELETE('/v1/conversations/{id}', { params: { path: { id } } }))
   })
 
-  handle('chat:send', async (input) =>
-    startRun({
-      workspaceId: input.workspaceId,
-      conversationId: input.conversationId,
-      text: input.text,
-      files: input.files,
-      projectId: input.projectId,
-      send: broadcast
-    })
-  )
+  handle('chat:send', (input) => startRun(input, broadcast))
 
-  handle('chat:respond', async ({ runId, toolUseId, approved }) => {
-    respondToRun(runId, toolUseId, approved)
-  })
+  handle('chat:respond', ({ runId, toolUseId, approved }) => answerRun(runId, toolUseId, approved))
 
-  handle('chat:cancel', async ({ runId }) => {
-    cancelRun(runId)
-  })
-
-  handle('chat:setKey', ({ workspaceId, apiKey }) =>
-    must(api.PUT('/v1/workspaces/{id}/assistant-key', {
-      params: { path: { id: workspaceId } },
-      body: { apiKey: apiKey.trim() }
-    })))
+  handle('chat:cancel', ({ runId }) => cancelRun(runId))
 }

@@ -60,12 +60,13 @@ will be asked to change, however good the code is.
   `workspaceId`; there is no implicit "all", and no screen may mix two workspaces.
 - **Every mutation logs activity**, on the server, via `Activity.log()`. That is what makes
   the re-entry brief work.
-- **The assistant asks before every write.** Every tool marked `writes: true` must have a
-  `summary()` that returns the confirmation sentence, with ids resolved to names and dates
-  validated *before* the question is asked. There is deliberately no allowlist of "safe"
-  writes.
+- **The assistant asks before every write.** The assistant runs in Neo Cloud, and every
+  tool there marked `writes: true` has a `summary()` that returns the confirmation
+  sentence, with ids resolved to names and dates validated *before* the question is asked.
+  There is deliberately no allowlist of "safe" writes. This app only relays the run and
+  answers a question when the person presses a button.
 - **Nothing phones home beyond what the app is for.** The app talks to Neo Cloud, because
-  that is where your work is, and to OpenAI only on a key you gave it. No analytics, no
+  that is where your work is, and to Open-Meteo for the weather. No analytics, no
   telemetry, no crash reporting. Please do not add a dependency that changes that.
 - **What an account may use is decided in one place.** Everybody is on the free plan and
   it includes everything. The server's `Entitlements` and the `features` on

@@ -196,6 +196,8 @@ function ConversationMenu(): React.JSX.Element {
 
 function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
   const { send, running, cancel } = useAssistant()
+  const account = useApi('account:status')
+  const allowance = account.data?.usage.assistantMessages
   const [text, setText] = useState('')
   const [files, setFiles] = useState<AttachmentUpload[]>([])
   const [dragging, setDragging] = useState(false)
@@ -223,7 +225,14 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
   const submit = useCallback((): void => {
     if (running || reading) return
     if (!text.trim() && files.length === 0) return
-    void send({ text: text.trim(), files, projectId })
+    const sentText = text
+    const sentFiles = files
+    // Given back if it did not go — refused for the day, or an error — so nothing typed is lost.
+    void send({ text: text.trim(), files, projectId }).then((sent) => {
+      if (sent) return
+      setText((current) => current || sentText)
+      setFiles((current) => (current.length ? current : sentFiles))
+    })
     setText('')
     setFiles([])
   }, [files, projectId, reading, running, send, text])
@@ -315,6 +324,32 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
           </button>
         )}
       </div>
+
+      {allowance && allowance.limit !== null && (
+        <p className="mt-1.5 px-1 text-[11px] text-base-content/40">
+          {Math.max(0, allowance.limit - allowance.used)} of {allowance.limit} left today
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Today's messages are spent. Not an error — nothing went wrong — so it is not drawn as
+ * one: it says what happened and what is coming, and stays out of the way until the
+ * next message.
+ */
+function LimitCard({ message, onDismiss }: { message: string; onDismiss: () => void }): React.JSX.Element {
+  return (
+    <div className="hairline mt-4 flex items-start gap-2.5 rounded-box border bg-base-200/60 p-3 text-[12px] leading-relaxed">
+      <Icon name="sparkle" size={14} className="mt-0.5 shrink-0 text-primary" />
+      <div className="flex-1">
+        <div className="font-medium">Neo Pro — coming soon</div>
+        <p className="mt-0.5 text-base-content/60">{message}</p>
+      </div>
+      <button className="shrink-0 opacity-50 hover:opacity-100" onClick={onDismiss} aria-label="Dismiss">
+        <Icon name="close" size={11} />
+      </button>
     </div>
   )
 }
@@ -322,7 +357,7 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
 /* ----------------------------------------------------------------------- panel */
 
 function Transcript({ projectId }: { projectId?: string }): React.JSX.Element {
-  const { conversationId, streaming, tools, pending, settled, running, error, dismissError } = useAssistant()
+  const { conversationId, streaming, tools, pending, settled, running, error, dismissError, limit, dismissLimit } = useAssistant()
   const conversation = useApi('chat:get', { id: conversationId ?? '' }, { enabled: Boolean(conversationId) })
   const bottom = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
@@ -432,6 +467,8 @@ function Transcript({ projectId }: { projectId?: string }): React.JSX.Element {
         </div>
       )}
 
+      {limit && <LimitCard message={limit} onDismiss={dismissLimit} />}
+
       <div ref={bottom} />
     </div>
   )
@@ -450,7 +487,6 @@ function Suggestion({ text, projectId }: { text: string; projectId?: string }): 
 }
 
 export function AssistantPanel(): React.JSX.Element {
-  const workspace = useWorkspace()
   const { open, setOpen, openConversation, conversationId, running } = useAssistant()
   const inProject = useMatch('/projects/:id/*')
   const projectId = inProject?.params.id
@@ -524,35 +560,11 @@ export function AssistantPanel(): React.JSX.Element {
               </button>
             </header>
 
-            {workspace.aiKeySet ? (
-              <>
-                <Transcript projectId={projectId} />
-                <Composer projectId={projectId} />
-              </>
-            ) : (
-              <NoKey />
-            )}
+            <Transcript projectId={projectId} />
+            <Composer projectId={projectId} />
           </div>
         </motion.aside>
       )}
     </AnimatePresence>
-  )
-}
-
-/** Nothing works without a key, so say so once, plainly, with the way to fix it. */
-function NoKey(): React.JSX.Element {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col justify-center px-6 pb-10">
-      <EmptyState
-        icon="sparkle"
-        title="Add an API key to use the assistant"
-        hint="The assistant runs on your own OpenAI key, and the key stays on this machine. Each workspace has its own, so the one you use for a client is never the one you use at work."
-        action={
-          <a className="btn btn-primary btn-sm" href="#/workspace?pane=assistant">
-            Add a key
-          </a>
-        }
-      />
-    </div>
   )
 }

@@ -116,6 +116,8 @@ function Recap({
         <div className="flex items-center gap-2">
           {recording.summaryState === 'failed' || recording.transcriptState === 'failed' ? (
             <Icon name="alert" size={14} className="text-warning" />
+          ) : recording.waitingForAllowance ? (
+            <Icon name="hourglass" size={14} className="text-base-content/40" />
           ) : (
             <Icon name="refresh" size={14} className="animate-spin text-base-content/40" />
           )}
@@ -136,7 +138,12 @@ function Recap({
             </button>
           )}
         </div>
-        {recording.transcriptState !== 'done' && recording.segmentCount > 0 && (
+        {recording.waitingForAllowance ? (
+          <p className="mt-1.5 text-[11.5px] text-base-content/45">
+            The audio is kept, and transcription picks up by itself tomorrow. Neo Pro, with more
+            transcription a day, is coming soon.
+          </p>
+        ) : recording.transcriptState !== 'done' && recording.segmentCount > 0 && (
           <p className="mt-1.5 text-[11.5px] text-base-content/45">
             This carries on without the app being open on this screen, and picks up where it
             stopped if the machine goes to sleep.

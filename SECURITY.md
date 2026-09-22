@@ -22,15 +22,17 @@ reach somebody else's account:
   reply — execute code or reach the filesystem.
 - The device token: a way for the renderer to read it, for it to be written anywhere but
   the sealed session file, or for it to be sent anywhere but Neo Cloud.
-- The assistant's tools (`src/main/lib/ai/tools.ts`): a write that happens without the
-  confirmation step, or a read that crosses a workspace boundary, is a finding. So is
-  prompt-injected content in a note or an attachment causing either.
-- Anything that exposes the OpenAI API key stored on a workspace. It is kept in Neo
-  Cloud, used there and by the main process, and the renderer is only ever told whether
-  one is set. A way for the *renderer* to read it back, or for it to reach anywhere other
-  than OpenAI and Neo Cloud, is a finding.
+- The assistant's run relay (`src/main/lib/cloud/assistant.ts`): a way for the renderer or
+  a relayed event to answer a confirmation the person did not, or for the device token to
+  leave the main process. The assistant's tools themselves run in Neo Cloud — a write that
+  happens without the confirmation step, or a read that crosses a workspace boundary
+  (including through prompt-injected content in a note or an attachment), is a finding
+  against the server.
+- The Claude pane's clean-up of `claude_desktop_config.json` (`src/main/ipc/claude.ts`):
+  changing anything in that file other than removing the old local `neo` entry is a
+  finding.
 - Anything that lets one Neo Cloud account read or change another's work or files
-  (`neo-sync-server`).
+  (the server, in `../server`).
 
 ## What is not
 
@@ -39,7 +41,8 @@ reach somebody else's account:
   and summarised. That is a documented trade for now rather than a flaw.
 - Someone with your logged-in machine being able to use Neo as you. The sign-in is the
   only thing on it, and a lost Mac is signed out from Settings → Account → Devices.
-- Content you deliberately send to OpenAI by typing a question into the assistant.
+- Content Neo Cloud sends to OpenAI because you asked for it: a question typed into the
+  assistant, and a recorded meeting to be transcribed and recapped.
 
 ## Supported versions
 

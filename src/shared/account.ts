@@ -7,6 +7,12 @@
  * as the account.
  */
 
+export interface Allowance {
+  used: number
+  /** Null means there is no limit. */
+  limit: number | null
+}
+
 export interface AccountStatus {
   signedIn: boolean
   /** Empty when signed out. */
@@ -21,6 +27,12 @@ export interface AccountStatus {
    */
   features: { recording: boolean; transcription: boolean; assistant: boolean; fileStorage: boolean }
   storage: { usedBytes: number; quotaBytes: number }
+  /**
+   * What today has used of what the plan allows — "3 of 5 left today". A null limit is
+   * no limit. The day is the machine's own, because the time zone travels on every
+   * request.
+   */
+  usage: { assistantMessages: Allowance; transcriptionMinutes: Allowance }
   /**
    * Signed in, but Neo Cloud could not be reached just now. The window shows that
    * rather than the sign-in screen: the account is fine, the network is not.
@@ -37,6 +49,7 @@ export const SIGNED_OUT: AccountStatus = {
   plan: { id: 'free', name: 'Free' },
   features: { recording: true, transcription: true, assistant: true, fileStorage: true },
   storage: { usedBytes: 0, quotaBytes: 0 },
+  usage: { assistantMessages: { used: 0, limit: null }, transcriptionMinutes: { used: 0, limit: null } },
   offline: false,
   serverUrl: ''
 }

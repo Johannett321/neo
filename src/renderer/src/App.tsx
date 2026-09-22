@@ -398,7 +398,7 @@ function AccountGate(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
-  // Writes made somewhere else — another device, the assistant, Claude Desktop — which
+  // Writes made somewhere else — another device, the assistant, Claude — which
   // nothing here is waiting on.
   useLiveData()
   return (

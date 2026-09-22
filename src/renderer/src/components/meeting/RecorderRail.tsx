@@ -249,6 +249,11 @@ export function PipelineLine({ recording }: { recording: RecordingView }): React
   if (recording.transcriptState === 'failed') {
     return <>Transcription failed. {recording.transcriptError}</>
   }
+  // Nothing has failed: today's transcription allowance is spent, and the rest waits
+  // for tomorrow. Neo Cloud says so in a sentence, and that sentence is the line.
+  if (recording.waitingForAllowance) {
+    return <>{recording.transcriptError || 'Waiting for tomorrow’s transcription allowance.'}</>
+  }
   if (recording.transcriptState !== 'done') {
     return (
       <>

@@ -40,16 +40,6 @@ const zone = (): string => {
   }
 }
 
-/**
- * How many requests that change something have succeeded since the app started.
- *
- * Nothing reads it for its value, only for whether it moved: `invokeChannel()` takes it
- * before and after a call so the window is told when the assistant or Claude Desktop
- * wrote something — the same job PGlite's row count did when the database was here.
- */
-let writes = 0
-export const writeCount = (): number => writes
-
 export const api = createClient<paths>({
   baseUrl: cloudUrl(),
   fetch: (request: Request) => send(request)
@@ -77,7 +67,6 @@ async function send(request: Request): Promise<Response> {
   if (response.status === 401 && loadSession() && !request.url.includes('/v1/auth/')) {
     signedOutElsewhere()
   }
-  if (response.ok && request.method !== 'GET') writes++
   return response
 }
 

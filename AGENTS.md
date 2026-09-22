@@ -8,13 +8,16 @@ feature is for and why it exists — read it before designing anything user-faci
 most of the product decisions here were arrived at deliberately and are worth honouring.
 
 **Everything lives in Neo Cloud and nothing on the device.** The app is a client of the
-server in `../neo-sync-server` (Java / Spring Boot, "Neo Cloud"): every workspace, note,
+server in `../server` (Java / Spring Boot, "Neo Cloud"): every workspace, note,
 meeting and recording is stored there, the business logic that used to run in this main
-process runs there, and the two talk REST over an OpenAPI contract. Signing in is not
-optional — the window is the sign-in screen until there is an account. What this machine
-keeps is the device token (sealed with `safeStorage`) and nothing else. Using Neo Cloud is
-free and includes everything; `/v1/account` reports a plan and its features so a feature
-can later be kept for a paid plan.
+process runs there — the assistant included — and the two talk REST over an OpenAPI
+contract. Signing in is not optional — the window is the sign-in screen until there is an
+account. What this machine keeps is the device token (sealed with `safeStorage`) and
+nothing else. Using Neo Cloud is free and includes everything, with a daily allowance on
+the two things that cost money to run (5 assistant messages, 60 minutes of transcription);
+`/v1/account` reports the plan, its features and today's usage so the app can say "3 of 5
+left today", and a later paid plan can lift the limits without the app learning a new
+question.
 
 ## Commands
 
@@ -27,8 +30,6 @@ npm run check:contract  # fail if schema.ts is not what the published spec gener
 npm run verify          # the main process's handlers against a running Neo Cloud, headless
 npm run package         # unpacked app into dist/
 npm run dist            # packaged, signed-if-possible application
-npm run build:mcp       # the Claude Desktop connector into out/mcp/
-npm run mcp:pack        # that, packed as dist/neo.mcpb
 ```
 
 There is no linter and no test framework. `test/verify.ts` is a single script of
@@ -36,8 +37,12 @@ There is no linter and no test framework. `test/verify.ts` is a single script of
 to `test/electron-stub.mjs`, which fakes `app`, `ipcMain`, `dialog`, `shell` and
 `safeStorage` so the real main process runs with no window. It needs a Neo Cloud to talk
 to: run the server locally (`docker compose up -d && mvn spring-boot:run` in
-`../neo-sync-server`) and point the run at it with `NEO_CLOUD_URL`. Each run registers a
-fresh account, so runs do not see each other. The few facts no channel can reach (a
+`../server`) and point the run at it with `NEO_CLOUD_URL`. The assistant's runs need that
+server started against its scripted OpenAI stand-in — `python3 test/fake_openai.py 18099`
+in `../server`, then `NEO_OPENAI_BASE_URL=http://127.0.0.1:18099/v1 OPENAI_API_KEY=test`
+on the server, as CI does. Each run registers a fresh account, so runs do not see each
+other, and it spends that account's whole daily allowance of assistant messages on
+purpose: the sixth is the one that asserts the limit. The few facts no channel can reach (a
 heartbeat gone quiet, a transcript only a speech service could write) are set and read
 with `psql` — inside the compose file's `neo-cloud-pg` container, or at
 `NEO_VERIFY_DATABASE_URL` when one is given, as CI does.
@@ -85,50 +90,50 @@ workspace and quietly returning everything.
 
 **Main** (`src/main/`) owns the account's token, the filesystem and the shell; none of
 them ever reach the renderer. `ipc/` holds handlers grouped by domain, `lib/` what is not a
-handler: `cloud/` (the client, the session, the event stream, passkey sign-in), `ai/` the
-assistant's run loop, the notification runner, the updater, the audio tap, the weather.
+handler: `cloud/` (the client, the session, the event stream, passkey sign-in, the
+assistant's run relay), the notification runner, the updater, the audio tap, the weather.
 
 `handle()` also records every handler in a registry, and `invokeChannel()` calls one from
-inside main. That exists for the assistant: its tools are the app's own channels rather
-than a second set of writes beside them, so a task it creates logs activity and bumps the
-project clock because it *is* that code path. Do not give a tool its own request — add the
-channel it needs and call it.
+inside main — start-up and the notification runner read settings and workspaces through
+the same channels the renderer uses rather than a second set of requests beside them.
 
-`invokeChannel()` is also where the screen is told. A write made by a click resolves a
-mutation, and `useApiMutation` invalidates the cache on the way back; a write made by a
-tool has nobody in the renderer waiting on it, so without this the assistant's new task
-sat unseen until you navigated away and back. It asks the *client* whether anything was
-written — `writeCount()` in `lib/cloud/client.ts`, which only moves for a successful request
-that is not a GET — rather than consulting a list of "the channels that write", which
-would drift. `lib/changes.ts` coalesces the announcements and sends one `data` message,
-and `useLiveData()` at the top of `App.tsx` empties the cache, exactly as a mutation does.
-Writes made on *another device* arrive the same way: `lib/cloud/events.ts` holds one
-server-sent event stream open and announces `changed`.
+**A write this window did not make still reaches the screen.** A click resolves a
+mutation, and `useApiMutation` invalidates the cache on the way back. Anything else — a
+write on another device, the assistant's tools, Claude through the remote connector —
+happens in Neo Cloud, which says `changed` on the event stream that `lib/cloud/events.ts`
+holds open. `lib/changes.ts` coalesces the announcements and sends one `data` message, and
+`useLiveData()` at the top of `App.tsx` empties the cache, exactly as a mutation does.
+The one gap is this device's own assistant: Neo Cloud tells every device about a write
+*except the one that made it*, and the assistant's tools write as this device. So the run
+relay announces the change itself when a tool that was asked about (an `approval`)
+reports `done` — a read is never asked about, so looking things up never refetches.
 
-**`src/mcp/`** is a fourth process, and one of two that are not Electron's: the MCP
-connector Claude Desktop runs. It is a proxy and nothing else. It holds no token and talks
-to nothing but Neo itself, so everything Claude Desktop does goes through the same channels
-and the same sign-in as a click. `src/main/lib/mcp/bridge.ts` listens on a Unix socket in the app's support folder (a
-named pipe on Windows; never a TCP port) and answers with the same `TOOLS`, so a task
-created from Claude Desktop is the same task, logged the same way, for the same reason an
-assistant-made one is. `src/shared/mcp.ts` is that wire's contract, the way `api.ts` is
-IPC's. The tool list is baked into the connector at build time by `scripts/build-mcp.mjs`,
-generated from `TOOLS` itself, so the tools are advertised before Neo is open without
-becoming a second description of them that can drift. Add a tool to `TOOLS` and it appears
-on both sides; do not add one to the connector.
+**The assistant runs in Neo Cloud; this app relays it.** The loop, the 30 tools, the
+system prompt, the confirmations and the OpenAI call (on the operator's key) are the
+server's `work/assistant/run/`. `chat:send` in `ipc/chat.ts` hands off to
+`lib/cloud/assistant.ts`, which uploads any files to the conversation first, opens
+`POST /v1/assistant/runs` with the device token (the token never leaves main), reads its
+server-sent events and re-emits each one unchanged on the `ai` IPC channel — the server's
+event data *is* the `AiEvent` union, so the panel (`lib/assistant.tsx`, `AssistantPanel`)
+did not change shape. `chat:send` resolves as soon as the `started` event arrives and the
+rest is relayed detached, because a turn with a question in it can wait for minutes.
+`chat:respond` is `POST …/answers`, `chat:cancel` is `DELETE`, and both treat a run that has
+already finished as nothing to do. A 429 is not thrown: it comes back as `{ started: false,
+limit }` (`ChatSendResult`), because IPC keeps only an error's message and the panel has
+to know to draw the "Neo Pro — coming soon" card rather than an error. If the stream drops
+mid-turn the relay says so and sends `done`; the turn itself carries on in Neo Cloud and is
+in the conversation when the panel refetches. Do not put a tool, a prompt or a model
+choice back in this repository — the web and phone clients drive the same endpoint.
 
-`src/main/ipc/mcp.ts` is the setup side of it: it writes one entry into Claude Desktop's
-own `claude_desktop_config.json` and never touches anything else in that file, refusing
-outright rather than overwriting one it cannot parse. The entry runs the connector on
-Neo's own Electron with `ELECTRON_RUN_AS_NODE`, because `"command": "node"` depends on a
-PATH that Claude Desktop's launch environment frequently does not have. It finds the
-connector by looking for the file, not by asking `app.isPackaged` — which lies in
-development, as the section below explains.
-
-Claude Desktop cannot show Neo's confirmation — it has no elicitation, so a connector has
-no way to put a question on screen — so what gates a write there is its own approval
-prompt, informed by `readOnlyHint` and `destructiveHint`. `summary()` is still built
-before the write, because building it is what validates, and it goes back with the result.
+**Claude connects to Neo Cloud, not to this app.** Neo Cloud hosts a remote MCP server at
+`https://sync.neomoon.io/mcp` (`MCP_URL` in `shared/claude.ts`), signed into with OAuth, so
+Claude Desktop, claude.ai and Claude Code reach the account directly and Neo does not have
+to be open. The settings pane only shows the address and the steps. `ipc/claude.ts` is
+what is left on this side: it finds the stdio `neo` entry Neo 2.0 and earlier wrote into
+Claude Desktop's `claude_desktop_config.json` (an entry with a `command`; a `url` entry is
+the new way in and is left alone) and removes that one key, touching nothing else in the
+file, writing nothing when there is nothing to remove, and refusing outright rather than
+rewriting a file it cannot parse.
 
 **Renderer** (`src/renderer/src/`) is React 19 + TanStack Query + React Router in hash
 mode. `routes/` are screens, `components/` the shared pieces, `lib/` the app-wide systems
@@ -138,7 +143,7 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 
 ### Neo Cloud
 
-`src/main/lib/cloud/` and the server in `../neo-sync-server`. Read the server's README
+`src/main/lib/cloud/` and the server in `../server`. Read the server's README
 for how a request runs there — row level security per account, SQL ported verbatim from
 the TypeScript this app used to run, other devices told after every write.
 
@@ -356,18 +361,13 @@ install's database and files into an empty Neo Cloud account.
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
   weight. Nothing is fetched at runtime; add a path rather than a dependency.
 - **Dates use `components/DateField.tsx`**, never `<input type="date">`.
-- **The assistant asks before every write.** `src/main/lib/ai/tools.ts` marks a tool
-  `writes: true`, and every one of those must have a `summary()` returning the sentence
-  the confirmation shows — ids resolved to names, dates validated, written for someone
-  who has not read the arguments. The run loop blocks on it; nothing is written until the
-  renderer answers. There is deliberately no allowlist of "safe" writes, and `summary()`
-  must fail on bad input *before* the question is asked rather than after it is answered.
-  `verify.ts` asserts every write tool has one.
-- **Reads are workspace-fenced by construction.** Every tool either passes `workspaceId`
-  or resolves an id through a scoped channel. A tool that takes a bare id must confirm it
-  belongs to this workspace first — see `resolveTask()`, and `GET /v1/documents` for the
-  documents the assistant reads whole. A tool never gets its own endpoint for a write: it
-  calls the channel a click would.
+- **The assistant asks before every write**, and that rule now lives in Neo Cloud's
+  `work/assistant/run/`: every write tool has a `summary()` that validates and builds the
+  sentence *before* the question is asked, the run blocks on the answer, and there is no
+  allowlist of "safe" writes. Reads are workspace-fenced there too, and tools call the same
+  code a click does. The server's `test/verify.sh` asserts all of it. What this app owes
+  the rule is never to answer a question the person did not: `chat:respond` is only ever
+  sent from the panel's buttons.
 - **Markdown is rendered by `components/Markdown.tsx`** and edited by `MarkdownEditor`;
   both read the one parser in `lib/markdown.ts`. The editor leaves every character in
   place because you are editing it; the renderer takes the syntax off because you are
@@ -433,7 +433,7 @@ install's database and files into an empty Neo Cloud account.
   preview leaves the whole app formatting dates the way the last hovered option did.
   Temperature is asked for in the unit it will be drawn in, so nothing converts a
   reading afterwards and lands a degree out.
-- **The weather is the only outbound request in the app that is not Neo Cloud or a key you gave it.**
+- **The weather is the only outbound request in the app that is not Neo Cloud.**
   `lib/weather.ts` asks Open-Meteo — no account, no key — and sends a latitude and a
   longitude and nothing else. Every path in it returns `null` rather than throwing, so a
   refused connection costs the corner of one screen. Switched off means *no request*,
@@ -471,7 +471,8 @@ application bundle is symlinks and extended attributes, and only ditto puts both
 **The swap is a detached shell script and cannot be anything else** — a process cannot
 replace the bundle it is running out of. It is generated as text in the pure module so a
 test can read it without a Mac, and it waits on the pid rather than assuming the app has
-gone. `applyStagedUpdate()` runs from `before-quit`, *after* `closeDb()` resolves.
+gone. `applyStagedUpdate()` runs last in `before-quit`, after the audio helper has been
+told to let go.
 
 `staged` is held in memory on purpose, and it is the only thing here that is: it means
 "the person agreed to this in this session". A preference that survived a restart and
@@ -556,10 +557,17 @@ half of a meeting that is still going on, and only the person in the room knows;
 screen asks rather than guessing. Sleep, where the app is still alive, resumes by
 itself — no question needed.
 
-Errors are split into permanent and transient. A wrong key or a missing model fails once
-and says what to fix; a refused connection or a rate limit backs off and comes round
-again. A segment that cannot be transcribed does not condemn the rest — the transcript
-finishes without it and says how many parts are missing.
+Errors are split into permanent and transient. A refusal that waiting will not fix fails
+once and says so; a refused connection or a rate limit backs off and comes round again.
+A segment that cannot be transcribed does not condemn the rest — the transcript finishes
+without it and says how many parts are missing.
+
+**A spent allowance is waiting, not failing.** A free account transcribes 60 minutes a
+day. Past that the server leaves `transcriptState` at `pending`, sets
+`waitingForAllowance`, and puts the sentence in `transcriptError`; the next day it carries
+on by itself. The meeting page (`PipelineLine` in `RecorderRail.tsx`, the Recap block in
+`RecordingPane.tsx`) and the meetings list show that sentence and an hourglass rather than
+an alert and a *Try again* — there is nothing to retry.
 
 **System audio comes from native code.** Electron 44's `loopback` display-media audio
 is Windows-only — its own typings say so — and no Chromium API on macOS lets one app
@@ -624,11 +632,10 @@ already-clean audio). The mixed stream's track is generated and therefore always
 "live", so the watchdog checks `mic`/`system` and never `stream`. Failing is allowed
 and always visible: `capturing` says what was actually got, never what was asked for.
 
-Two more things are honest limits rather than bugs. **"Local" engines now mean reachable
-from Neo Cloud**: the workspace's `transcribe_base_url` / `recap_base_url` are called by the
-server, so a speech server or Ollama on `localhost` of this Mac is not one it can reach.
-Both engines speak the OpenAI-compatible API, which is why there is one code path.
-And **speakers are attributed, not diarised** — a language model reads the transcript
+**Which service transcribes and recaps is Neo Cloud's to decide**, on its own operator
+key: there is no engine, model, base URL or key on a workspace any more. What workspace
+settings keep is the transcription language and the recap prompt. One more thing is an
+honest limit rather than a bug: **speakers are attributed, not diarised** — a language model reads the transcript
 and works out the turns, because there is no voice-print model on a stock Mac. The UI
 says so. Do not present it as a measurement.
 
@@ -672,7 +679,7 @@ passes `Range` through to Neo Cloud and the `206` back — the renderer never le
 
 There is no database in this app. The schema, the migrations, calendar dates as `text`
 rather than `date`, and every rule about writing a row now live in the server — see
-`../neo-sync-server`, whose migration `V4__neo_cloud.sql` carries this app's last local
+`../server`, whose migration `V4__neo_cloud.sql` carries this app's last local
 schema across with an `account_id` on every table. What used to be here (PGlite in
 `~/.neo`, the `.lock` file, catalog repair, the moves from `~/Documents`) is gone, and
 `scripts/import-local-data.mjs` is how an old install's folder gets into an account.
@@ -680,7 +687,7 @@ schema across with an `account_id` on every table. What used to be here (PGlite 
 The single-instance lock stays: there is no folder to protect, but two copies would each
 run the notification loop and each hold the meeting's microphone.
 
-**`native/audiotap/`** is the fifth, and the only one that is not JavaScript: a Swift
+**`native/audiotap/`** is the fourth process, and the only one that is not JavaScript: a Swift
 command-line tool that reads a Core Audio process tap so a recorded meeting captures
 the other side of the call. See *Recording a meeting* below for why it is a process
 rather than a module. It is optional at every level — no Swift toolchain, no helper,

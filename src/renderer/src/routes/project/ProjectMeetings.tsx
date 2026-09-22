@@ -230,7 +230,9 @@ function RecordingBadge({ recording }: { recording: RecordingView }): React.JSX.
             ? [recording.audioDeletedAt ? 'Transcript' : formatBytes(recording.bytes), 'text-base-content/45']
             : recording.transcriptState === 'done'
               ? ['Writing the recap…', 'text-base-content/45']
-              : ['Transcribing…', 'text-base-content/45']
+              : recording.waitingForAllowance
+                ? ['Waiting for tomorrow', 'text-base-content/45']
+                : ['Transcribing…', 'text-base-content/45']
 
   return (
     <span className={`flex shrink-0 items-center gap-1 text-[10.5px] ${tone}`}>

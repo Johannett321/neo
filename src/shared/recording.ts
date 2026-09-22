@@ -20,9 +20,6 @@ export type CaptureState = 'recording' | 'interrupted' | 'stopped'
 /** Every step of the pipeline reports itself the same way. */
 export type Stage = 'pending' | 'running' | 'done' | 'failed'
 
-/** Which service does the work. `local` is any OpenAI-compatible server you run. */
-export type Engine = 'openai' | 'local'
-
 /**
  * How long one file of audio runs for before the next one starts.
  *
@@ -68,62 +65,13 @@ export const MAX_ATTEMPTS = 5
 export const backoffMs = (attempts: number): number =>
   Math.min(15 * 60_000, 20_000 * 2 ** Math.max(0, attempts - 1))
 
-/* ------------------------------------------------------------------- engines */
-
-/**
- * Ollama does not transcribe — it runs language models and nothing else. Local
- * transcription therefore means an OpenAI-compatible speech server you run yourself
- * (whisper.cpp's `whisper-server`, faster-whisper-server, Speaches, LocalAI), and
- * the setting is a base URL rather than a checkbox so that any of them will do.
- */
-export const LOCAL_TRANSCRIBE_BASE_URL = 'http://127.0.0.1:8080/v1'
-export const LOCAL_TRANSCRIBE_MODEL = 'whisper-1'
-
-/** Ollama's own OpenAI-compatible endpoint, which is where the recap goes locally. */
-export const LOCAL_RECAP_BASE_URL = 'http://127.0.0.1:11434/v1'
-export const LOCAL_RECAP_MODEL = 'llama3.2'
-
-/**
- * `whisper-1` rather than one of the newer transcription models, and deliberately:
- * it is the only one that returns per-phrase timestamps, and without those the
- * transcript cannot follow the playhead, which is half of what this screen is for.
- */
-export const OPENAI_TRANSCRIBE_MODEL = 'whisper-1'
-
-export interface TranscribeModelChoice {
-  id: string
-  label: string
-  hint: string
-}
-
-export const OPENAI_TRANSCRIBE_MODELS: TranscribeModelChoice[] = [
-  {
-    id: 'whisper-1',
-    label: 'Whisper',
-    hint: 'The default. Returns the timestamps the transcript needs to follow playback.'
-  },
-  {
-    id: 'gpt-4o-transcribe',
-    label: 'GPT-4o transcribe',
-    hint: 'More accurate on hard audio, but no timestamps — the transcript will not follow along.'
-  },
-  {
-    id: 'gpt-4o-mini-transcribe',
-    label: 'GPT-4o mini transcribe',
-    hint: 'Cheaper than the above, and also without timestamps.'
-  }
-]
-
-/** True for models that cannot return per-phrase times, so callers stop asking. */
-export const hasTimestamps = (model: string): boolean => !/^gpt-/.test(model)
-
 /* -------------------------------------------------------------------- prompt */
 
 /**
  * What the recap is asked for, before the part that cannot be edited.
  *
  * This is the half of the prompt that is yours: it says what to look for and what to
- * leave out. The output *shape* is appended by the main process and is not editable,
+ * leave out. The output *shape* is appended by Neo Cloud and is not editable,
  * because the screen reads it as data — a prompt that could change the shape would
  * be a prompt that could break the screen.
  */

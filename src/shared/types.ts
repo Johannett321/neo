@@ -6,7 +6,7 @@ import type { UpdatePreference } from './update'
  * Everything that crosses the IPC bridge is described here.
  */
 
-import type { CaptureState, Engine, Stage } from './recording'
+import type { CaptureState, Stage } from './recording'
 
 export type ProjectStatus = 'active' | 'paused' | 'dormant' | 'done'
 
@@ -49,28 +49,13 @@ export interface Workspace {
   sortOrder: number
   /** Archived means out of the way, not gone: hidden everywhere, restorable in one click. */
   archivedAt: string | null
-  /**
-   * Whether an API key has been saved for this workspace. Never the key: that stays
-   * in the main process alongside the database, and the renderer is only ever told
-   * that there is one.
+  /*
+   * Which service transcribes and which model writes the recap is Neo Cloud's to
+   * decide: every workspace runs on the same operator key, so there is no engine, model
+   * or key here to choose. What is left is what only this working life knows.
    */
-  aiKeySet: boolean
-  /** Which model the assistant runs on. Empty means the default. */
-  aiModel: string
-  /**
-   * How this workspace turns a recording into words and then into a recap. It is a
-   * workspace setting for the same reason the key is: a client's conversations may
-   * not be allowed to leave the machine while the day job's happily can, and that is
-   * a decision you make once per working life rather than once per meeting.
-   */
-  transcribeEngine: Engine
-  transcribeModel: string
-  transcribeBaseUrl: string
   /** ISO 639-1, e.g. "no". Empty lets the model work it out. */
   transcribeLanguage: string
-  recapEngine: Engine
-  recapModel: string
-  recapBaseUrl: string
   /** What the recap is asked for. Empty means the default in `shared/recording.ts`. */
   recapPrompt: string
 
@@ -710,6 +695,12 @@ export interface RecordingView {
 
   transcriptState: Stage
   transcriptError: string
+  /**
+   * Today's transcription allowance is used up, so the rest of this recording waits for
+   * tomorrow. Nothing has failed: `transcriptState` stays pending and `transcriptError`
+   * says so in a sentence.
+   */
+  waitingForAllowance: boolean
   transcriptEngine: string
   transcriptModel: string
   /** Segments transcribed out of segments there are, for a progress line in words. */
@@ -1037,11 +1028,24 @@ export interface AttachmentUpload {
  * written, and a tool that wants to change something stops the run and asks.
  */
 export type AiEvent =
+  /** Always first: the user's turn is saved, and the conversation exists. */
+  | { runId: string; type: 'started'; conversationId: string; messageId: string }
   | { runId: string; type: 'text'; delta: string }
   | { runId: string; type: 'tool'; id: string; name: string; label: string; status: 'running' | 'done' | 'error'; detail: string }
-  /** The run is now waiting. Nothing is written until `ai:respond` says so. */
+  /** The run is now waiting. Nothing is written until `chat:respond` says so. */
   | { runId: string; type: 'approval'; id: string; name: string; label: string; detail: string }
   | { runId: string; type: 'title'; conversationId: string; title: string }
   /** The turn is over; the panel refetches and drops everything it was holding. */
   | { runId: string; type: 'done'; conversationId: string }
   | { runId: string; type: 'error'; message: string }
+
+/**
+ * What pressing send came to. Either the turn started — the reply follows on the `ai`
+ * channel — or today's allowance is spent and the panel shows the "Neo Pro — coming
+ * soon" card instead of an error. A refusal travels as a value rather than a thrown
+ * error because IPC keeps only an error's message, and the card needs to know which
+ * allowance it was.
+ */
+export type ChatSendResult =
+  | { started: true; runId: string; conversationId: string; messageId: string }
+  | { started: false; limit: 'assistant' | 'transcription'; message: string }

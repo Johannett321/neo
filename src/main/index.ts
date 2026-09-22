@@ -6,16 +6,15 @@ import { startEvents, stopEvents } from './lib/cloud/events'
 import { loadSession } from './lib/cloud/session'
 import { buildAppMenu } from './menu'
 import { applyGlassTo, initialBackground, initialVibrancy, presetGlass } from './lib/glass'
-import { startBridge, stopBridge } from './lib/mcp/bridge'
 import { abandonSplash, openSplash, splashFor, splashOpen } from './lib/splash'
 import { kickNotifications, startNotifications, stopNotifications } from './lib/notifier'
 import { applyStagedUpdate, pruneStaged, startUpdates, stopUpdates } from './lib/updater'
 import { MEDIA_SCHEME_PRIVILEGES, registerMediaProtocol } from './lib/recording/media'
 import { stopSystemAudio } from './lib/recording/systemAudio'
 import { registerChatHandlers } from './ipc/chat'
+import { registerClaudeHandlers } from './ipc/claude'
 import { registerContentHandlers } from './ipc/content'
 import { registerDashboardHandlers } from './ipc/dashboard'
-import { registerMcpHandlers } from './ipc/mcp'
 import { registerMeetingHandlers } from './ipc/meetings'
 import { registerNotificationHandlers } from './ipc/notifications'
 import { registerPeopleHandlers } from './ipc/people'
@@ -175,9 +174,8 @@ function registerHandlers(): void {
   registerSettingsHandlers()
   registerUpdateHandlers()
   registerWeatherHandlers()
-  registerMcpHandlers()
-  // Registered last: the assistant's tools call the channels above by name.
   registerChatHandlers()
+  registerClaudeHandlers()
 }
 
 async function start(): Promise<void> {
@@ -262,9 +260,6 @@ async function start(): Promise<void> {
   powerMonitor.on('suspend', tellWindows('suspend'))
   powerMonitor.on('resume', tellWindows('resume'))
 
-  // After the handlers, because the bridge answers by calling them: the tools it
-  // exposes are the app's own channels.
-  await startBridge()
   buildAppMenu()
   // Read before the window exists rather than told to it afterwards. See createWindow.
   // Offline, the window is drawn in the default theme rather than not drawn at all.
@@ -311,8 +306,7 @@ app.on('window-all-closed', () => {
 
 /**
  * On the way out: the helpers that hold something of the operating system's are given
- * it back, and a staged update is applied. Quitting is deferred until the bridge has
- * closed its socket, which is the one thing here that is asynchronous.
+ * it back, and a staged update is applied.
  */
 let closing = false
 app.on('before-quit', (event) => {
@@ -325,21 +319,8 @@ app.on('before-quit', (event) => {
   // The helper hands its audio device back to Core Audio when its stdin closes. Left
   // running it would keep a private aggregate device alive after the app has gone.
   stopSystemAudio()
-  void stopBridge()
-    .catch((error: unknown) => console.error('Could not close the Claude bridge cleanly:', error))
-    .finally(() => {
-      // Last, because the swap waits for this process to disappear before it touches
-      // the bundle.
-      applyStagedUpdate()
-      app.exit(0)
-    })
+  // Last, because the swap waits for this process to disappear before it touches
+  // the bundle.
+  applyStagedUpdate()
+  app.exit(0)
 })
-
-// Ctrl-C in a terminal during development deserves the same courtesy.
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    void stopBridge()
-      .catch(() => {})
-      .finally(() => process.exit(0))
-  })
-}

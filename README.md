@@ -57,16 +57,15 @@ It is not a replacement for Jira or Linear. Those are where the team executes; p
 to the board on the project and carry on. This is the view of the portfolio that you, the
 person accountable for all of it, do not currently have anywhere.
 
-Everything is **free and open source**, and everything stays **on your own machine** — no
-account, no server, no telemetry, no paid tier. Nothing about the projects you manage
-leaves your laptop, which matters when your notes say what you actually think about a
-stakeholder.
+The app is **free and open source**, and your work is kept in **your Neo Cloud account** —
+no telemetry, no advertising, and nothing about your projects used for anything but showing
+them back to you, which matters when your notes say what you actually think about a
+stakeholder. Neo Cloud is free; a free account has everything, with a daily allowance of
+assistant messages and meeting transcription (see *Your data*).
 
-There are exactly two things that ever leave it, both of them yours to switch off. The
-assistant and the meeting transcription go wherever you point them — an API key you
-supply, or a model running on the machine itself. And the weather on the Today page asks
-Open-Meteo for a forecast: no account and no key, a latitude and a longitude and nothing
-else, and it draws nothing at all if that fails.
+Beyond Neo Cloud, the one thing that leaves the machine is the weather on the Today page,
+which asks Open-Meteo for a forecast: no account and no key, a latitude and a longitude and
+nothing else, and it draws nothing at all if that fails.
 
 ## Install
 
@@ -177,8 +176,7 @@ short list of panes down the left, one pane at a time on the right. A long scrol
 sections meant the thing you came to change was never where you left it; a pane is a
 place, and it stays put. Which pane is open lives in the address, so anything that knows
 what needs changing can send you to the pane itself rather than to the front of the
-screen with an instruction to go and find it — which is how the assistant's "no key yet"
-panel behaves.
+screen with an instruction to go and find it.
 
 ### Themes, and Liquid Glass
 
@@ -586,16 +584,14 @@ Transcription starts on its own when you stop, and it runs in Neo Cloud — so y
 the lid on the way out of the room and the recap is still written. It is done one
 five-minute part at a time, each written down before the next begins. Then speakers, then
 the recap. All three remember where they got to, and a step that fails for a reason
-waiting will not fix — a wrong key, a model that does not exist — stops and says so
-instead of retrying forever.
+waiting will not fix stops and says so instead of retrying forever.
 
-**Which service does the work is yours to choose**, per workspace, under *Workspace
-settings → Recording*: OpenAI on the workspace's own key, or any OpenAI-compatible server
-you run (whisper.cpp's `whisper-server`, faster-whisper-server, Speaches, LocalAI for the
-audio; Ollama or any other for the words). The two halves are set separately, because
-they are different questions: transcription sends the *audio* somewhere, the recap sends
-the *words*. Because the work happens in Neo Cloud, a server of your own has to be one Neo
-Cloud can reach — `localhost` on your Mac is not.
+**There is nothing to set up.** Neo Cloud transcribes and writes the recap on its own
+OpenAI key, so there is no key to paste and no engine to pick. What *Workspace settings →
+Recording* keeps is what only you know: the language the meetings are in, and what the
+recap should pay attention to. A free account transcribes **60 minutes a day**; past that
+the recording is not lost or failed — it is kept, the meeting says it is waiting for
+tomorrow's allowance, and transcription picks up by itself the next day.
 
 **The recap becomes part of the meeting, on its own.** Nothing to press. The moment it
 is written it is appended to the write-up as ordinary Markdown you can edit, which is
@@ -907,12 +903,11 @@ A panel down the right-hand side, opened with the button beside **New** or with 
 pushes the page rather than covering it, because what you are asking about is usually
 what you are looking at.
 
-It runs on **your own OpenAI key**, entered in workspace settings under Assistant, and
-the key lives on the workspace rather than on the app — a workspace *is* a separate
-separate area of work, and the key one client is billed through should not be the one
-another client's questions go out on. The key is stored in the same folder as everything else and is never
-sent back out of the main process; the settings screen is only ever told whether there
-is one.
+**It needs no API key.** The assistant runs in Neo Cloud, on Neo Cloud's own OpenAI key —
+the app sends your message and shows the answer as it streams back, and that is all it
+does. A free account has **5 messages a day**; the panel's footer says how many are left
+("3 of 5 left today"), and once they are spent it says *Neo Pro — coming soon* instead of
+an error. The count starts again at your own midnight.
 
 It can **read everything in the workspace it was opened in** — the board, the people and
 how to work with them, the notes, the meeting write-ups, the decision log, the journal,
@@ -923,16 +918,20 @@ It can also **change things**, and every change stops and asks first. The confir
 a sentence in plain words with the ids resolved out of it — *"Add "Draft the Q3 brief" to
 Website relaunch, for Priya, due 2026-10-01"* — because a confirmation you cannot check is
 one you learn to click through. Nothing is written until you say yes, and declining is
-final: it is told so, and told not to try another way round.
+final: it is told so, and told not to try another way round. A question left unanswered
+for ten minutes counts as a no.
 
 It can file, too — make a folder, move one, put a project in one or take it out — because
 sorting out a portfolio that has grown past a screenful is the kind of tedious rearranging
 worth asking for in a sentence. It is told to leave filing nobody asked it to touch alone.
 
-Every write it makes goes through the same channel your own click goes through, so a task
-it creates is not a special kind of task. It logs activity and bumps the project's clock
-exactly as a hand-made one does, because it is the same code path rather than a second
-copy of it.
+Every write it makes goes through the same code in Neo Cloud your own click does, so a
+task it creates is not a special kind of task. It logs activity and bumps the project's
+clock exactly as a hand-made one does, and it appears on the board while the assistant is
+still talking — and on your other devices too.
+
+The turn belongs to Neo Cloud, not to the window: close the lid mid-answer and it finishes
+anyway, and the conversation has the whole of it when you come back.
 
 Replies stream as they are written and render as real Markdown — headings, lists, tables,
 code. You can **attach files**: images, PDFs, and text or code files, dropped onto the
@@ -940,55 +939,48 @@ panel or picked with the paperclip. Conversations are saved, listed in the panel
 and switchable; each one names itself from the first exchange rather than being called
 "New chat" forever or making you name it before you know what it is about.
 
-### Claude Desktop
+### Claude
 
-The same tools, from the other side. Neo ships an **MCP connector**, so the Claude desktop
-app can read what is in Neo and change it without the panel being open — useful when the
-conversation started somewhere else, or when you want a model other than the one your own
-key buys.
+The same tools, from the other side. Neo Cloud hosts a **remote MCP server** at
 
-**Setting it up takes one click.** Open **Settings → Claude** (`⌘,`) and press *Connect
-Claude Desktop*. Neo adds one entry to Claude Desktop's own configuration, leaving
-everything already in it alone, then tells you to restart Claude Desktop — which only
-reads that file at startup. The pane tells you where you stand the rest of the time:
-connected, not connected, or pointing at a copy of Neo that has since moved.
-
-Nothing has to be installed for that to work, not even Node. The entry runs the connector
-on Neo's own Electron as plain Node, because `"command": "node"` is the reason half of
-these setups never start — Claude Desktop launches its servers with a login shell's PATH,
-which on a machine where Node came from nvm or Homebrew does not have Node on it.
-
-If you would rather do it by hand, the pane has the exact JSON to copy and a link to the
-file it goes in. And to hand the connector to someone else, build it as an installable
-extension:
-
-```bash
-npm run mcp:pack     # writes dist/neo.mcpb
+```
+https://sync.neomoon.io/mcp
 ```
 
-which they drop on **Claude Desktop → Settings → Extensions**. That route runs on Claude
-Desktop's own bundled Node, so it needs nothing installed either.
+so Claude can read what is in Neo and change it — useful when the conversation started
+somewhere else. It talks to Neo Cloud directly, so **Neo does not have to be open**, or
+even installed, on the machine you are asking from.
 
-**Neo has to be open, and signed in.** The connector holds no account of its own — it
-forwards every call over a local socket to the running app, which answers it with the same
-tools the panel uses, on the same channels and as the same account. With Neo shut, the
-tools say so and do nothing.
+**Settings → Claude** (`⌘,`) has the address with a copy button and the steps:
 
-Everything else follows from being the same code path. A task Claude Desktop creates logs
-activity and bumps the project's clock, because it *is* the click you would have made. Reads are fenced to one workspace exactly as the panel's are.
-Every tool takes an optional `workspace` — a name is enough — and uses whichever one Neo
-is showing if you leave it out; the answer always says which one it used, so the choice is
-never silent. `list_workspaces` is there to find the others.
+- **Claude Desktop** and **claude.ai**: Settings → Connectors → *Add custom connector*,
+  paste the address, and sign in to Neo when the browser opens.
+- **Claude Code**: `claude mcp add --transport http neo https://sync.neomoon.io/mcp`
+
+Signing in is OAuth, in the browser, with your password or passkey — Claude never sees
+either. Each Claude you connect appears under **Settings → Account** as a device of its own,
+and can be signed out there like any other.
+
+Every tool takes an optional `workspace` — a name is enough — and uses the one you last had
+open if you leave it out; the answer always says which one it used, so the choice is never
+silent. `list_workspaces` is there to find the others. Reads are fenced to one workspace
+exactly as the panel's are.
 
 Approval works differently here, and it is worth knowing which. The in-app assistant stops
-before every write and shows you a sentence in plain words. Claude Desktop cannot be asked
-to show that — it has no way for a connector to put a question on screen — so the thing
-that gates a write is Claude Desktop's own "allow this tool" prompt. Reads are marked
-read-only so it can stop asking about them, and `delete_task` is marked destructive so it
-warns. Neo still builds the plain-words sentence before it writes anything, which is what
-catches a bad date or an id from another workspace *before* the change rather than after,
-and hands it back with the result so the transcript says what changed in words rather than
-in arguments.
+before every write and shows you a sentence in plain words. What gates a write in Claude is
+Claude's own "allow this tool" prompt. Reads are marked read-only so it can stop asking
+about them, and deleting is marked destructive so it warns. Neo Cloud still builds the
+plain-words sentence before it writes anything, which is what catches a bad date or an id
+from another workspace *before* the change rather than after, and hands it back with the
+result so the transcript says what changed in words rather than in arguments. Tool calls
+from Claude run on your Claude plan, not Neo's, so they do not count against the
+assistant's daily messages.
+
+**Coming from Neo 2.0 or earlier?** Those versions put a local connector into Claude
+Desktop's `claude_desktop_config.json` that only worked while Neo was open. That connector
+is gone. If it is still there, Settings → Claude offers to remove it — only that one `neo`
+entry, leaving everything else in the file alone, and refusing to touch a file it cannot
+parse.
 
 ## Your data
 
@@ -1020,12 +1012,18 @@ Quit the old app first. An account that signs in with a passkey can add a passwo
 **What leaves the Mac.** Your work goes to Neo Cloud, because that is where it is kept, and
 Neo Cloud can read it: it is not end-to-end encrypted, because the server does work the
 app used to do on the Mac, such as transcribing a meeting after you have closed the lid.
-Beyond that, three things ever leave, and all three are things you asked for. A question
-typed into the assistant goes to OpenAI on your own key, along with whatever it looked up
-to answer it, and only from the workspace you asked in. Anything the Claude Desktop
-connector reads goes to Anthropic as part of the conversation you are having there. And a
-meeting you record is sent wherever that workspace's *Recording* settings say — to OpenAI,
-or to a server of your own.
+
+**What Neo Cloud sends on.** Neo Cloud uses OpenAI, on its own key, for three things you
+ask for: a question typed into the assistant goes there along with whatever the assistant
+looked up to answer it (only from the workspace you asked in); a recorded meeting's audio
+goes there to be transcribed; and the transcript goes there to be recapped. It is sent with
+`store: false`, so it is not saved as a response on OpenAI's side. Anything you connect Claude to
+reads goes to Anthropic as part of the conversation you are having there. And the weather
+on Today asks Open-Meteo with a latitude and a longitude and nothing else.
+
+**Free has a daily allowance**: 5 assistant messages and 60 minutes of transcription a day,
+counted from your own midnight. Past it the assistant says *Neo Pro — coming soon*, and a
+recording waits for the next day rather than failing. There is no paid plan yet.
 
 ## Calendar
 
@@ -1079,7 +1077,6 @@ npm run dist            # packaged, signed-if-possible application
 npm run typecheck       # both TypeScript projects
 npm run gen:api         # regenerate the Neo Cloud client from the server's OpenAPI spec
 npm run verify          # the main process against a running Neo Cloud, headlessly
-npm run mcp:pack        # build the Claude Desktop connector into dist/neo.mcpb
 ```
 
 `npm run dist` produces a `.dmg` and a `.zip` on macOS, an NSIS installer on Windows and
@@ -1141,9 +1138,11 @@ server means today where you are.
 
 `npm run verify` stubs Electron and drives the real IPC handlers end to end against a
 running Neo Cloud — sample data, the attention reasons, workspace and account isolation,
-the Today dashboard, the re-entry brief, the board, meetings and recordings, search, and
-the export — in plain Node, with no window and no display. It registers a fresh account
-each run.
+the Today dashboard, the re-entry brief, the board, meetings and recordings, search, the
+assistant's run relay and daily limit, and the export — in plain Node, with no window and
+no display. It registers a fresh account each run. The assistant's runs need a Neo Cloud
+started against the server's scripted OpenAI stand-in (`test/fake_openai.py` in the server
+repository, with `NEO_OPENAI_BASE_URL` pointing at it), as CI does.
 
 There is no linter and no test framework. `test/verify.ts` is a single script of
 `ok(label, condition)` assertions run end to end, so there is no way to run one in

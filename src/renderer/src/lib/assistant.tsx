@@ -19,8 +19,8 @@ import { call } from './api'
  * minute, and closing the panel — or walking to another screen — must not abandon it.
  * The run belongs to the session, not to whatever is currently on screen.
  *
- * What is streaming is kept apart from what is saved. The main process writes every
- * turn to the database as it completes, so the transcript is a query like any other;
+ * What is streaming is kept apart from what is saved. Neo Cloud runs the turn and saves
+ * every step of it as it completes, so the transcript is a query like any other;
  * this holds only the part that has not landed yet — the half-written sentence, the
  * tools running, the confirmation waiting for an answer — and drops all of it the
  * moment the run says it is done and the query refetches.
@@ -56,7 +56,14 @@ interface AssistantState {
   /** Called by the transcript once it can see the saved turn. */
   settled: (messageId: string) => void
   error: string
-  send: (input: { text: string; files?: AttachmentUpload[]; projectId?: string }) => Promise<void>
+  /**
+   * Today's allowance is spent: the sentence Neo Cloud gave, shown as the "Neo Pro —
+   * coming soon" card rather than as an error. Empty otherwise.
+   */
+  limit: string
+  dismissLimit: () => void
+  /** Resolves false when the message did not go — refused for the day, or an error. */
+  send: (input: { text: string; files?: AttachmentUpload[]; projectId?: string }) => Promise<boolean>
   respond: (toolUseId: string, approved: boolean) => void
   cancel: () => void
   dismissError: () => void
@@ -79,6 +86,7 @@ export function AssistantProvider({
   const [tools, setTools] = useState<LiveTool[]>([])
   const [pending, setPending] = useState<{ id: string | null; text: string; files: string[] } | null>(null)
   const [error, setError] = useState('')
+  const [limit, setLimit] = useState('')
 
   /*
    * Events arrive on a channel with no memory of which React render subscribed, so
@@ -87,6 +95,13 @@ export function AssistantProvider({
    */
   const activeRun = useRef<string | null>(null)
   activeRun.current = runId
+  /*
+   * Runs that have already said `done`. The events are relayed as they arrive and the
+   * answer to `chat:send` travels separately, so a short turn can finish before the
+   * send resolves — and setting its id afterwards would leave the panel "running" a
+   * turn that is over.
+   */
+  const finished = useRef(new Set<string>())
 
   const reset = useCallback((): void => {
     setRunId(null)
@@ -99,6 +114,7 @@ export function AssistantProvider({
   useEffect(() => {
     setConversationId(null)
     setError('')
+    setLimit('')
     reset()
   }, [workspaceId, reset])
 
@@ -107,6 +123,10 @@ export function AssistantProvider({
       if (activeRun.current && event.runId !== activeRun.current) return
 
       switch (event.type) {
+        case 'started':
+          // Handled by the answer to `chat:send`, which carries the same ids.
+          break
+
         case 'text':
           setStreaming((text) => text + event.delta)
           break
@@ -145,6 +165,7 @@ export function AssistantProvider({
           break
 
         case 'done':
+          finished.current.add(event.runId)
           reset()
           // The turn is on disk now, so the transcript is refetched and the live
           // copy thrown away — there is never a moment showing both.
@@ -155,8 +176,9 @@ export function AssistantProvider({
   }, [client, reset])
 
   const send = useCallback(
-    async (input: { text: string; files?: AttachmentUpload[]; projectId?: string }): Promise<void> => {
+    async (input: { text: string; files?: AttachmentUpload[]; projectId?: string }): Promise<boolean> => {
       setError('')
+      setLimit('')
       setStreaming('')
       setTools([])
       setPending({ id: null, text: input.text, files: (input.files ?? []).map((f) => f.name) })
@@ -168,14 +190,26 @@ export function AssistantProvider({
           files: input.files,
           projectId: input.projectId
         })
-        setRunId(started.runId)
+        if (!started.started) {
+          setLimit(started.message)
+          setPending(null)
+          // Files may have gone in ahead of the refusal, opening the conversation.
+          void client.invalidateQueries({ queryKey: ['account:status'] })
+          void client.invalidateQueries({ queryKey: ['chat:list'] })
+          return false
+        }
+        if (!finished.current.has(started.runId)) setRunId(started.runId)
         setConversationId(started.conversationId)
+        // One of today's messages is spent; the footer's count follows.
+        void client.invalidateQueries({ queryKey: ['account:status'] })
         setPending((current) => (current ? { ...current, id: started.messageId } : current))
         void client.invalidateQueries({ queryKey: ['chat:list'] })
         void client.invalidateQueries({ queryKey: ['chat:get'] })
+        return true
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
         setPending(null)
+        return false
       }
     },
     [client, conversationId, workspaceId]
@@ -208,6 +242,7 @@ export function AssistantProvider({
       if (activeRun.current) return
       setConversationId(id)
       setError('')
+      setLimit('')
       reset()
     },
     [reset]
@@ -227,12 +262,14 @@ export function AssistantProvider({
       settled: (messageId: string) =>
         setPending((current) => (current && current.id === messageId ? null : current)),
       error,
+      limit,
+      dismissLimit: () => setLimit(''),
       send,
       respond,
       cancel,
       dismissError: () => setError('')
     }),
-    [open, conversationId, openConversation, runId, streaming, tools, pending, error, send, respond, cancel]
+    [open, conversationId, openConversation, runId, streaming, tools, pending, error, limit, send, respond, cancel]
   )
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>

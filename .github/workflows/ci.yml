@@ -101,7 +101,13 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
           PORT: 8080
+          # The assistant and the recording pipeline run on Neo Cloud's own OpenAI key.
+          # Here that is the server's scripted stand-in, so a run is exercised for real
+          # without a key or a network.
+          OPENAI_API_KEY: test
+          NEO_OPENAI_BASE_URL: http://127.0.0.1:18099/v1
         run: |
+          nohup python3 test/fake_openai.py 18099 > fake_openai.log 2>&1 &
           mvn -B -q -DskipTests package
           nohup java -jar target/neo-cloud-*.jar > server.log 2>&1 &
           for i in $(seq 1 90); do

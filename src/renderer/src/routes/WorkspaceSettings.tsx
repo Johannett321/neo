@@ -1,13 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { DEFAULT_MODEL, MODELS } from '@shared/ai'
-import {
-  DEFAULT_RECAP_PROMPT, LOCAL_RECAP_BASE_URL, LOCAL_RECAP_MODEL, LOCAL_TRANSCRIBE_BASE_URL,
-  LOCAL_TRANSCRIBE_MODEL, OPENAI_TRANSCRIBE_MODEL, OPENAI_TRANSCRIBE_MODELS
-} from '@shared/recording'
+import { DEFAULT_RECAP_PROMPT } from '@shared/recording'
 import type { Workspace } from '@shared/types'
-import { call, useApi, useApiMutation } from '@/lib/api'
+import { useApi, useApiMutation } from '@/lib/api'
 import { useWorkspace, useWorkspaces } from '@/lib/workspace'
 import { plural } from '@/lib/format'
 import { Icon } from '@/components/Icon'
@@ -64,17 +59,10 @@ export function WorkspaceSettings(): React.JSX.Element {
             render: () => <NotificationPane workspace={workspace} />
           },
           {
-            id: 'assistant',
-            label: 'Assistant',
-            icon: 'sparkle',
-            description: 'The key it runs on, and which model it uses.',
-            render: () => <AssistantPane workspace={workspace} />
-          },
-          {
             id: 'recording',
             label: 'Recording',
             icon: 'mic',
-            description: 'How a recorded meeting becomes words, and then a recap.',
+            description: 'The language meetings are in, and what the recap should look for.',
             render: () => <RecordingPane workspace={workspace} />
           },
           {
@@ -152,154 +140,12 @@ function IdentityPane({ workspace }: { workspace: Workspace }): React.JSX.Elemen
 }
 
 /**
- * The assistant's key lives on the workspace rather than on the app, because a
- * workspace *is* a separate working life: the key a consultancy bills through should
- * not be the one a day job's questions go out on, and the boundary the rest of the
- * app enforces on data should hold for what leaves the machine too.
- *
- * The key is write-only across the bridge. It is stored beside everything else in
- * `~/.neo` and never sent back to the renderer — all this screen is ever
- * told is whether there is one, which is all it needs to know.
- */
-function AssistantPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
-  const client = useQueryClient()
-  const save = useApiMutation('workspace:save')
-  const [key, setKey] = useState('')
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    setKey('')
-    setEditing(false)
-    setError('')
-  }, [workspace.id])
-
-  const setApiKey = async (value: string): Promise<void> => {
-    setSaving(true)
-    setError('')
-    try {
-      await call('chat:setKey', { workspaceId: workspace.id, apiKey: value })
-      await client.invalidateQueries()
-      setKey('')
-      setEditing(false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Panel>
-      <Field
-        label="OpenAI API key"
-        hint="Kept in this workspace's own data and never sent anywhere but OpenAI. Get one at platform.openai.com."
-      >
-        {workspace.aiKeySet && !editing ? (
-          <div className="hairline flex items-center gap-2 rounded-field border bg-base-200/50 px-3 py-2">
-            <Icon name="check" size={14} className="text-success" />
-            <span className="flex-1 text-[13px] text-base-content/70">A key is saved for this workspace.</span>
-            <button className="btn btn-ghost btn-xs" onClick={() => setEditing(true)}>
-              Replace
-            </button>
-            <ConfirmButton
-              label="Remove"
-              title="Remove this key?"
-              body="The assistant stops working in this workspace until you add another. Nothing else is touched."
-              confirmLabel="Remove"
-              className="btn btn-ghost btn-xs text-base-content/50 hover:text-error"
-              onConfirm={() => void setApiKey('')}
-            />
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <input
-              type="password"
-              className="input input-bordered w-full font-mono text-[12.5px]"
-              placeholder="sk-…"
-              autoComplete="off"
-              spellCheck={false}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && key.trim()) void setApiKey(key.trim())
-              }}
-            />
-            <button
-              className="btn btn-primary btn-sm shrink-0 self-center"
-              disabled={!key.trim() || saving}
-              onClick={() => void setApiKey(key.trim())}
-            >
-              Save
-            </button>
-            {workspace.aiKeySet && (
-              <button
-                className="btn btn-ghost btn-sm shrink-0 self-center"
-                onClick={() => {
-                  setKey('')
-                  setEditing(false)
-                }}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        )}
-      </Field>
-
-      {error && <p className="mt-2 text-[12px] text-error">{error}</p>}
-
-      <div className="hairline mt-5 border-t pt-5">
-        <Field label="Model" hint="Every question and every answer is billed to the key above.">
-          <div className="space-y-1">
-            {MODELS.map((model) => {
-              const isActive = (workspace.aiModel || DEFAULT_MODEL) === model.id
-              return (
-                <button
-                  key={model.id}
-                  className={`hairline flex w-full items-center gap-3 rounded-field border px-3 py-2 text-left transition ${
-                    isActive ? 'border-primary/40 bg-primary/5' : 'hover:bg-base-200/60'
-                  }`}
-                  onClick={() => save.mutate({ id: workspace.id, aiModel: model.id })}
-                >
-                  <span
-                    className={`size-3.5 shrink-0 rounded-full border-[1.5px] ${
-                      isActive ? 'border-primary bg-primary' : 'border-base-content/25'
-                    }`}
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium">{model.label}</span>
-                    <span className="block text-[11.5px] text-base-content/50">{model.hint}</span>
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </Field>
-      </div>
-
-      <p className="mt-5 text-[11.5px] leading-relaxed text-base-content/45">
-        The assistant can only see this workspace, and it asks before it changes anything — every
-        write is shown to you in plain words first, and nothing happens until you say yes.
-      </p>
-    </Panel>
-  )
-}
-
-/**
  * What happens to a meeting after it has been recorded.
  *
- * Two separate choices, because they are separate questions. Transcription sends the
- * *audio* somewhere; the recap sends the *words*. A conversation you are not allowed
- * to upload can still, quite reasonably, have its transcript read by a model — and
- * the other way round, a machine that cannot run Whisper fast enough may still run a
- * perfectly good local model over the text afterwards.
- *
- * The one thing worth knowing before choosing: Ollama does not transcribe. It runs
- * language models and only those. So "on this Mac" for transcription means an
- * OpenAI-compatible speech server you run yourself, and the field asks for its
- * address rather than pretending there is one right answer.
+ * Which service transcribes and which model writes the recap are Neo Cloud's to decide —
+ * every workspace runs on the same operator key, so there is no engine or key to pick.
+ * What is left is what only this working life knows: the language its meetings are in,
+ * and what its recaps should pay attention to.
  */
 function RecordingPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const save = useApiMutation('workspace:save')
@@ -311,118 +157,22 @@ function RecordingPane({ workspace }: { workspace: Workspace }): React.JSX.Eleme
     <div className="space-y-4">
       <Panel>
         <Field
-          label="Transcription"
-          hint="Where the audio goes to be turned into words. Recordings are transcribed one five-minute part at a time, so an interrupted transcription resumes at the part it reached."
+          label="Language"
+          hint="A two-letter code such as no or en. Leave it empty and transcription works it out — naming it is more accurate when you already know."
         >
-          <Choice
-            value={workspace.transcribeEngine}
-            onChange={(engine) => set({ transcribeEngine: engine })}
-            options={[
-              {
-                id: 'openai',
-                label: 'OpenAI',
-                hint: 'Uses the API key under Assistant. The audio leaves this machine.'
-              },
-              {
-                id: 'local',
-                label: 'On this Mac',
-                hint: 'A speech server you run yourself. Nothing leaves the machine.'
-              }
-            ]}
+          <input
+            className="input input-bordered input-sm w-28"
+            placeholder="auto"
+            maxLength={5}
+            defaultValue={workspace.transcribeLanguage}
+            key={workspace.id}
+            onBlur={(e) => set({ transcribeLanguage: e.target.value.trim().toLowerCase() })}
           />
         </Field>
-
-        {workspace.transcribeEngine === 'openai' ? (
-          <div className="mt-4 space-y-1">
-            {OPENAI_TRANSCRIBE_MODELS.map((model) => (
-              <Radio
-                key={model.id}
-                active={(workspace.transcribeModel || OPENAI_TRANSCRIBE_MODEL) === model.id}
-                label={model.label}
-                hint={model.hint}
-                onSelect={() => set({ transcribeModel: model.id })}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="mt-4 space-y-3">
-            <Field
-              label="Server address"
-              hint="Any OpenAI-compatible speech server: whisper.cpp's whisper-server, faster-whisper-server, Speaches, LocalAI. Ollama cannot do this — it runs language models only."
-            >
-              <input
-                className="input input-bordered input-sm w-full font-mono text-[12px]"
-                placeholder={LOCAL_TRANSCRIBE_BASE_URL}
-                defaultValue={workspace.transcribeBaseUrl}
-                onBlur={(e) => set({ transcribeBaseUrl: e.target.value.trim() })}
-              />
-            </Field>
-            <Field label="Model">
-              <input
-                className="input input-bordered input-sm w-full font-mono text-[12px]"
-                placeholder={LOCAL_TRANSCRIBE_MODEL}
-                defaultValue={workspace.transcribeModel}
-                onBlur={(e) => set({ transcribeModel: e.target.value.trim() })}
-              />
-            </Field>
-          </div>
-        )}
-
-        <div className="hairline mt-4 border-t pt-4">
-          <Field
-            label="Language"
-            hint="A two-letter code such as no or en. Leave it empty and the model works it out — naming it is more accurate when you already know."
-          >
-            <input
-              className="input input-bordered input-sm w-28"
-              placeholder="auto"
-              maxLength={5}
-              defaultValue={workspace.transcribeLanguage}
-              onBlur={(e) => set({ transcribeLanguage: e.target.value.trim().toLowerCase() })}
-            />
-          </Field>
-        </div>
-      </Panel>
-
-      <Panel>
-        <Field
-          label="Recap"
-          hint="Which model reads the transcript, works out who was speaking, and writes up what came of the meeting."
-        >
-          <Choice
-            value={workspace.recapEngine}
-            onChange={(engine) => set({ recapEngine: engine })}
-            options={[
-              {
-                id: 'openai',
-                label: 'OpenAI',
-                hint: 'Uses the key and the model under Assistant unless you name another below.'
-              },
-              { id: 'local', label: 'On this Mac', hint: 'Ollama, or anything that speaks its API.' }
-            ]}
-          />
-        </Field>
-
-        <div className="mt-4 space-y-3">
-          {workspace.recapEngine === 'local' && (
-            <Field label="Server address">
-              <input
-                className="input input-bordered input-sm w-full font-mono text-[12px]"
-                placeholder={LOCAL_RECAP_BASE_URL}
-                defaultValue={workspace.recapBaseUrl}
-                onBlur={(e) => set({ recapBaseUrl: e.target.value.trim() })}
-              />
-            </Field>
-          )}
-          <Field label="Model">
-            <input
-              className="input input-bordered input-sm w-full font-mono text-[12px]"
-              placeholder={workspace.recapEngine === 'local' ? LOCAL_RECAP_MODEL : (workspace.aiModel || DEFAULT_MODEL)}
-              defaultValue={workspace.recapModel}
-              onBlur={(e) => set({ recapModel: e.target.value.trim() })}
-            />
-          </Field>
-        </div>
+        <p className="mt-3 text-[11.5px] leading-relaxed text-base-content/45">
+          Recordings are transcribed in Neo Cloud one five-minute part at a time, so an interrupted
+          transcription resumes at the part it reached.
+        </p>
       </Panel>
 
       <Panel>
@@ -452,66 +202,6 @@ function RecordingPane({ workspace }: { workspace: Workspace }): React.JSX.Eleme
         )}
       </Panel>
     </div>
-  )
-}
-
-function Choice<T extends string>({
-  value,
-  onChange,
-  options
-}: {
-  value: T
-  onChange: (value: T) => void
-  options: { id: T; label: string; hint: string }[]
-}): React.JSX.Element {
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {options.map((option) => (
-        <button
-          key={option.id}
-          className={`hairline rounded-field border px-3 py-2 text-left transition ${
-            value === option.id ? 'border-primary/40 bg-primary/5' : 'hover:bg-base-200/60'
-          }`}
-          onClick={() => onChange(option.id)}
-        >
-          <span className="block text-[13px] font-medium">{option.label}</span>
-          <span className="mt-0.5 block text-[11px] leading-relaxed text-base-content/50">
-            {option.hint}
-          </span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function Radio({
-  active,
-  label,
-  hint,
-  onSelect
-}: {
-  active: boolean
-  label: string
-  hint: string
-  onSelect: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      className={`hairline flex w-full items-center gap-3 rounded-field border px-3 py-2 text-left transition ${
-        active ? 'border-primary/40 bg-primary/5' : 'hover:bg-base-200/60'
-      }`}
-      onClick={onSelect}
-    >
-      <span
-        className={`size-3.5 shrink-0 rounded-full border-[1.5px] ${
-          active ? 'border-primary bg-primary' : 'border-base-content/25'
-        }`}
-      />
-      <span className="min-w-0">
-        <span className="block text-[13px] font-medium">{label}</span>
-        <span className="block text-[11.5px] text-base-content/50">{hint}</span>
-      </span>
-    </button>
   )
 }
 

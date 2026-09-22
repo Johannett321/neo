@@ -1,6 +1,6 @@
 /**
  * Stands in for Electron so the whole main process — the IPC handlers, the client that
- * talks to Neo Cloud, the bridge, the export — can be exercised in plain Node, with no
+ * talks to Neo Cloud, the assistant's run relay, the export — can be exercised in plain Node, with no
  * window and no display.
  *
  * What the app keeps on this machine is the signed-in session, in the user-data folder;
@@ -16,7 +16,7 @@ const dir = process.env.PM_TEST_DIR || mkdtempSync(join(tmpdir(), 'neo-verify-')
 export const app = {
   isPackaged: false,
   // Every folder the app asks for is the one temporary folder: `userData` is where the
-  // session is sealed and the bridge's socket is opened, `downloads` is only ever the
+  // session is sealed, `downloads` is only ever the
   // export's suggested location, and nothing else is written anywhere.
   getPath: () => dir,
   getAppPath: () => process.cwd(),
@@ -83,9 +83,8 @@ export const nativeTheme = { shouldUseDarkColors: false, on: () => {} }
 export const session = {
   defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} }
 }
-// The assistant pushes its stream at every open window; in a test there are none,
-// so a run reports through the events nobody is listening to and the loop is
-// exercised all the same.
+// The assistant's relayed events go to every open window; in a test there are none,
+// so `verify.ts` drives the relay directly with a listener of its own.
 export class BrowserWindow {
   static getAllWindows = () => []
 }

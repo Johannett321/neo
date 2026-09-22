@@ -466,42 +466,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/workspaces/{id}/assistant-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["setAssistantKey"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/workspaces/{id}/assistant": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        get: operations["getAssistantContext"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/workspace-links": {
         parameters: {
             query?: never;
@@ -1690,25 +1654,6 @@ export interface paths {
         patch: operations["renameConversation"];
         trace?: never;
     };
-    "/v1/conversations/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save one turn at the end of the conversation. */
-        post: operations["addChatMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/conversations/{id}/attachments": {
         parameters: {
             query?: never;
@@ -1720,7 +1665,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A file given to the assistant, up to 20 MB. */
+        /**
+         * A file given to the assistant, up to 20 MB.
+         * @description Stored before the message that carries it is sent, so a failed send does not lose
+         *     what was dropped in. It joins a message when a run names it in `attachmentIds`.
+         */
         post: operations["addChatAttachment"];
         delete?: never;
         options?: never;
@@ -1728,22 +1677,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/chat-attachments/{id}": {
+    "/v1/assistant/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message to the assistant, and watch it answer.
+         * @description One turn of the assistant, run in Neo Cloud on the operator's OpenAI key. Spends
+         *     one of today's assistant messages first — 429 with `LimitReached` when there are
+         *     none left — then answers with a server-sent event stream. Every event's data is a
+         *     JSON object carrying `type` (the event's name) and `runId`:
+         *
+         *     - `started` — `{conversationId, messageId}`: the user's message is saved (and the
+         *       conversation created, if none was named). Always first.
+         *     - `text` — `{delta}`: more of the answer as it is written.
+         *     - `tool` — `{id, name, label, status, detail}`: a tool call, `running` then
+         *       `done` or `error`.
+         *     - `approval` — `{id, name, label, detail}`: a tool that would change something is
+         *       waiting to be allowed. Nothing is written until
+         *       `POST /v1/assistant/runs/{runId}/answers` says so; a question left unanswered
+         *       for ten minutes counts as declined.
+         *     - `title` — `{conversationId, title}`: a new conversation named itself.
+         *     - `error` — `{message}`: the turn stopped, in a sentence.
+         *     - `done` — `{conversationId}`: the turn is over; the stream closes. Always last.
+         *
+         *     The turn does not depend on the stream. A client that goes away leaves it running:
+         *     it finishes and is saved (or waits on its question), and every device hears
+         *     `changed` on `GET /v1/events` for whatever its tools wrote.
+         */
+        post: operations["startAssistantRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/runs/{runId}/answers": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["IdPath"];
+                /** @description The id a run's `started` event carried. */
+                runId: components["parameters"]["RunIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Allow or decline the change a run is waiting on. */
+        post: operations["answerAssistantRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id a run's `started` event carried. */
+                runId: components["parameters"]["RunIdPath"];
             };
             cookie?: never;
         };
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Stop a run. Anything it is waiting on is declined; nothing more is written. */
+        delete: operations["cancelAssistantRun"];
         options?: never;
         head?: never;
-        patch: operations["attachToMessage"];
+        patch?: never;
         trace?: never;
     };
     "/v1/documents/{kind}/{id}": {
@@ -1865,6 +1876,20 @@ export interface components {
              */
             quotaBytes: number;
         };
+        Allowance: {
+            used: number;
+            /** @description The most a day allows. Null means there is no limit. */
+            limit: number | null;
+        };
+        /**
+         * @description What this account has used today of what its plan allows — "3 of 5 left today".
+         *     Today is the day in the request's `X-Neo-Time-Zone`, and the counts start again at
+         *     that zone's midnight.
+         */
+        Usage: {
+            assistantMessages: components["schemas"]["Allowance"];
+            transcriptionMinutes: components["schemas"]["Allowance"];
+        };
         Account: {
             /** Format: uuid */
             accountId: string;
@@ -1874,6 +1899,7 @@ export interface components {
             plan: components["schemas"]["Plan"];
             features: components["schemas"]["Features"];
             storage: components["schemas"]["Storage"];
+            usage: components["schemas"]["Usage"];
         };
         PasswordChange: {
             /** @description Required when the account already has a password. */
@@ -1884,6 +1910,10 @@ export interface components {
             /** Format: uuid */
             deviceId: string;
             name: string;
+            /**
+             * @description What the device said it was when it signed in (`darwin`, `ios`, `web`, …).
+             *     `mcp` is a Claude connection made over OAuth, named after the client.
+             */
             platform: string;
             /** Format: date-time */
             lastSeenAt: string;
@@ -2007,8 +2037,6 @@ export interface components {
                 [key: string]: number;
             };
         };
-        /** @enum {string} */
-        Engine: "openai" | "local";
         Workspace: {
             /** Format: uuid */
             id: string;
@@ -2021,16 +2049,13 @@ export interface components {
             sortOrder: number;
             /** Format: date-time */
             archivedAt: string | null;
-            /** @description Whether an API key has been saved. Never the key. */
-            aiKeySet: boolean;
-            aiModel: string;
-            transcribeEngine: components["schemas"]["Engine"];
-            transcribeModel: string;
-            transcribeBaseUrl: string;
+            /**
+             * @description A hint for transcription (an ISO-639-1 code such as `no`), or empty to let it
+             *     tell. Which service transcribes and writes the recap is Neo Cloud's to decide:
+             *     every workspace runs on the same operator key.
+             */
             transcribeLanguage: string;
-            recapEngine: components["schemas"]["Engine"];
-            recapModel: string;
-            recapBaseUrl: string;
+            /** @description Anything the recap should always pay attention to in this workspace. */
             recapPrompt: string;
             bannerPath: string;
             banner: string | null;
@@ -2059,20 +2084,13 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        /** @description A new workspace, or the fields of one to change. The API key is not here. */
+        /** @description A new workspace, or the fields of one to change. */
         WorkspaceDraft: {
             name?: string;
             color?: string;
             iconPath?: string;
             sortOrder?: number;
-            aiModel?: string;
-            transcribeEngine?: components["schemas"]["Engine"];
-            transcribeModel?: string;
-            transcribeBaseUrl?: string;
             transcribeLanguage?: string;
-            recapEngine?: components["schemas"]["Engine"];
-            recapModel?: string;
-            recapBaseUrl?: string;
             recapPrompt?: string;
             bannerPath?: string;
             bannerX?: number;
@@ -2104,22 +2122,6 @@ export interface components {
         };
         Archived: {
             archived: boolean;
-        };
-        AssistantKey: {
-            /** @description Write-only. An empty string clears it. */
-            apiKey: string;
-        };
-        /**
-         * @description What the desktop app's assistant needs to run a turn: the workspace's key and
-         *     model. The only place the key is ever read back, and only by the account it
-         *     belongs to.
-         */
-        AssistantContext: {
-            /** Format: uuid */
-            workspaceId: string;
-            name: string;
-            apiKey: string;
-            model: string;
         };
         WorkspaceLink: {
             /** Format: uuid */
@@ -2459,6 +2461,12 @@ export interface components {
             segments: components["schemas"]["RecordingSegment"][];
             transcriptState: components["schemas"]["Stage"];
             transcriptError: string;
+            /**
+             * @description Today's transcription allowance is used up, so the rest of this recording is
+             *     waiting — kept, and transcribed on the next day. `transcriptError` says so in a
+             *     sentence; `transcriptState` stays `pending`, because nothing has failed.
+             */
+            waitingForAllowance: boolean;
             transcriptEngine: string;
             transcriptModel: string;
             transcribed: number;
@@ -2967,7 +2975,7 @@ export interface components {
             tools: {
                 [key: string]: unknown;
             };
-            /** @description The model API's own content items, replayed to it unchanged. */
+            /** @description The model API's own input and output items, as Neo Cloud replays them to it. */
             blocks: unknown[];
             attachments: components["schemas"]["Attachment"][];
             sortOrder: number;
@@ -2981,17 +2989,69 @@ export interface components {
         ConversationRename: {
             title: string;
         };
-        ChatMessageDraft: {
-            /** @enum {string} */
-            role: "user" | "assistant";
-            blocks: unknown[];
-            tools?: {
-                [key: string]: unknown;
-            };
+        RunStart: {
+            /**
+             * Format: uuid
+             * @description The workspace the assistant works in. It sees nothing outside it.
+             */
+            workspaceId: string;
+            /**
+             * Format: uuid
+             * @description Carry on this conversation. Left out, a new one is started.
+             */
+            conversationId?: string;
+            text: string;
+            /**
+             * @description Files already added to this conversation with
+             *     `POST /v1/conversations/{id}/attachments`, which this message carries.
+             */
+            attachmentIds?: string[];
+            /**
+             * Format: uuid
+             * @description The project on screen, so "this project" means something.
+             */
+            projectId?: string;
         };
-        AttachmentLink: {
+        /**
+         * @description The data of one event on a run's stream. `type` is the event's name; which of the
+         *     other fields are there depends on it (see `POST /v1/assistant/runs`).
+         */
+        RunEvent: {
+            /** @enum {string} */
+            type: "started" | "text" | "tool" | "approval" | "title" | "error" | "done";
+            runId: string;
             /** Format: uuid */
-            messageId: string;
+            conversationId?: string;
+            /** Format: uuid */
+            messageId?: string;
+            delta?: string;
+            /** @description The tool call's id — what an answer names as `toolCallId`. */
+            id?: string;
+            /** @description The tool's name, e.g. `create_task`. */
+            name?: string;
+            /** @description What the call does, in words. For a write, the sentence to confirm. */
+            label?: string;
+            /** @enum {string} */
+            status?: "running" | "done" | "error";
+            detail?: string;
+            title?: string;
+            message?: string;
+        };
+        /**
+         * @description A refusal because today's allowance is used up (HTTP 429). `error` is the sentence
+         *     to show; `limit` says which allowance, so a client can show the "Neo Pro — coming
+         *     soon" card in its place rather than a plain error.
+         */
+        LimitReached: {
+            /** @example You've used today's 5 assistant messages. Neo Pro, with unlimited messages, is coming soon. */
+            error: string;
+            /** @enum {string} */
+            limit: "assistant" | "transcription";
+        };
+        RunAnswer: {
+            /** @description The `id` of the `approval` event being answered. */
+            toolCallId: string;
+            approved: boolean;
         };
         Document: {
             kind: string;
@@ -3021,11 +3081,22 @@ export interface components {
             };
             content?: never;
         };
+        /** @description Today's allowance is used up. The body says which, and says so in words. */
+        LimitResponse: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["LimitReached"];
+            };
+        };
     };
     parameters: {
         IdPath: string;
         /** @description The workspace this list belongs to. Always explicit. */
         WorkspaceQuery: string;
+        /** @description The id a run's `started` event carried. */
+        RunIdPath: string;
     };
     requestBodies: never;
     headers: never;
@@ -3724,56 +3795,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Workspace"];
-                };
-            };
-            default: components["responses"]["ErrorResponse"];
-        };
-    };
-    setAssistantKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AssistantKey"];
-            };
-        };
-        responses: {
-            /** @description The workspace, saying whether a key is set. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Workspace"];
-                };
-            };
-            default: components["responses"]["ErrorResponse"];
-        };
-    };
-    getAssistantContext: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The key and model the assistant runs on in this workspace. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AssistantContext"];
                 };
             };
             default: components["responses"]["ErrorResponse"];
@@ -5972,33 +5993,6 @@ export interface operations {
             default: components["responses"]["ErrorResponse"];
         };
     };
-    addChatMessage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatMessageDraft"];
-            };
-        };
-        responses: {
-            /** @description Saved. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ChatMessage"];
-                };
-            };
-            default: components["responses"]["ErrorResponse"];
-        };
-    };
     addChatAttachment: {
         parameters: {
             query: {
@@ -6029,30 +6023,65 @@ export interface operations {
             default: components["responses"]["ErrorResponse"];
         };
     };
-    attachToMessage: {
+    startAssistantRun: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                id: components["parameters"]["IdPath"];
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AttachmentLink"];
+                "application/json": components["schemas"]["RunStart"];
             };
         };
         responses: {
-            /** @description The attachment, now part of the message. */
+            /** @description The run's events, until it is done. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Attachment"];
+                    "text/event-stream": components["schemas"]["RunEvent"];
                 };
             };
+            429: components["responses"]["LimitResponse"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    answerAssistantRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id a run's `started` event carried. */
+                runId: components["parameters"]["RunIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunAnswer"];
+            };
+        };
+        responses: {
+            204: components["responses"]["NoContent"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    cancelAssistantRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id a run's `started` event carried. */
+                runId: components["parameters"]["RunIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
             default: components["responses"]["ErrorResponse"];
         };
     };

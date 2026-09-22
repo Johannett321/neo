@@ -4,6 +4,7 @@ import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
 import { useTheme, THEMES, type Theme } from '@/lib/theme'
 import { formatBytes, formatDateWith, formatTemperature, formatTimeWith } from '@/lib/format'
 import { resolveTemperature, type ClockFormat } from '@shared/formats'
+import { CLAUDE_CODE_COMMAND, MCP_URL } from '@shared/claude'
 import { useToast } from '@/lib/toast'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
@@ -84,7 +85,7 @@ export function SettingsPage(): React.JSX.Element {
           id: 'claude',
           label: 'Claude',
           icon: 'chat',
-          description: 'Let the Claude desktop app read and change what is in Neo.',
+          description: 'Let Claude read and change what is in Neo, even with Neo closed.',
           render: () => <ClaudePane />
         },
         {
@@ -970,155 +971,126 @@ function DataPane(): React.JSX.Element {
 }
 
 /**
- * Setting the Claude desktop app up to talk to Neo.
+ * Connecting Claude to Neo.
  *
  * The assistant panel is one way in; this is the other, and the difference is worth
- * saying out loud rather than leaving to be discovered. The panel runs on your own
- * OpenAI key and asks before every change. Claude Desktop runs on your Claude
- * subscription and does its own asking — it has no way to show Neo's confirmation,
- * so what you approve is its prompt rather than ours.
+ * saying out loud rather than leaving to be discovered. The panel runs in Neo Cloud and
+ * stops to show you a sentence before every change. Claude runs on your own Claude
+ * plan and does its own asking — what you approve there is its prompt, not ours.
  *
- * The button writes one entry into Claude Desktop's own configuration and leaves the
- * rest of that file alone. Doing it by hand means two absolute paths typed into a
- * file in a library folder, which is a poor introduction to a feature whose point is
- * not thinking about plumbing.
+ * Neo Cloud hosts the connector, so there is nothing to install and Neo need not be
+ * open: Claude signs in to your account in the browser and talks to Neo Cloud directly.
+ * All this pane can do is give the address and the steps — and clear away the local
+ * connector entry older versions of Neo wrote into Claude Desktop's configuration.
  */
 function ClaudePane(): React.JSX.Element {
-  const status = useApi('mcp:status')
-  const connect = useApiMutation('mcp:connect')
-  const disconnect = useApiMutation('mcp:disconnect')
-  const reveal = useApiMutation('mcp:revealConfig')
-  const [copied, setCopied] = useState(false)
+  const status = useApi('claude:status')
+  const removeLegacy = useApiMutation('claude:removeLegacy')
+  const [copied, setCopied] = useState('')
   const [error, setError] = useState('')
-  const [justChanged, setJustChanged] = useState(false)
+  const [removed, setRemoved] = useState(false)
 
-  const state = status.data
-  const snippet = state
-    ? JSON.stringify({ mcpServers: { neo: state.entry } }, null, 2)
-    : ''
+  const copy = async (text: string): Promise<void> => {
+    await navigator.clipboard.writeText(text)
+    setCopied(text)
+    window.setTimeout(() => setCopied((current) => (current === text ? '' : current)), 2000)
+  }
 
-  const run = async (action: 'connect' | 'disconnect'): Promise<void> => {
+  const remove = async (): Promise<void> => {
     setError('')
     try {
-      await (action === 'connect' ? connect.mutateAsync() : disconnect.mutateAsync())
-      setJustChanged(true)
+      await removeLegacy.mutateAsync()
+      setRemoved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
 
-  if (!state) return <Panel><p className="text-[12px] text-base-content/55">…</p></Panel>
+  const steps: { who: string; how: React.ReactNode }[] = [
+    {
+      who: 'Claude Desktop',
+      how: <>Settings → Connectors → <em>Add custom connector</em>, paste the address, then sign in to Neo when the browser opens.</>
+    },
+    {
+      who: 'claude.ai',
+      how: <>Settings → Connectors → <em>Add custom connector</em>, paste the address, and sign in to Neo.</>
+    },
+    {
+      who: 'Claude Code',
+      how: (
+        <span className="flex flex-wrap items-center gap-1.5">
+          Run
+          <code className="hairline rounded-field border bg-base-200/50 px-1.5 py-0.5 font-mono text-[11px]">
+            {CLAUDE_CODE_COMMAND}
+          </code>
+          <button className="btn btn-ghost btn-xs gap-1" onClick={() => void copy(CLAUDE_CODE_COMMAND)}>
+            <Icon name={copied === CLAUDE_CODE_COMMAND ? 'check' : 'copy'} size={11} />
+            {copied === CLAUDE_CODE_COMMAND ? 'Copied' : 'Copy'}
+          </button>
+        </span>
+      )
+    }
+  ]
 
   return (
     <Panel>
       <p className="text-[13px] leading-relaxed text-base-content/70">
-        Neo can hand its tools to the <strong>Claude desktop app</strong>, so you can ask about your
-        projects, meetings and people — and have things written down, moved or ticked off — in a
-        conversation that started somewhere else.
+        Claude can read and change what is in Neo, so you can ask about your projects, meetings
+        and people — and have things written down, moved or ticked off — in a conversation that
+        started somewhere else. It connects to Neo Cloud, so it works whether or not Neo is open.
       </p>
 
-      {!state.claudeInstalled ? (
-        <div className="hairline mt-4 rounded-box border bg-base-200/40 px-4 py-3">
-          <p className="text-[12px] leading-relaxed text-base-content/70">
-            Claude Desktop is not installed on this machine. Install it from{' '}
-            <button
-              className="underline decoration-base-content/25 hover:decoration-current"
-              onClick={() => openExternal('https://claude.ai/download')}
-            >
-              claude.ai/download
-            </button>{' '}
-            and come back — this pane will do the rest.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="hairline mt-4 flex flex-wrap items-center gap-3 rounded-box border bg-base-200/40 px-4 py-3">
-            <span
-              className={`inline-flex size-2 shrink-0 rounded-full ${
-                state.connected ? 'bg-success' : state.stale ? 'bg-warning' : 'bg-base-content/25'
-              }`}
-              aria-hidden="true"
-            />
-            <span className="flex-1 text-[12.5px] text-base-content/75">
-              {state.connected
-                ? 'Claude Desktop is set up to talk to Neo.'
-                : state.stale
-                  ? 'Claude Desktop is pointing at a different copy of Neo. Connect again to point it here.'
-                  : 'Claude Desktop does not know about Neo yet.'}
-            </span>
-            {state.connected ? (
-              <button className="btn btn-sm" onClick={() => void run('disconnect')}>
-                Disconnect
-              </button>
-            ) : (
-              <button className="btn btn-sm btn-primary gap-1.5" onClick={() => void run('connect')}>
-                <Icon name="check" size={13} />
-                {state.stale ? 'Point it here' : 'Connect Claude Desktop'}
-              </button>
-            )}
-          </div>
+      <div className="hairline mt-4 flex flex-wrap items-center gap-3 rounded-box border bg-base-200/40 px-4 py-3">
+        <code className="flex-1 select-all font-mono text-[12.5px] text-base-content/80">{MCP_URL}</code>
+        <button className="btn btn-sm btn-primary gap-1.5" onClick={() => void copy(MCP_URL)}>
+          <Icon name={copied === MCP_URL ? 'check' : 'copy'} size={13} />
+          {copied === MCP_URL ? 'Copied' : 'Copy address'}
+        </button>
+      </div>
 
-          {justChanged && (
-            <p className="mt-3 flex items-center gap-1.5 text-[12px] text-warning">
-              <Icon name="refresh" size={13} />
-              Quit Claude Desktop and open it again — it only reads that file at startup.
-            </p>
-          )}
-        </>
-      )}
-
-      {error && <p className="mt-3 text-[12px] text-error">{error}</p>}
+      <ul className="mt-4 space-y-2.5">
+        {steps.map((step) => (
+          <li key={step.who} className="text-[12px] leading-relaxed text-base-content/60">
+            <strong className="font-medium text-base-content/80">{step.who}.</strong> {step.how}
+          </li>
+        ))}
+      </ul>
 
       <p className="mt-5 text-[12px] leading-relaxed text-base-content/55">
-        <strong className="font-medium text-base-content/70">Neo has to be open.</strong> The
-        connector holds no copy of your data — it passes every question through to this app, which
-        answers it the same way the assistant panel does. With Neo shut, Claude says so and does
-        nothing. Everything it writes is logged and mirrored to Markdown exactly as if you had
-        clicked it yourself.
+        Each Claude you connect signs in once and then shows up under Devices in the Account pane,
+        where it can be signed out like any other. Everything it writes is logged exactly as if you
+        had clicked it yourself.
       </p>
 
       <p className="mt-3 text-[12px] leading-relaxed text-base-content/55">
-        It can change things, and the confirmation you get is <em>Claude Desktop&rsquo;s</em>, not
+        It can change things, and the confirmation you get is <em>Claude&rsquo;s</em>, not
         Neo&rsquo;s — reading is marked as reading, and deleting is marked as deleting, but the
         assistant panel is the one that stops and shows you a sentence first.
       </p>
 
-      <details className="group mt-5">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] text-base-content/55 hover:text-base-content/80">
-          <Icon
-            name="chevronRight"
-            size={12}
-            className="transition-transform group-open:rotate-90"
-          />
-          Set it up by hand instead
-        </summary>
-        <div className="mt-3">
-          <p className="text-[12px] leading-relaxed text-base-content/55">
-            Put this in{' '}
-            <button
-              className="underline decoration-base-content/25 hover:decoration-current"
-              onClick={() => reveal.mutate()}
-            >
-              claude_desktop_config.json
-            </button>
-            , merging it with anything already there.
+      {status.data?.legacyEntry && (
+        <div className="hairline mt-5 rounded-box border border-warning/30 bg-warning/5 px-4 py-3">
+          <p className="text-[12px] leading-relaxed text-base-content/70">
+            Claude Desktop still has the connector an older Neo set up, which ran inside Neo.app and
+            no longer exists. Remove it, then add the address above. Only that one entry is taken out
+            of <span className="font-mono text-[11px]">claude_desktop_config.json</span>; nothing
+            else in it is touched.
           </p>
-          <pre className="hairline mt-2 overflow-x-auto rounded-field border bg-base-200/50 px-3 py-2 font-mono text-[11px] leading-relaxed">
-            {snippet}
-          </pre>
-          <button
-            className="btn btn-xs mt-2 gap-1.5"
-            onClick={async () => {
-              await navigator.clipboard.writeText(snippet)
-              setCopied(true)
-              window.setTimeout(() => setCopied(false), 2000)
-            }}
-          >
-            <Icon name={copied ? 'check' : 'note'} size={12} />
-            {copied ? 'Copied' : 'Copy'}
+          <button className="btn btn-sm mt-3 gap-1.5" disabled={removeLegacy.isPending} onClick={() => void remove()}>
+            <Icon name="trash" size={13} />
+            Remove the old connector
           </button>
         </div>
-      </details>
+      )}
+
+      {removed && !status.data?.legacyEntry && (
+        <p className="mt-3 flex items-center gap-1.5 text-[12px] text-warning">
+          <Icon name="refresh" size={13} />
+          Removed. Quit Claude Desktop and open it again — it only reads that file at startup.
+        </p>
+      )}
+
+      {error && <p className="mt-3 text-[12px] text-error">{error}</p>}
     </Panel>
   )
 }

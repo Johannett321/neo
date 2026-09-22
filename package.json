@@ -1,6 +1,6 @@
 {
   "name": "neo",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "A personal command centre for running several working lives at once, kept in Neo Cloud.",
   "main": "./out/main/index.js",
   "author": "Johan Svartdal",
@@ -22,10 +22,8 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "npm run typecheck && electron-vite build && npm run build:mcp && npm run build:audiotap",
-    "build:mcp": "node scripts/build-mcp.mjs",
+    "build": "npm run typecheck && electron-vite build && npm run build:audiotap",
     "build:audiotap": "node scripts/build-audiotap.mjs",
-    "mcp:pack": "node scripts/build-mcp.mjs && node scripts/mcp-bundle.mjs",
     "dev": "node scripts/dev-branding.mjs && node scripts/build-audiotap.mjs && electron-vite dev",
     "dist": "npm run build && electron-builder",
     "package": "npm run build && electron-builder --dir",
@@ -34,17 +32,15 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "verify": "node scripts/build-mcp.mjs && esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --external:openai --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
+    "verify": "esbuild test/verify.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify.mjs --alias:electron=./test/electron-stub.mjs --alias:@shared=./src/shared && node out/verify.mjs",
     "gen:api": "node scripts/contract.mjs",
     "check:contract": "node scripts/contract.mjs --check"
   },
   "dependencies": {
-    "openai": "^7.10.0",
     "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
-    "@modelcontextprotocol/server": "^2.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/react-query": "^5.64.1",
     "@types/node": "^22.10.6",

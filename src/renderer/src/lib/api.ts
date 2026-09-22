@@ -54,11 +54,11 @@ export function useApiMutation<C extends Channel>(channel: C) {
 /**
  * Refetch when something was written that this window did not write.
  *
- * Three ways that happens: another device signed in to the same account (Neo Cloud says
- * so on its event stream), the assistant, or the Claude Desktop connector — the last
- * two call the app's own channels from inside the main process, so no mutation resolves
- * here. Main says a write landed and the cache goes, exactly as `useApiMutation` does
- * it, so the card appears while the assistant is still talking. Mounted once, at the top.
+ * Three ways that happens: another device signed in to the same account, the assistant's
+ * tools, or Claude through the remote connector — all three write in Neo Cloud, which
+ * says so on its event stream, and no mutation resolves here. Main says a write landed
+ * and the cache goes, exactly as `useApiMutation` does it, so the card appears while the
+ * assistant is still talking. Mounted once, at the top.
  */
 export function useLiveData(): void {
   const client = useQueryClient()
