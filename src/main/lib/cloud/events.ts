@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import type { RecordingEvent } from '@shared/types'
 import { announceChange } from '../changes'
 import { cloudUrl, headers } from './client'
+import { setReachable } from './reachability'
 import { loadSession } from './session'
 
 /**
@@ -32,17 +33,22 @@ export function startEvents(): void {
     let backoff = RETRY_MS
     let first = true
     while (!mine.signal.aborted && loadSession()) {
+      let connected = false
       try {
         const response = await fetch(`${cloudUrl()}/v1/events`, {
           headers: { ...headers(), Accept: 'text/event-stream' },
           signal: mine.signal
         })
+        connected = true
+        setReachable(true)
         if (!response.ok || !response.body) throw new Error(`The event stream answered ${response.status}.`)
         backoff = RETRY_MS
         if (!first) announceChange()
         first = false
         await read(response.body, mine.signal)
       } catch (error) {
+        // Not getting through at all is the network; a stream that ended is not.
+        if (!connected && !mine.signal.aborted) setReachable(false)
         if (process.env.PM_TRACE_SYNC && !mine.signal.aborted) console.error('The event stream ended:', error)
       }
       if (mine.signal.aborted) break

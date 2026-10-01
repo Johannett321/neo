@@ -397,6 +397,31 @@ export interface ApiMap {
   'account:devices': { in: void; out: AccountDevice[] }
   'account:revokeDevice': { in: { deviceId: string }; out: AccountDevice[] }
 
+  /* --------------------------------------------------------- kept on this machine */
+
+  /**
+   * Hand over a write that can wait. It is sent at once, in order behind anything
+   * already waiting; if Neo Cloud cannot be reached it is kept, sealed on disk, and
+   * sent when it can be — and the answer says which happened. See `shared/sync.ts`.
+   */
+  'sync:submit': {
+    in: { id: string; channel: import('./sync').SyncableChannel; input: unknown; tempId?: string; label: string }
+    out: import('./sync').SubmitResult
+  }
+  /** What is waiting, what was refused, and whether Neo Cloud is answering. */
+  'sync:state': { in: void; out: import('./sync').SyncState }
+  /** Send refused writes again — one, or all of them without an id. */
+  'sync:retry': { in: { id?: string }; out: import('./sync').SyncState }
+  /** Give up on refused writes — one, or all of them without an id. */
+  'sync:discard': { in: { id?: string }; out: import('./sync').SyncState }
+  /**
+   * The last-known copy of the window's data, so it can draw something while Neo
+   * Cloud cannot be reached. Sealed like the session, one per account, and gone on
+   * signing out. Null when there is none for the account signed in.
+   */
+  'cache:load': { in: void; out: { savedAt: string; state: unknown } | null }
+  'cache:save': { in: { state: unknown }; out: void }
+
   'settings:get': { in: void; out: Settings }
   'settings:save': { in: Partial<Settings>; out: Settings }
   /** Everything in the account as JSON, saved wherever the person chooses. Null if cancelled. */

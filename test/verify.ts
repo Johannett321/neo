@@ -31,6 +31,9 @@ import { resolveTemperature } from '../src/shared/formats'
 import { helperPath, parseHelperLine } from '../src/main/lib/recording/systemAudio'
 import { api, cloudUrl, fetchRaw, must } from '../src/main/lib/cloud/client'
 import { loadSession } from '../src/main/lib/cloud/session'
+import { drain, syncState } from '../src/main/lib/cloud/outbox'
+import { listSealed, readSealed } from '../src/main/lib/cloud/sealed'
+import { registerSyncHandlers } from '../src/main/ipc/sync'
 import { today as todayDate } from '../src/main/lib/dates'
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -144,10 +147,16 @@ const ok = (label: string, cond: boolean, extra = ''): void => {
  * the whole run must end with nothing in `outbound`.
  */
 const outbound: string[] = []
+/**
+ * Pulling the cable, for the part of the run about working offline: every request to
+ * Neo Cloud fails the way a dropped connection does, before it leaves the process.
+ */
+let unplugged = false
 const realFetch = globalThis.fetch
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
   if (!url.startsWith(cloudUrl())) outbound.push(url)
+  else if (unplugged) return Promise.reject(new TypeError('fetch failed'))
   return realFetch(input, init)
 }) as typeof fetch
 
@@ -173,6 +182,7 @@ async function main(): Promise<void> {
   registerWeatherHandlers()
   registerChatHandlers()
   registerClaudeHandlers()
+  registerSyncHandlers()
 
   const scratch = mkdtempSync(join(tmpdir(), 'neo-verify-files-'))
 
@@ -2543,6 +2553,91 @@ async function main(): Promise<void> {
      updateSettings.updates === 'notify' &&
      (await call('settings:save', { updates: 'nonsense' })).updates === 'automatic')
 
+  /* ------------------------------------------------------------ working offline */
+
+  /*
+   * The writes the window draws before Neo Cloud answers go through main's outbox, in
+   * order, and wait there — sealed on disk, per account — when Neo Cloud cannot be
+   * reached. A create is drawn under a temporary id, and everything after it that
+   * names that id lands on the real row once the create has gone.
+   */
+  {
+    const accountId = loadSession()!.accountId
+    const place = await call('project:save', { workspaceId: dayJob, name: 'Offline on a train' })
+    const submit = (channel: string, input: unknown, tempId?: string) =>
+      call('sync:submit', { id: randomBytes(8).toString('hex'), channel, input, tempId, label: `${channel} in verify` })
+
+    const sent = await submit('task:save', { projectId: place.id, title: 'Sent at once' }, 'tmp-verify-sent')
+    ok('online, a write handed to the outbox is sent at once and answered with the real row',
+       sent.state === 'sent' && typeof sent.output?.id === 'string' && !sent.output.id.startsWith('tmp-'),
+       JSON.stringify(sent))
+    ok('and the temporary id it was drawn under now means that row',
+       syncState().ids['tmp-verify-sent'] === sent.output.id && syncState().pending.length === 0)
+    await call('task:save', { id: 'tmp-verify-sent', title: 'Renamed through its temporary id' })
+    ok('a later write naming the temporary id lands on the real row',
+       (await call('project:get', { id: place.id })).tasks.find((t: any) => t.id === sent.output.id)?.title ===
+         'Renamed through its temporary id')
+    ok('a temporary id with no real one behind it never reaches Neo Cloud',
+       await threw(() => call('task:save', { id: 'tmp-never-made', title: 'x' }), 'still being saved'))
+    ok('only the writes that can be drawn ahead may wait',
+       await refused(() => submit('settings:wipe', undefined)))
+
+    unplugged = true
+    const queued = [
+      await submit('task:save', { projectId: place.id, title: 'Written on the train' }, 'tmp-verify-task'),
+      await submit('task:save', { id: 'tmp-verify-task', title: 'Written on the train, then reworded' }),
+      await submit('task:setStatus', { id: 'tmp-verify-task', status: 'done' }),
+      await submit('person:save', { workspaceId: dayJob, name: 'Met on the train' }, 'tmp-verify-person'),
+      await submit('membership:save', { personId: 'tmp-verify-person', projectId: place.id, role: 'Fellow passenger' }, 'tmp-verify-member'),
+      // Refused when it is finally sent: there is no such project.
+      await submit('decision:save', { projectId: '00000000-0000-4000-8000-000000000000', title: 'Into the void' }, 'tmp-verify-void'),
+      await submit('decision:save', { id: 'tmp-verify-void', title: 'Edited, but it never existed' })
+    ]
+    ok('offline, every write is kept rather than failed',
+       queued.every((q: any) => q.state === 'queued'), JSON.stringify(queued))
+    const waiting = syncState()
+    ok('in the order it was made, and Neo Cloud is known to be out of reach',
+       waiting.online === false && waiting.pending.length === 7 &&
+       waiting.pending[0]!.tempId === 'tmp-verify-task' && waiting.pending[2]!.channel === 'task:setStatus')
+    const sealed = readSealed<any>(`neo-outbox-${accountId}`)
+    ok('the line is on disk, sealed and named for the account, so a restart does not lose it',
+       sealed?.accountId === accountId && sealed.pending.length === 7 &&
+       sealed.pending.map((p: any) => p.channel).join() === waiting.pending.map((p) => p.channel).join())
+
+    await call('cache:save', { state: { queries: [{ queryKey: ['workspace:list', null], state: { data: ['kept'] } }] } })
+    const kept = await call('cache:load')
+    ok('the window\'s last-known copy is kept for the account and read back whole',
+       (kept?.state as any)?.queries?.[0]?.state?.data?.[0] === 'kept' &&
+       listSealed('neo-cache-').includes(`neo-cache-${accountId}`))
+
+    unplugged = false
+    await drain()
+    // The retry timer may already be sending it; wait for whichever got there first.
+    await until(async () => (syncState().pending.length === 0 ? true : null), 10_000)
+    const after = syncState()
+    ok('back online, the line is sent and emptied', after.online === true && after.pending.length === 0,
+       JSON.stringify(after.pending.map((p) => p.label)))
+    const detail = await call('project:get', { id: place.id })
+    const trained = detail.tasks.find((t: any) => t.id === after.ids['tmp-verify-task'])
+    ok('a create and the edits made to it offline arrive as one row, in order',
+       trained?.title === 'Written on the train, then reworded' && trained?.status === 'done', JSON.stringify(trained))
+    ok('a membership naming a person made offline lands on the real person',
+       detail.cast.some((m: any) => m.personId === after.ids['tmp-verify-person'] && m.role === 'Fellow passenger'))
+    ok('a write Neo Cloud refuses is kept, with its reason, rather than holding up the rest',
+       after.failed.length === 2 && after.failed[0]!.tempId === 'tmp-verify-void' && Boolean(after.failed[0]!.error))
+    ok('and one that depends on it says so instead of being sent',
+       /depends on/.test(after.failed[1]!.error ?? ''), after.failed[1]?.error)
+    ok('no temporary id was ever sent to Neo Cloud',
+       !JSON.stringify(detail).includes('tmp-verify'))
+
+    const retried = await call('sync:retry', { id: after.failed[0]!.id })
+    await until(async () => (syncState().pending.length === 0 ? true : null), 10_000)
+    ok('retrying a refusal sends it again, and it is refused again',
+       syncState().failed.length === 2 && retried.pending.length <= 1)
+    const discarded = await call('sync:discard', {})
+    ok('discarding lets the refused writes go', discarded.failed.length === 0 && discarded.pending.length === 0)
+  }
+
   /* --------------------------------------------------------------- the last of it */
 
   // Destructive, so it runs last.
@@ -2560,7 +2655,11 @@ async function main(): Promise<void> {
   ok('but leaves the account itself, still signed in',
      (await call('account:status')).signedIn === true)
 
+  await call('cache:save', { state: { queries: [] } })
   const out = await call('account:signOut')
+  ok('signing out throws away this Mac\'s copy of the work and anything waiting to be sent',
+     listSealed('neo-cache-').length === 0 && listSealed('neo-outbox-').length === 0 &&
+     (await call('cache:load')) === null)
   ok('signing out at the end leaves this machine signed out',
      out.signedIn === false && loadSession() === null && (await call('account:status')).signedIn === false)
   ok('and settings are the defaults again, with nothing of the account left in them',
