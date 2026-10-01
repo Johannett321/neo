@@ -1715,6 +1715,56 @@ async function main(): Promise<void> {
      withoutRecords.links.length === detail.links.length &&
      withoutRecords.journal.length === detail.journal.length)
 
+  /* -------------------------------------------------------------------- open questions */
+
+  const openAsked = await call('openQuestion:save', {
+    projectId: checkout.id, question: 'Which market goes first?', context: 'Sweden is ready; Denmark is cheaper.',
+    dueDate: addDays(todayDate(), -1)
+  })
+  ok('an open question is asked on a project, and says when it is late',
+     openAsked.question === 'Which market goes first?' && openAsked.daysUntilDue === -1, JSON.stringify(openAsked))
+  let blankQuestion = ''
+  try {
+    await call('openQuestion:save', { projectId: checkout.id, question: '   ' })
+  } catch (error) {
+    blankQuestion = (error as Error).message
+  }
+  ok('a question with nothing in it is refused, in words', blankQuestion.includes('needs the question'), blankQuestion)
+  const reworded = await call('openQuestion:save', { id: openAsked.id, question: 'Which market launches first?' })
+  ok('and can be reworded without losing what is known', reworded.question === 'Which market launches first?' &&
+     reworded.context === 'Sweden is ready; Denmark is cheaper.')
+  const waiting = await call('project:get', { id: checkout.id, touch: false })
+  ok('the project carries its open questions', waiting.openQuestions.some((q: any) => q.id === openAsked.id))
+  const openSettled = await call('openQuestion:decide', { id: openAsked.id, title: 'Sweden first', rationale: 'It is ready.' })
+  const afterDeciding = await call('project:get', { id: checkout.id, touch: false })
+  ok('deciding a question logs the decision, with the question kept on it',
+     afterDeciding.decisions.some((d: any) => d.id === openSettled.id && d.title === 'Sweden first' &&
+       d.question === 'Which market launches first?'))
+  ok('and the question is no longer open', !afterDeciding.openQuestions.some((q: any) => q.id === openAsked.id))
+  await call('decision:delete', { id: openSettled.id })
+  const dropped = await call('openQuestion:save', { projectId: checkout.id, question: 'Does anyone still care?' })
+  await call('openQuestion:delete', { id: dropped.id })
+  ok('a question can be dropped without deciding it',
+     !(await call('project:get', { id: checkout.id, touch: false })).openQuestions.some((q: any) => q.id === dropped.id))
+
+  /* -------------------------------------------------------------------- comments on a card */
+
+  const talked = await call('task:save', { projectId: checkout.id, title: 'Talked about' })
+  const first = await call('taskComment:save', { taskId: talked.id, body: 'Waiting on **legal**.' })
+  await call('taskComment:save', { taskId: talked.id, body: 'Legal said yes.' })
+  const thread = await call('taskComment:list', { taskId: talked.id })
+  ok('a card keeps its comments, oldest first, each the writer\'s own',
+     thread.map((c: any) => c.body).join(' | ') === 'Waiting on **legal**. | Legal said yes.' &&
+       thread.every((c: any) => c.isMine && c.authorName),
+     JSON.stringify(thread))
+  ok('the board says how many comments a card has',
+     (await call('task:list', { projectId: checkout.id })).find((t: any) => t.id === talked.id)?.commentCount === 2)
+  const rewritten = await call('taskComment:save', { id: first.id, body: 'Waiting on legal, still.' })
+  ok('a comment can be rewritten, and says so', rewritten.body === 'Waiting on legal, still.' && rewritten.editedAt !== null)
+  await call('taskComment:delete', { id: first.id })
+  ok('and taken back', (await call('taskComment:list', { taskId: talked.id })).length === 1)
+  await call('task:delete', { id: talked.id })
+
   /* -------------------------------------------------------------------- settings */
 
   const settings = await call('settings:save', { theme: 'dark', activeWorkspaceId: consultancy })

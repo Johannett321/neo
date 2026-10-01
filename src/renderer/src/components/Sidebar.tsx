@@ -241,6 +241,10 @@ function ProjectNav({ projectId }: { projectId: string }): React.JSX.Element {
   const workspace = useWorkspace()
   const { data } = useApi('project:get', { id: projectId })
 
+  // Questions still waiting on an answer: said beside the decisions count, because the
+  // Decisions page is where they wait and the count is how you know to go and look.
+  const openQuestions = data?.openQuestions.length ?? 0
+
   const counts: Record<string, number | undefined> = {
     kanban: data?.tasks.filter((t) => t.status === 'open').length,
     meetings: data?.meetings.length,
@@ -302,6 +306,15 @@ function ProjectNav({ projectId }: { projectId: string }): React.JSX.Element {
             >
               <Icon name={item.icon} size={15} className="opacity-70" />
               <span className="flex-1">{item.label}</span>
+              {item.to === 'decisions' && openQuestions > 0 && (
+                <span
+                  className="flex items-center gap-0.5 text-[11px] tabular-nums text-base-content/55"
+                  title={openQuestions === 1 ? '1 open question' : `${openQuestions} open questions`}
+                >
+                  <Icon name="question" size={11} />
+                  {openQuestions}
+                </span>
+              )}
               {counts[item.to] !== undefined && counts[item.to]! > 0 && (
                 <span className="text-[11px] tabular-nums text-base-content/35">{counts[item.to]}</span>
               )}

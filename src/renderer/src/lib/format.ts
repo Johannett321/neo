@@ -158,6 +158,23 @@ export function relativeFromIso(iso: string | null): string {
   return 'over a year ago'
 }
 
+/**
+ * How long ago something was said, at the grain a conversation needs: minutes and
+ * hours on the day, then days, then the date. `relativeFromIso` above counts whole
+ * days, which is right for "last opened" and wrong for a reply written ten minutes ago.
+ */
+export function timeAgo(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso)
+  const minutes = Math.floor((now.getTime() - at.getTime()) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const days = daysBetween(todayStr(at), todayStr(now))
+  if (days <= 0) return `${Math.floor(minutes / 60)} h ago`
+  if (days === 1) return 'yesterday'
+  if (days < 7) return `${days} days ago`
+  return formatDate(todayStr(at))
+}
+
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return '?'

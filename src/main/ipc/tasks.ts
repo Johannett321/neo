@@ -26,4 +26,17 @@ export function registerTaskHandlers(): void {
   handle('task:reorder', async ({ ids }) => {
     await must(api.PUT('/v1/tasks/order', { body: { ids } }))
   })
+
+  handle('taskComment:list', ({ taskId }) =>
+    must(api.GET('/v1/tasks/{id}/comments', { params: { path: { id: taskId } } })))
+
+  handle('taskComment:save', ({ id, taskId, body }) => {
+    if (id) return must(api.PATCH('/v1/task-comments/{id}', { params: { path: { id } }, body: { body } }))
+    if (!taskId) throw new Error('A comment belongs to a card.')
+    return must(api.POST('/v1/tasks/{id}/comments', { params: { path: { id: taskId } }, body: { body } }))
+  })
+
+  handle('taskComment:delete', async ({ id }) => {
+    await must(api.DELETE('/v1/task-comments/{id}', { params: { path: { id } } }))
+  })
 }

@@ -95,6 +95,15 @@ function Card({
               {task.assigneeIsMe ? 'Me' : task.assigneeName.split(' ')[0]}
             </span>
           )}
+          {task.commentCount > 0 && (
+            <span
+              className="flex items-center gap-0.5 tabular-nums"
+              title={task.commentCount === 1 ? '1 comment' : `${task.commentCount} comments`}
+            >
+              <Icon name="chat" size={10} />
+              {task.commentCount}
+            </span>
+          )}
           {task.dueDate && (
             <span className={`ml-auto tabular-nums ${overdue ? 'font-medium text-error' : ''}`}>
               {dueLabel(task.daysUntilDue)}
