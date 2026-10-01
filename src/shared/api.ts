@@ -5,7 +5,7 @@ import type {
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
-  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, WeatherNow,
+  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayAcross, TodayView, TranscriptCue, WeatherNow,
   WeatherPlace, Workspace, WorkspaceLink
 } from './types'
 
@@ -326,6 +326,12 @@ export interface ApiMap {
   'journal:delete': { in: { id: string }; out: void }
 
   'dashboard:today': { in: Scope; out: TodayView }
+  /**
+   * The one channel that is not scoped, deliberately: what is late or due in every
+   * workspace at once, each row naming its own. It takes no input, so there is no
+   * workspace to forget to pass.
+   */
+  'dashboard:everywhere': { in: void; out: TodayAcross }
   'dashboard:activity': { in: Scope & { limit?: number }; out: (Activity & { projectName: string; workspaceColor: string })[] }
 
   'search:query': { in: Scope & { q: string }; out: SearchHit[] }

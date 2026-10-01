@@ -1554,6 +1554,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/today/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description What is overdue, due today and due in the next seven days in every one of the
+         *     account's live workspaces, with the meetings still owing to-dos — the one read in
+         *     the contract that crosses workspaces, on purpose. Each workspace's own Today
+         *     stays fenced; this is the answer to "is anything burning somewhere I am not
+         *     looking", so every row carries its workspace and the summary says how much is
+         *     late or due in each. Paused and archived projects are left out exactly as Today
+         *     leaves them out.
+         */
+        get: operations["getTodayAcrossWorkspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/activity": {
         parameters: {
             query?: never;
@@ -2897,6 +2922,37 @@ export interface components {
              *     own project's board without opening it first.
              */
             columns: components["schemas"]["BoardColumn"][];
+        };
+        /** @description One workspace's line in the summary across workspaces. */
+        WorkspaceDay: {
+            /** Format: uuid */
+            workspaceId: string;
+            name: string;
+            color: string;
+            /** @description A `neo-media://file/…` address for the icon, or null. */
+            icon: string | null;
+            overdue: number;
+            dueToday: number;
+            /** @description Due in the next seven days, after today. */
+            soon: number;
+            /** @description To-dos meetings left owing, in active projects. */
+            openTodos: number;
+        };
+        /** @description A meeting still owing to-dos, with the workspace it is in. */
+        MeetingOwingIn: components["schemas"]["MeetingOwing"] & {
+            /** Format: uuid */
+            workspaceId: string;
+            workspaceName: string;
+            workspaceColor: string;
+        };
+        TodayAcross: {
+            today: string;
+            /** @description Every live workspace, in the switcher's order, including the quiet ones. */
+            workspaces: components["schemas"]["WorkspaceDay"][];
+            overdue: components["schemas"]["TaskView"][];
+            dueToday: components["schemas"]["TaskView"][];
+            soon: components["schemas"]["TaskView"][];
+            owedFromMeetings: components["schemas"]["MeetingOwingIn"][];
         };
         ActivityItem: components["schemas"]["Activity"] & {
             projectName: string;
@@ -5781,6 +5837,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TodayView"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    getTodayAcrossWorkspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Today, everywhere. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodayAcross"];
                 };
             };
             default: components["responses"]["ErrorResponse"];

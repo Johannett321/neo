@@ -138,6 +138,8 @@ export function buildAppMenu(): void {
       label: 'Go',
       submenu: [
         goItem('Today', '/', '1'),
+        // Today again, across every workspace — hence Today's number with Shift.
+        goItem('All Workspaces', '/all', 'Shift+1'),
         goItem('Projects', '/projects', '2'),
         goItem('People', '/people', '3'),
         { type: 'separator' },

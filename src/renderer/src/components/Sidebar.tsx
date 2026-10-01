@@ -165,9 +165,25 @@ const linkClass = ({ isActive }: { isActive: boolean }): string =>
 
 function WorkspaceNav(): React.JSX.Element {
   const workspace = useWorkspace()
+  const { workspaces } = useWorkspaces()
   const prefetch = usePrefetch()
   const todayView = useApi('dashboard:today', { workspaceId: workspace.id })
   const dueCount = (todayView.data?.overdue.length ?? 0) + (todayView.data?.dueToday.length ?? 0)
+  /*
+   * With one workspace the overview is Today again under another name, so it is not
+   * offered — the same rule the projects page keeps for folders: no chrome that only
+   * makes sense once you have more than one of something.
+   */
+  const several = workspaces.length > 1
+  const everywhere = useApi('dashboard:everywhere', undefined, { enabled: several })
+  /*
+   * What is late or due in the *other* workspaces — the part you cannot already see.
+   * Grey rather than red: Today's own count beneath it is the alarm for the workspace
+   * you are in, and two red numbers a line apart would say the same thing twice.
+   */
+  const elsewhere = (everywhere.data?.workspaces ?? [])
+    .filter((w) => w.workspaceId !== workspace.id)
+    .reduce((total, w) => total + w.overdue + w.dueToday, 0)
 
   /** Fetch what a link leads to while the pointer is still on its way to it. */
   const warm = (to: string): void => {
@@ -179,6 +195,17 @@ function WorkspaceNav(): React.JSX.Element {
 
   return (
     <motion.nav className="px-3" variants={listVariants} initial="hidden" animate="shown">
+      {several && (
+        <motion.div variants={itemVariants} className="mb-2">
+          <NavLink to="/all" className={linkClass} title="Today in every workspace (⇧⌘1)">
+            <Icon name="everywhere" size={15} className="opacity-70" />
+            <span className="flex-1">All workspaces</span>
+            {elsewhere > 0 && (
+              <span className="text-[11px] tabular-nums text-base-content/40">{elsewhere}</span>
+            )}
+          </NavLink>
+        </motion.div>
+      )}
       {NAV.map((item) => (
         <motion.div key={item.to} variants={itemVariants}>
           <NavLink to={item.to} end={item.end} className={linkClass} onPointerEnter={() => warm(item.to)}>

@@ -6,6 +6,7 @@ export type IconName = keyof typeof PATHS
  */
 const PATHS = {
   today: 'M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  everywhere: 'M12 4l8.5 4.5L12 13 3.5 8.5 12 4zM3.5 12.5L12 17l8.5-4.5M3.5 16.5L12 21l8.5-4.5',
   projects: 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z',
   people: 'M16 19v-1a4 4 0 00-4-4H7a4 4 0 00-4 4v1M9.5 7.5a3 3 0 11-6 0 3 3 0 016 0zM21 19v-1a4 4 0 00-3-3.87M16.5 4.6a3 3 0 010 5.8',
   timeline: 'M8 3v4M16 3v4M3.5 9.5h17M4 7a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7z',

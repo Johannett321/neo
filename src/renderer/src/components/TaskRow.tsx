@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useContextMenu, type MenuItem } from '@/lib/contextMenu'
 import type { BoardColumn, TaskView } from '@shared/types'
 import { call, useApiMutation, useRefresh } from '@/lib/api'
 import { dueLabel, formatDate, KIND_LABEL, projectColor } from '@/lib/format'
 import { EASE } from '@/lib/motion'
-import { useReveal } from '@/lib/reveal'
+import { revealState } from '@/lib/reveal'
+import { useGoIn } from '@/lib/workspace'
 import { useToast } from '@/lib/toast'
 import { Avatar, Dot } from './primitives'
 import { Icon, type IconName } from './Icon'
@@ -34,26 +34,38 @@ export function TaskRow({
   task,
   board = [],
   showProject = false,
+  showWorkspace = false,
   onEdit
 }: {
   task: TaskView
   /** Its own project's board columns, in order; empty when the screen does not know them. */
   board?: BoardColumn[]
   showProject?: boolean
+  /**
+   * Only on the overview across workspaces, the one screen where rows from different
+   * workspaces sit together: the rule down the left and the dot become the workspace's,
+   * and its name goes in front of the project's.
+   */
+  showWorkspace?: boolean
   onEdit?: (task: TaskView) => void
 }): React.JSX.Element {
   const setStatus = useApiMutation('task:setStatus')
   const remove = useApiMutation('task:delete')
   const refresh = useRefresh()
   const toast = useToast()
-  const reveal = useReveal()
+  // Every way out of a row goes through this, so a row on the overview lands in its
+  // own workspace rather than drawing its project inside whichever one was active.
+  const goIn = useGoIn()
+  const go = (path: string, reveal?: string): void =>
+    goIn(task.workspaceId, path, reveal ? { state: revealState(reveal) } : undefined)
   const openMenu = useContextMenu()
   /** Told to go, and showing it, while the write waits out `SETTLE_MS`. */
   const [leaving, setLeaving] = useState(false)
   const done = task.status === 'done' || leaving
   // Its project's colour, not its workspace's: every row on a workspace-fenced
-  // screen shares the workspace colour, so that one could never tell them apart.
-  const colour = projectColor(task)
+  // screen shares the workspace colour, so that one could never tell them apart. On
+  // the overview it is the other way round, and the workspace is the identity.
+  const colour = showWorkspace ? task.workspaceColor : projectColor(task)
   const overdue = task.daysUntilDue !== null && task.daysUntilDue < 0 && !done
   const dueToday = task.daysUntilDue === 0 && !done
   const column = board.find((c) => c.id === task.columnId) ?? null
@@ -184,7 +196,7 @@ export function TaskRow({
           {
             label: 'Show on the board',
             icon: 'board',
-            onSelect: () => reveal(`/projects/${task.projectId}/kanban`, task.id)
+            onSelect: () => go(`/projects/${task.projectId}/kanban`, task.id)
           },
           ...(task.sourceMeetingId
             ? [
@@ -192,10 +204,7 @@ export function TaskRow({
                   label: 'Show in the meeting',
                   icon: 'people' as const,
                   onSelect: () =>
-                    reveal(
-                      `/projects/${task.projectId}/meetings/${task.sourceMeetingId}`,
-                      task.id
-                    )
+                    go(`/projects/${task.projectId}/meetings/${task.sourceMeetingId}`, task.id)
                 }
               ]
             : []),
@@ -212,7 +221,7 @@ export function TaskRow({
         ])
       }
       className="row-hover group flex items-center gap-3 px-3 py-2.5"
-      style={showProject ? { boxShadow: `inset 2px 0 0 ${colour}` } : undefined}
+      style={showProject || showWorkspace ? { boxShadow: `inset 2px 0 0 ${colour}` } : undefined}
     >
       <button
         className="flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border border-base-content/25 text-transparent transition hover:border-primary hover:text-primary/50 data-[done=true]:border-primary data-[done=true]:bg-primary data-[done=true]:text-primary-content"
@@ -233,11 +242,20 @@ export function TaskRow({
           {task.title}
         </span>
         <span className="flex min-w-0 items-center gap-2 text-[11px] text-base-content/45">
-          {showProject && (
+          {showWorkspace ? (
             <span className="flex min-w-0 items-center gap-1.5">
               <Dot color={colour} size={5} />
+              <span className="shrink-0 text-base-content/60">{task.workspaceName}</span>
+              <span className="text-base-content/25">·</span>
               <span className="truncate">{task.projectName}</span>
             </span>
+          ) : (
+            showProject && (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Dot color={colour} size={5} />
+                <span className="truncate">{task.projectName}</span>
+              </span>
+            )
           )}
           {stage && (
             <span className="flex shrink-0 items-center gap-1">
@@ -276,14 +294,14 @@ export function TaskRow({
         </span>
       )}
 
-      {showProject && (
-        <Link
-          to={`/projects/${task.projectId}`}
+      {(showProject || showWorkspace) && (
+        <button
+          onClick={() => go(`/projects/${task.projectId}`)}
           className="btn btn-ghost btn-xs btn-circle opacity-0 transition group-hover:opacity-100"
           aria-label="Open project"
         >
           <Icon name="chevronRight" size={13} />
-        </Link>
+        </button>
       )}
     </div>
   )
@@ -299,12 +317,14 @@ export function TaskList({
   tasks,
   columns = [],
   showProject = false,
+  showWorkspace = false,
   onEdit
 }: {
   tasks: TaskView[]
   /** Board columns for the projects these rows belong to, in board order. */
   columns?: BoardColumn[]
   showProject?: boolean
+  showWorkspace?: boolean
   onEdit?: (task: TaskView) => void
 }): React.JSX.Element {
   const still = useReducedMotion()
@@ -325,6 +345,7 @@ export function TaskList({
               task={task}
               board={columns.filter((c) => c.projectId === task.projectId)}
               showProject={showProject}
+              showWorkspace={showWorkspace}
               onEdit={onEdit}
             />
           </motion.div>

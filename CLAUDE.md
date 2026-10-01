@@ -197,6 +197,18 @@ install's database and files into an empty Neo Cloud account.
 - **Workspace isolation is a hard boundary.** Every scoped channel takes an explicit
   `workspaceId`; there is no implicit "all". The active workspace is ambient state in
   `lib/workspace.tsx`, persisted in settings. No screen may mix two workspaces.
+  **There is exactly one exception, and it is deliberate: `/all`** (`routes/Everywhere.tsx`,
+  `dashboard:everywhere`, the server's `GET /v1/today/all`). The boundary's cost is that
+  a card going late in the workspace you are not in is silent, and that is the deadline
+  you miss — so one screen answers "is anything late or due anywhere" and nothing more.
+  It holds to three rules: it is a read of Today's lists only (no attention, stats or
+  front block, and each workspace's Today stays pure); every row names its workspace
+  (the colour rule and the workspace's name before the project's — `showWorkspace` on
+  `TaskRow`); and **every way out of a row goes through `useGoIn()`**, which switches to
+  the row's workspace before navigating, so nothing ever draws one workspace's project
+  inside another. `TaskDialog` asks for people in the task's own workspace for the same
+  reason. Which workspaces "every" means is the server's `AccountWorkspaces`, in one
+  place. Do not add a second screen like it; add to this one or fence the new thing.
 - **Attention is derived, never stored.** `work/Attention.java` in Neo Cloud computes it from
   overdue work, deadline proximity and staleness, and returns the single most pressing
   fact in plain words — never a level, a badge or a colour. Thresholds live in one place.
@@ -353,6 +365,20 @@ install's database and files into an empty Neo Cloud account.
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,
   and if a screen needs more than about five, the screen is doing too much.
+  **The app's settings and a workspace's are a layer over the whole window**
+  (`components/SettingsOverlay.tsx`), Shopify's arrangement: they cover the sidebar and
+  the header, carry a ✕ at the top right, close on Escape, and closing returns to the
+  exact screen they were opened from. They stay routes (`/settings`, `/workspace`,
+  `?pane=`), so every link and the menu work unchanged; what makes it a layer is that
+  the shell draws its page against `usePageLocation()` — the last page — inside a route
+  whose location is that page, so every `useMatch` beneath it (sidebar, header, screen)
+  answers for the page and nothing behind the layer moves or remounts. Closing goes
+  *back* through history to that page when it can, rather than pushing it again, so Back
+  afterwards does not reopen settings. The layer's bar is the window's title bar: a drag
+  region, indented past the traffic lights, and the sheet is opaque under Liquid Glass
+  too (`.settings-sheet`) because the app must not read through a settings pane.
+  A project's settings are not in the layer — inside a project the sidebar is the
+  project, and its settings are one of its places.
 - **The app updates itself, and a big release's changelog ships with it.** Only a
   release with a big new feature in it gets a `changelog/<version>.md`, written in the
   same commit as the version bump; a release of small features and fixes ships without
