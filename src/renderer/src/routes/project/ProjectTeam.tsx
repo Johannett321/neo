@@ -214,7 +214,12 @@ export function ProjectTeam(): React.JSX.Element {
               body: 'They come off the chart, and stay in the workspace and on any other project they are part of.',
               confirmLabel: 'Remove'
             },
-            onSelect: () => removeMember.mutate({ id: member.id })
+            onSelect: () => {
+              // Off the project is off the chart too: every card of theirs leaves the
+              // same way a card taken off the chart does.
+              vanish(displayRef.current.nodes.filter((n) => n.personId === member.personId).map((n) => n.id))
+              removeMember.mutate({ id: member.id })
+            }
           }
         ] as MenuItem[]))
   ]
@@ -965,14 +970,47 @@ export function ProjectTeam(): React.JSX.Element {
   }
 
   /** Off the chart, every one of them, as one step. A box's contents stay, in its place. */
+  /*
+   * Leaving the chart is shown, not just done: a copy of each card or box is left where
+   * it stood and shrinks away under a puff, while the rest of the board closes the gap.
+   * The copy is the element itself, cloned before the write takes it out, so it looks
+   * exactly like what was there — whatever kind of thing it was. Called *before* the
+   * commit, by every way off the chart: the menu, ⌫, cut, a box removed, and somebody
+   * taken off the project altogether. (Dropping a card on the list puffs where it was
+   * let go instead; that one is in your hand, not on the board.)
+   */
+  const ghostLayer = useRef<HTMLDivElement>(null)
+  const vanish = (ids: Iterable<string>): void => {
+    const layer = ghostLayer.current
+    const list = [...ids].slice(0, 12)
+    list.forEach((id, i) => {
+      const r = base.rects.get(id)
+      if (r) burst(r.x + r.w / 2, r.y + r.h / 2, 'muted')
+      if (reduced || !layer) return
+      const el = containerRef.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)
+      if (!el) return
+      const ghost = el.cloneNode(true) as HTMLElement
+      ghost.removeAttribute('data-node')
+      ghost.removeAttribute('data-node-id')
+      ghost.style.pointerEvents = 'none'
+      layer.appendChild(ghost)
+      const body = (ghost.firstElementChild as HTMLElement | null) ?? ghost
+      body.animate(
+        [
+          { opacity: 1, transform: 'scale(1)', filter: 'blur(0px)' },
+          { opacity: 0.85, transform: 'scale(1.04)', filter: 'blur(0px)', offset: 0.18 },
+          { opacity: 0, transform: 'scale(0.72)', filter: 'blur(2px)' }
+        ],
+        { duration: 300, delay: i * 35, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
+      ).onfinish = () => ghost.remove()
+    })
+  }
+
   const takeOff = (ids: Iterable<string>): void => {
     const list = [...ids]
     if (!list.length) return
+    vanish(list)
     commit(removeAll(displayRef.current, list, base))
-    list.slice(0, 6).forEach((id, i) => {
-      const r = base.rects.get(id)
-      if (r) setTimeout(() => burst(r.x + r.w / 2, r.y + r.h / 2, 'muted'), reduced ? 0 : i * 40)
-    })
     select([])
     setEditingRole(null)
   }
@@ -1452,6 +1490,7 @@ export function ProjectTeam(): React.JSX.Element {
         <motion.div
           key={id}
           data-node
+          data-node-id={id}
           className={`absolute left-0 top-0 ${lifted ? 'cursor-grabbing' : 'cursor-grab'}`}
           style={{ x: m.x, y: m.y, width: m.w, height: m.h, zIndex: rank(id) }}
           onPointerDown={(e) => onNodePointerDown(e, id)}
@@ -1579,6 +1618,8 @@ export function ProjectTeam(): React.JSX.Element {
       <motion.div className="absolute left-0 top-0" style={world}>
         {layerEdges(false)}
         {layerNodes(false)}
+        {/* Whatever just left the chart, fading where it stood. See `vanish`. */}
+        <div ref={ghostLayer} className="pointer-events-none absolute left-0 top-0" style={{ zIndex: 9000 }} />
         {bursts.map((b) => (
           <Burst key={b.id} x={b.x} y={b.y} tone={b.tone} />
         ))}
