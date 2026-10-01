@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { SIGNED_OUT } from '@shared/account'
-import { call, useApi, useApiMutation } from '@/lib/api'
+import { call, useApi, useApiMutation, forgetTheAccountsData } from '@/lib/api'
 import { formatBytes, relativeFromIso } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { ConfirmButton, Field, Panel } from '@/components/primitives'
@@ -36,7 +36,7 @@ export function AccountPane(): React.JSX.Element {
     setLeaving(true)
     const signedOut = await call('account:signOut').catch(() => SIGNED_OUT)
     // What is cached is this account's; the next person to sign in must not see it.
-    client.clear()
+    forgetTheAccountsData(client)
     client.setQueryData(['account:status', null], signedOut)
   }
 

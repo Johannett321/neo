@@ -14,7 +14,7 @@ import { CreateDialog } from '@/components/CreateDialog'
 import { RecordingBar } from '@/components/meeting/RecordingBar'
 import { SettingsOverlay, usePageLocation } from '@/components/SettingsOverlay'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
-import { call, useApi, useLiveData } from '@/lib/api'
+import { call, useApi, useLiveData, forgetTheAccountsData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
 import { ContextMenuProvider, useContextMenu } from '@/lib/contextMenu'
 import { ToastProvider } from '@/lib/toast'
@@ -417,7 +417,7 @@ function AccountGate(): React.JSX.Element {
   useEffect(
     () =>
       window.api.onAccount(() => {
-        client.clear()
+        forgetTheAccountsData(client)
         void status.refetch()
       }),
     [client, status]
@@ -440,7 +440,7 @@ function AccountGate(): React.JSX.Element {
 
   const signOut = async (): Promise<void> => {
     const signedOut = await call('account:signOut').catch(() => SIGNED_OUT)
-    client.clear()
+    forgetTheAccountsData(client)
     client.setQueryData(['account:status', null], signedOut)
   }
 

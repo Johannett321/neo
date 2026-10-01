@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react'
-import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import type { Channel, Input, Output } from '@shared/api'
 import { tempId as newTempId, type SyncableChannel } from '@shared/sync'
 import { contextFor, Draft, optimistFor, type Optimist } from './optimistic'
@@ -38,6 +38,20 @@ export function useApi<C extends Channel>(channel: C, ...args: Args<C, [options?
  */
 const everythingButTheAccount = { predicate: (query: { queryKey: readonly unknown[] }) =>
   query.queryKey[0] !== 'account:status' }
+
+/**
+ * Forget every answer that belonged to whoever was signed in — on signing in, signing
+ * out, or being signed out elsewhere — and keep the one that says who that is.
+ *
+ * Never `client.clear()` for this. The gate at the top of the app is subscribed to
+ * `account:status`; clearing removes that query out from under it, the new status is
+ * then written to a fresh query nobody is watching, and the window stays on the sign-in
+ * screen until the app is restarted. Removing everything *else* leaves the gate's query
+ * in place, so writing the new status to it redraws the gate at once.
+ */
+export function forgetTheAccountsData(client: QueryClient): void {
+  client.removeQueries(everythingButTheAccount)
+}
 
 /** What a mutation hands its own callbacks: the input, and the write it became if it was drawn ahead. */
 interface Prepared<C extends Channel> {

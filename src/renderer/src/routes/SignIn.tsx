@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AccountStatus } from '@shared/account'
-import { call } from '@/lib/api'
+import { call, forgetTheAccountsData } from '@/lib/api'
 import { useTheme } from '@/lib/theme'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
@@ -36,7 +36,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (status: AccountStatus) => 
   const done = (status: AccountStatus): void => {
     if (!status.signedIn) return
     // Whatever was cached belonged to nobody, or to somebody else. Start clean.
-    client.clear()
+    forgetTheAccountsData(client)
     onSignedIn(status)
   }
 
