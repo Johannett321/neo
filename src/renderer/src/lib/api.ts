@@ -52,6 +52,17 @@ export function useApiMutation<C extends Channel>(channel: C) {
 }
 
 /**
+ * What a mutation does on the way back, for a write made with `call()` instead. That is
+ * the shape a write takes when it has to outlive the component that made it — a row on
+ * Today has gone by the time its *Undo* is pressed, and a hook's mutation belongs to the
+ * hook.
+ */
+export function useRefresh(): () => void {
+  const client = useQueryClient()
+  return useCallback(() => void client.invalidateQueries(everythingButTheAccount), [client])
+}
+
+/**
  * Refetch when something was written that this window did not write.
  *
  * Three ways that happens: another device signed in to the same account, the assistant's

@@ -538,6 +538,48 @@ async function main(): Promise<void> {
   ok('stats count only this workspace', today.stats.activeProjects === 3 && today.stats.peopleTracked === 6,
      `${today.stats.activeProjects} projects, ${today.stats.peopleTracked} people`)
 
+  /*
+   * A row on Today can be moved a stage along its own board without opening the
+   * project, so Today carries the boards of the projects it shows — and only those,
+   * each in board order.
+   */
+  {
+    const shownProjects = new Set(everyTaskShown.map((t: any) => t.projectId))
+    const boardOf = (id: string): any[] => today.columns.filter((c: any) => c.projectId === id)
+    ok('today carries the board of every project it shows a card from',
+       [...shownProjects].every((id) => boardOf(id).length > 0) &&
+       today.columns.every((c: any) => shownProjects.has(c.projectId)),
+       `${today.columns.length} columns for ${shownProjects.size} projects`)
+    ok('each in the order the board has them',
+       [...shownProjects].every((id) => boardOf(id).every((c: any, i: number, all: any[]) =>
+         i === 0 || all[i - 1].sortOrder <= c.sortOrder)))
+
+    // Moved a stage from Today, finished, and put back with Undo: it goes back to the
+    // stage it was at, not to the first column, which is what un-ticking alone does.
+    const row = today.dueToday[0]
+    const stages = boardOf(row.projectId)
+    const review = stages.find((c: any) => c.name === 'In review')
+    await call('task:setColumn', { id: row.id, columnId: review.id })
+    const moved = await call('dashboard:today', { workspaceId: dayJob })
+    ok('a card moved a stage from Today stays on Today, at that stage',
+       moved.dueToday.some((t: any) => t.id === row.id && t.columnId === review.id))
+    await call('task:setStatus', { id: row.id, status: 'done' })
+    ok('and leaves it when it is done',
+       !(await call('dashboard:today', { workspaceId: dayJob })).dueToday.some((t: any) => t.id === row.id))
+    await call('task:setColumn', { id: row.id, columnId: review.id })
+    const undone = (await call('dashboard:today', { workspaceId: dayJob })).dueToday.find((t: any) => t.id === row.id)
+    ok('undo puts it back open, in the column it left',
+       undone?.status === 'open' && undone?.columnId === review.id && undone?.completedAt === null,
+       JSON.stringify(undone && { status: undone.status, column: undone.columnId }))
+    await call('task:setStatus', { id: row.id, status: 'cancelled' })
+    ok('a cancelled card leaves Today too',
+       !(await call('dashboard:today', { workspaceId: dayJob })).dueToday.some((t: any) => t.id === row.id))
+    await call('task:setColumn', { id: row.id, columnId: row.columnId })
+    ok('and comes back where it was',
+       (await call('dashboard:today', { workspaceId: dayJob })).dueToday
+         .some((t: any) => t.id === row.id && t.columnId === row.columnId && t.status === 'open'))
+  }
+
   const checkout = projects.find((p: any) => p.name === 'Checkout rewrite')
   const payments = projects.find((p: any) => p.name === 'Payments migration')
   const detail = await call('project:get', { id: checkout.id })

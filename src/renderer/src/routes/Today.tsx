@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { TaskView } from '@shared/types'
 import { useApi } from '@/lib/api'
+import { useContextMenu } from '@/lib/contextMenu'
 import { useWorkspace } from '@/lib/workspace'
 import { plural, projectColor } from '@/lib/format'
 import { Dot, EmptyState, Panel, Section } from '@/components/primitives'
 import { Icon } from '@/components/Icon'
 import { TaskDialog } from '@/components/TaskDialog'
-import { TaskList } from '@/components/TaskRow'
+import { Folding, TaskList } from '@/components/TaskRow'
 import { Pending } from '@/components/PageTransition'
 import { TodayHero } from '@/components/today/TodayHero'
 import { NewProjectModal } from './Projects'
@@ -93,23 +94,25 @@ export function TodayPage(): React.JSX.Element {
 
           <div className={`grid gap-x-10 ${hasRail ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
             <div>
-              {data.overdue.length > 0 && (
+              {/* A row can be finished, cancelled or moved a stage from here — the
+                  checkbox, or the right-click menu. See `TaskRow`. */}
+              <Folding open={data.overdue.length > 0}>
                 <Section title="Overdue" count={data.overdue.length} tone="danger">
-                  <TaskList tasks={data.overdue} showProject onEdit={setEditing} />
+                  <TaskList tasks={data.overdue} columns={data.columns} showProject onEdit={setEditing} />
                 </Section>
-              )}
+              </Folding>
 
-              {data.dueToday.length > 0 && (
+              <Folding open={data.dueToday.length > 0}>
                 <Section title="Due today" count={data.dueToday.length}>
-                  <TaskList tasks={data.dueToday} showProject onEdit={setEditing} />
+                  <TaskList tasks={data.dueToday} columns={data.columns} showProject onEdit={setEditing} />
                 </Section>
-              )}
+              </Folding>
 
-              {soon.length > 0 && (
+              <Folding open={soon.length > 0}>
                 <Section title="Next seven days" count={soon.length}>
-                  <TaskList tasks={soon} showProject onEdit={setEditing} />
+                  <TaskList tasks={soon} columns={data.columns} showProject onEdit={setEditing} />
                 </Section>
-              )}
+              </Folding>
             </div>
 
             <div>
@@ -154,6 +157,8 @@ export function TodayPage(): React.JSX.Element {
                         title={meeting.title || 'Meeting'}
                         detail={`${meeting.projectName} · ${plural(meeting.openTodos, 'open to-do', 'open to-dos')}`}
                         badge={meeting.openTodos}
+                        reveal={meeting.meetingId}
+                        menuLabel="Show in the meeting"
                       />
                     ))}
                   </Panel>
@@ -181,17 +186,38 @@ function RailRow({
   color,
   title,
   detail,
-  badge
+  badge,
+  reveal,
+  menuLabel
 }: {
   to: string
   color: string
   title: string
   detail: string
   badge?: number
+  /**
+   * What the destination should light on arrival — for a meeting, its own id, which
+   * the meeting page reads as "the items still owed". See `lib/reveal.ts`.
+   */
+  reveal?: string
+  /**
+   * A right-click that goes where a click does, for the rows that come from somewhere
+   * a right-click is where people look for "take me to it" — the way a task row does.
+   */
+  menuLabel?: string
 }): React.JSX.Element {
+  const navigate = useNavigate()
+  const openMenu = useContextMenu()
+  const state = reveal ? { reveal } : undefined
   return (
     <Link
       to={to}
+      state={state}
+      onContextMenu={
+        menuLabel
+          ? (e) => openMenu(e, [{ label: menuLabel, icon: 'people', onSelect: () => navigate(to, { state }) }])
+          : undefined
+      }
       className="row-hover hairline group block border-b px-3 py-2.5 last:border-b-0"
     >
       <span className="flex items-center gap-2">

@@ -401,6 +401,17 @@ one is for. Each row carries a rule in **its project's** colour rather
 than its workspace's — every row on this screen belongs to the same workspace, so that
 colour was the same on all of them and told you nothing.
 
+The work can be moved from here, not only read. Ticking a row finishes it: the box fills,
+the row holds for a beat and folds away, and a toast says *Done* with an **Undo** that
+puts the card back in the column it left. Right-click a row to move it to another column
+of **its own project's** board — the stages differ per project, so the menu lists that
+board's — to cancel it, or to be taken to where it lives: *Show on the board* opens the
+board at that card, and *Show in the meeting* opens the meeting a to-do-turned-card came
+from; either way the card is scrolled to and lights up once. A row that has gone to the
+stage it is at says so quietly — *In review* — and says nothing while it is still in the
+first column, because every card starts there. A meeting in the rail does the same: it
+opens with the items still owed lit.
+
 It opens with a block that says whose day it is and which working life you are in. A
 photograph across the top if you upload one, the greeting with your name, a line about
 what you do here, the time and the date, the weather, and the links you open every
@@ -888,7 +899,8 @@ month calendar, because the shortcut is nearly always the answer.
 
 ### Right-click
 Almost everything has a context menu: a project card (open, board, settings, pin, archive,
-delete), a task row or board card (mark done, edit, move to a column, delete), a board
+delete), a task row or board card (mark done, move to a column, cancel, edit, show it on the
+board or in its meeting, delete), a board
 column (rename, move, mark as the done column, delete), a person, a note, a decision, a
 meeting, a link. Destructive items say what will happen and ask before doing it, and that
 question is asked in one place rather than reimplemented at each call site.

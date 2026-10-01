@@ -70,19 +70,19 @@ export function ProjectToday(): React.JSX.Element {
         <div className="min-w-0">
           {overdue.length > 0 && (
             <Section title="Overdue" count={overdue.length} tone="danger">
-              <TaskList tasks={overdue} onEdit={setEditing} />
+              <TaskList tasks={overdue} columns={columns} onEdit={setEditing} />
             </Section>
           )}
 
           {dueToday.length > 0 && (
             <Section title="Due today" count={dueToday.length}>
-              <TaskList tasks={dueToday} onEdit={setEditing} />
+              <TaskList tasks={dueToday} columns={columns} onEdit={setEditing} />
             </Section>
           )}
 
           {soon.length > 0 && (
             <Section title="Next seven days" count={soon.length}>
-              <TaskList tasks={soon} onEdit={setEditing} />
+              <TaskList tasks={soon} columns={columns} onEdit={setEditing} />
             </Section>
           )}
 

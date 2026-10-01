@@ -10,6 +10,15 @@ interface Toast {
   icon?: IconName
   /** Where clicking the toast takes you. */
   to?: string
+  /**
+   * One thing to do about what just happened — in practice *Undo*. A write that makes
+   * something leave the screen is only safe to make in one click if it can be taken
+   * back in one, and a confirmation in front of every tick would cost more than the
+   * rare mistake it saves.
+   */
+  action?: { label: string; run: () => void }
+  /** Green for something finished; neutral for a change that is not a completion. */
+  tone?: 'success' | 'neutral'
 }
 
 const ToastContext = createContext<{ push: (toast: Omit<Toast, 'id'>) => void } | null>(null)
@@ -62,7 +71,11 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
               className="pointer-events-auto"
             >
               <div className="glass-raised hairline flex items-start gap-3 rounded-box border bg-base-100 px-3.5 py-3 shadow-xl shadow-black/10">
-                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-success/12 text-success">
+                <span
+                  className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
+                    toast.tone === 'neutral' ? 'bg-base-content/8 text-base-content/55' : 'bg-success/12 text-success'
+                  }`}
+                >
                   <Icon name={toast.icon ?? 'check'} size={13} strokeWidth={2.2} />
                 </span>
 
@@ -80,6 +93,17 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
                       }}
                     >
                       Take me there
+                    </button>
+                  )}
+                  {toast.action && (
+                    <button
+                      className="mt-1 text-[11px] font-medium text-primary hover:underline"
+                      onClick={() => {
+                        toast.action?.run()
+                        dismiss(toast.id)
+                      }}
+                    >
+                      {toast.action.label}
                     </button>
                   )}
                 </div>
