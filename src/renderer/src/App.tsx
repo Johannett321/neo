@@ -7,6 +7,7 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { Icon } from '@/components/Icon'
 import { PageTransition } from '@/components/PageTransition'
 import { Sidebar } from '@/components/Sidebar'
+import { SyncStatus } from '@/components/SyncStatus'
 import { UpdateNotice } from '@/components/Updates'
 import { WhatsNew } from '@/components/WhatsNew'
 import { CreateDialog } from '@/components/CreateDialog'
@@ -219,7 +220,9 @@ function Frame({ onSearch, onNew }: { onSearch: () => void; onNew: () => void })
               in the header that is still somewhere you look. It draws nothing at all
               unless there is a version waiting — see components/Updates.tsx.
             */}
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
+              {/* Nothing at all while Neo Cloud is answering and nothing is waiting. */}
+              <SyncStatus />
               <UpdateNotice />
             </div>
 
@@ -289,6 +292,8 @@ function Frame({ onSearch, onNew }: { onSearch: () => void; onNew: () => void })
           in the header would be invisible precisely where it is needed most.
         */}
         <RecordingBar />
+        {/* The writing screens have no header, and are exactly where you keep typing offline. */}
+        {writing && <SyncStatus floating />}
       </div>
 
       <AssistantPanel />
@@ -390,9 +395,10 @@ function Gate(): React.JSX.Element {
  *
  * Every workspace lives in Neo Cloud, so nothing below this can be asked for until
  * there is an account to ask as — the workspace provider included, which is why it is
- * mounted here rather than above. Signed out is the sign-in screen; signed in but
- * unreachable is a screen that says so rather than a sign-in screen that would ask for
- * a password nothing is wrong with.
+ * mounted here rather than above. Signed out is the sign-in screen. Signed in but
+ * unreachable is the app as it was last seen, when this Mac has a copy of it, and
+ * otherwise a screen that says so — never a sign-in screen that would ask for a
+ * password nothing is wrong with.
  *
  * The answer is kept in the query cache under `account:status` and replaced whole on
  * signing in and out, and the cache is emptied both times: what was in it belonged to
@@ -413,8 +419,17 @@ function AccountGate(): React.JSX.Element {
     [client, status]
   )
 
+  /*
+   * Offline is a state, not a mode: with a copy of the work from the last time Neo
+   * Cloud answered (`lib/persist.ts`), the app opens on it and carries on, and the
+   * header says what is waiting to be sent. Only with nothing at all to show — a first
+   * launch on this Mac, or straight after signing in — is it the screen that says so.
+   */
+  const cached = client.getQueryData(['workspace:list', null]) !== undefined
+  const offlineWithNothing = Boolean(known?.offline) && !cached
+
   // The sign-in and offline screens have no data to wait for, so the splash can go.
-  const bare = Boolean(known && (!known.signedIn || known.offline)) || status.isError
+  const bare = Boolean(known && (!known.signedIn || offlineWithNothing)) || status.isError
   useEffect(() => {
     if (bare) void call('window:ready')
   }, [bare])
@@ -432,7 +447,7 @@ function AccountGate(): React.JSX.Element {
   if (!known.signedIn) {
     return <SignIn onSignedIn={(next) => client.setQueryData(['account:status', null], next)} />
   }
-  if (known.offline) {
+  if (offlineWithNothing) {
     return <Offline username={known.username} onRetry={() => void status.refetch()} onSignOut={() => void signOut()} />
   }
   return (

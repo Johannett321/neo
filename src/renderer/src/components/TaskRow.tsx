@@ -10,6 +10,7 @@ import { useGoIn } from '@/lib/workspace'
 import { useToast } from '@/lib/toast'
 import { Avatar, Dot } from './primitives'
 import { Icon, type IconName } from './Icon'
+import { stableKey } from '@/lib/sync'
 
 const KIND_ICON = { task: 'check', delegated: 'arrowRight' } as const
 
@@ -50,6 +51,7 @@ export function TaskRow({
   onEdit?: (task: TaskView) => void
 }): React.JSX.Element {
   const setStatus = useApiMutation('task:setStatus')
+  const setColumn = useApiMutation('task:setColumn')
   const remove = useApiMutation('task:delete')
   const refresh = useRefresh()
   const toast = useToast()
@@ -76,8 +78,9 @@ export function TaskRow({
   const stage = column && board[0] && column.id !== board[0].id && !column.isDone ? column.name : null
 
   /*
-   * Every write here is a `call`, not the hook's mutation, because the toast's *Undo*
-   * runs after the row has gone and has to work with nobody left to hold a hook.
+   * The writes go through the row's mutations, so they are drawn at once and wait in
+   * line when Neo Cloud is away. *Undo* is a `call`, because it runs after the row has
+   * gone and has to work with nobody left to hold a hook.
    */
   const putBack = (): void => {
     const was = task.columnId
@@ -113,11 +116,11 @@ export function TaskRow({
       setStatus.mutate({ id: task.id, status: 'open' })
       return
     }
-    leave(() => call('task:setStatus', { id: task.id, status: 'done' }), 'Done', 'check', 'success')
+    leave(() => setStatus.mutateAsync({ id: task.id, status: 'done' }), 'Done', 'check', 'success')
   }
 
   const moveTo = (target: BoardColumn): void => {
-    const write = (): Promise<unknown> => call('task:setColumn', { id: task.id, columnId: target.id })
+    const write = (): Promise<unknown> => setColumn.mutateAsync({ id: task.id, columnId: target.id })
     // The done column is finishing it by another name, and leaves the same way.
     if (target.isDone) {
       leave(write, `Moved to ${target.name}`, 'check', 'success')
@@ -172,7 +175,7 @@ export function TaskRow({
                   disabled: leaving,
                   onSelect: () =>
                     leave(
-                      () => call('task:setStatus', { id: task.id, status: 'cancelled' }),
+                      () => setStatus.mutateAsync({ id: task.id, status: 'cancelled' }),
                       'Cancelled',
                       'close',
                       'neutral'
@@ -345,7 +348,7 @@ export function TaskList({
       <AnimatePresence initial={false}>
         {tasks.map((task) => (
           <motion.div
-            key={task.id}
+            key={stableKey(task.id)}
             className="hairline overflow-hidden border-b last:border-b-0"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1, transition: fold }}

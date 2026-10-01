@@ -1,6 +1,7 @@
 import createClient from 'openapi-fetch'
 import { BrowserWindow } from 'electron'
 import type { paths } from './schema'
+import { setReachable } from './reachability'
 import { clearSession, loadSession } from './session'
 
 /**
@@ -62,8 +63,10 @@ async function send(request: Request): Promise<Response> {
   try {
     response = await fetch(request)
   } catch {
+    setReachable(false)
     throw new CloudError(0, 'Neo Cloud cannot be reached. Check the connection and try again.')
   }
+  setReachable(true)
   if (response.status === 401 && loadSession() && !request.url.includes('/v1/auth/')) {
     signedOutElsewhere()
   }

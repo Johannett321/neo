@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
 import { Avatar, ConfirmButton, EmptyState, Field, Modal, Section } from '@/components/primitives'
 import { formatRoles, parseRoles, RoleBadges, RoleInput } from '@/components/RoleInput'
+import { stableKey } from '@/lib/sync'
 
 /**
  * The cast sits above the fold on every project, because "who is who here again"
@@ -48,7 +49,7 @@ export function CastPanel({
         <div className="hairline overflow-hidden rounded-box border bg-base-100">
           {cast.map((member) => (
             <div
-              key={member.id}
+              key={stableKey(member.id)}
               className={`row-hover hairline group flex items-start gap-3 border-b px-3 py-2.5 last:border-b-0 ${
                 member.isMe ? 'bg-primary/[0.03]' : ''
               }`}
@@ -217,20 +218,25 @@ function CastMemberModal({
   const chosenName = member?.name ?? picked?.name ?? creating?.name ?? ''
   const canSave = Boolean(member || picked || creating?.name.trim())
 
-  const submit = async (): Promise<void> => {
+  /*
+   * Both writes are drawn at once and sent in order, so the dialog closes on Add. A new
+   * person is drawn under a temporary id, and their place on the project names that id;
+   * main swaps in the real one when the person comes back (`shared/sync.ts`).
+   */
+  const submit = (): void => {
     if (!canSave) return
     let personId = member?.personId ?? picked?.id ?? ''
     if (!personId && creating) {
-      const person = await savePerson.mutateAsync({
+      const person = savePerson.mutate({
         workspaceId: workspace.id,
         name: creating.name.trim(),
         org: creating.org,
         avatarPath: creating.avatarPath
       })
-      personId = person.id
+      personId = person?.id ?? ''
     }
     if (!personId) return
-    await saveMembership.mutateAsync({
+    saveMembership.mutate({
       id: member?.id,
       personId,
       projectId,
@@ -278,7 +284,7 @@ function CastMemberModal({
             <div className="hairline mt-2 overflow-hidden rounded-field border">
               {matches.map((person) => (
                 <button
-                  key={person.id}
+                  key={stableKey(person.id)}
                   type="button"
                   className="row-hover hairline flex w-full items-center gap-2.5 border-b px-3 py-2 text-left last:border-b-0"
                   onClick={() => setPicked(person)}

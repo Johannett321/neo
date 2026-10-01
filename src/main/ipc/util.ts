@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
+import { resolveIds } from '../lib/cloud/ids'
 
 /**
  * Every registered handler, kept so the process can call its own channels.
@@ -14,7 +15,20 @@ export function handle<C extends Channel>(
   channel: C,
   fn: (input: Input<C>) => Promise<Output<C>> | Output<C>
 ): void {
-  const run = async (input: unknown): Promise<Output<C>> => fn(input as Input<C>)
+  /*
+   * A temporary id (`shared/sync.ts`) is the window's name for something it has drawn
+   * before Neo Cloud gave it a real one. Swapped here, on the way into every handler,
+   * so a write that names it lands on the right row — and refused here if it still has
+   * no real id, because a temporary one must never reach the server. The outbox and
+   * the cache carry them on purpose and are left alone: they are what does the swapping.
+   */
+  const carriesTemp = channel.startsWith('sync:') || channel.startsWith('cache:')
+  const run = async (input: unknown): Promise<Output<C>> => {
+    if (carriesTemp) return fn(input as Input<C>)
+    const { value, unresolved } = resolveIds(input)
+    if (unresolved.length > 0) throw new Error('That is still being saved. Try again in a moment.')
+    return fn(value as Input<C>)
+  }
   registry.set(channel, run as (input: unknown) => Promise<unknown>)
   ipcMain.handle(channel, async (_event, input) => run(input))
 }

@@ -5,6 +5,7 @@ import { differs, LINK_KIND_LABEL } from '@/lib/format'
 import { Icon, type IconName } from '@/components/Icon'
 import { ConfirmDialog, Field, Modal, Section } from '@/components/primitives'
 import { useContextMenu } from '@/lib/contextMenu'
+import { stableKey } from '@/lib/sync'
 
 const KIND_ICON: Record<LinkKind, IconName> = {
   repo: 'folder',
@@ -56,7 +57,7 @@ export function LinksPanel({ projectId, links }: { projectId: string; links: Lin
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {links.map((link) => (
-            <div key={link.id} className="group relative">
+            <div key={stableKey(link.id)} className="group relative">
               <button
                 className="hairline row-hover flex items-center gap-2 rounded-field border bg-base-100 py-1.5 pl-2.5 pr-7 text-[12px]"
                 onClick={() => openExternal(link.url)}
@@ -120,9 +121,9 @@ function AddLinkModal({
   const [url, setUrl] = useState('')
   const [kind, setKind] = useState<LinkKind>('other')
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!label.trim() || !url.trim()) return
-    await save.mutateAsync({ projectId, label: label.trim(), url: url.trim(), kind })
+    save.mutate({ projectId, label: label.trim(), url: url.trim(), kind })
     setLabel('')
     setUrl('')
     setKind('other')

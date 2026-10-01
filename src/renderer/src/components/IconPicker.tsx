@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useOnline } from '@/lib/sync'
 import { call } from '@/lib/api'
 import { Icon } from './Icon'
 import { Mark } from './Mark'
@@ -30,6 +31,8 @@ export function IconPicker({
   hint?: string
 }): React.JSX.Element {
   const [error, setError] = useState('')
+  // The picture is stored in Neo Cloud, so choosing one waits until it can be reached.
+  const online = useOnline()
 
   const choose = async (): Promise<void> => {
     try {
@@ -56,7 +59,13 @@ export function IconPicker({
         />
         <div className={`flex flex-col gap-1.5 ${column ? 'items-center' : ''}`}>
           <div className="flex gap-1.5">
-            <button type="button" className="btn btn-sm gap-1.5" onClick={() => void choose()}>
+            <button
+              type="button"
+              className="btn btn-sm gap-1.5"
+              disabled={!online}
+              title={online ? undefined : 'Adding a picture needs Neo Cloud'}
+              onClick={() => void choose()}
+            >
               <Icon name="folder" size={13} />
               {icon ? `Replace ${noun}` : `Upload ${noun}`}
             </button>

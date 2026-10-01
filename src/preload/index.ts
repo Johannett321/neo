@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Channel, Input, Output } from '@shared/api'
 import type { AiEvent, OpenTarget, RecordingEvent } from '@shared/types'
 import type { UpdateStatus } from '@shared/update'
+import type { SyncState } from '@shared/sync'
 
 /**
  * The only surface the renderer gets. The account's token, the filesystem and the shell
@@ -41,6 +42,17 @@ const api = {
     ipcRenderer.on('data', listener)
     return () => {
       ipcRenderer.off('data', listener)
+    }
+  },
+  /**
+   * Whether Neo Cloud is answering, and what is waiting to be sent to it or was
+   * refused. Sent whenever either changes. Returns an unsubscribe function.
+   */
+  onSync(callback: (state: SyncState) => void): () => void {
+    const listener = (_event: unknown, payload: SyncState): void => callback(payload)
+    ipcRenderer.on('sync', listener)
+    return () => {
+      ipcRenderer.off('sync', listener)
     }
   },
   /**

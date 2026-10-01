@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { pageVariants, stillVariants } from '@/lib/motion'
+import { useOnline } from '@/lib/sync'
 
 /**
  * The page area is the largest surface in the window, and it was the only one that
@@ -76,6 +77,7 @@ export function PanelTransition({ id, children }: { id: string; children: React.
  * wait has become real.
  */
 export function Pending({ after = 400 }: { after?: number }): React.JSX.Element {
+  const online = useOnline()
   const [show, setShow] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -83,6 +85,23 @@ export function Pending({ after = 400 }: { after?: number }): React.JSX.Element 
     timer.current = setTimeout(() => setShow(true), after)
     return () => clearTimeout(timer.current)
   }, [after])
+
+  /*
+   * Offline, waiting is not going to help: this screen was never opened on this Mac,
+   * so there is no copy of it to draw. Said plainly, and only that — the header
+   * already says Neo Cloud cannot be reached.
+   */
+  if (!online) {
+    return (
+      <div className="mx-auto max-w-sm py-20 text-center">
+        <div className="text-[13px] font-medium text-base-content/70">Not on this Mac yet</div>
+        <p className="mt-1 text-[12px] leading-relaxed text-base-content/45">
+          This has not been opened here before, so there is no copy of it to show. It will appear as soon as Neo
+          Cloud can be reached.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="py-20 text-center text-sm text-base-content/40">

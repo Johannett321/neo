@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react'
+import { getSync } from './sync'
 import { useNavigate } from 'react-router-dom'
 import type { Note } from '@shared/types'
 import { call } from './api'
@@ -60,6 +61,8 @@ export function useNoteLinks(
 export function useImageDrop(projectId: string): (file: File) => Promise<{ url: string; alt: string } | null> {
   return useCallback(
     async (file: File) => {
+      // The picture is stored in Neo Cloud; offline there is nowhere to put it yet.
+      if (!getSync().online) return null
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''))

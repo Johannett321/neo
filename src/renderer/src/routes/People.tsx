@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
 import { RoleBadges } from '@/components/RoleInput'
 import { Pending } from '@/components/PageTransition'
+import { stableKey } from '@/lib/sync'
 import {
   Avatar, ConfirmButton, EmptyState, Field, Modal, PageHeader, Panel, Section
 } from '@/components/primitives'
@@ -62,7 +63,7 @@ export function PeoplePage(): React.JSX.Element {
         <div className="grid gap-2.5 sm:grid-cols-2">
           {(people.data ?? []).map((person) => (
             <Link
-              key={person.id}
+              key={stableKey(person.id)}
               to={`/people/${person.id}`}
               className="hairline row-hover flex items-start gap-3 rounded-box border bg-base-100 px-4 py-3"
               onContextMenu={(e) =>
@@ -295,9 +296,9 @@ function PersonModal({
 
   const set = (key: keyof typeof form, value: string): void => setForm((f) => ({ ...f, [key]: value }))
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!form.name.trim()) return
-    await save.mutateAsync({
+    save.mutate({
       id: person?.id,
       workspaceId: workspace.id,
       ...form,

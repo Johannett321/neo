@@ -2,6 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
+import { persistCache, restoreCache } from './lib/persist'
+import { startSync } from './lib/sync'
 import './styles.css'
 
 /**
@@ -33,10 +35,21 @@ const client = new QueryClient({
   }
 })
 
-createRoot(document.getElementById('root') as HTMLElement).render(
-  <StrictMode>
-    <QueryClientProvider client={client}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>
-)
+/*
+ * The last-known copy of the work goes in before anything is drawn, so a launch with no
+ * network opens on the screens as they were rather than on an apology — and a launch
+ * with one paints its first frame from it while the real answers are fetched. Writes
+ * still waiting from the last session are laid over it by `startSync`.
+ */
+void (async () => {
+  await restoreCache(client)
+  startSync(client)
+  persistCache(client)
+  createRoot(document.getElementById('root') as HTMLElement).render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>
+    </StrictMode>
+  )
+})()

@@ -7,13 +7,15 @@ lives at once (a day job, your own company, a client). `README.md` explains what
 feature is for and why it exists — read it before designing anything user-facing, because
 most of the product decisions here were arrived at deliberately and are worth honouring.
 
-**Everything lives in Neo Cloud and nothing on the device.** The app is a client of the
+**Everything lives in Neo Cloud; the device keeps only a copy and a queue.** The app is a client of the
 server in `../server` (Java / Spring Boot, "Neo Cloud"): every workspace, note,
 meeting and recording is stored there, the business logic that used to run in this main
 process runs there — the assistant included — and the two talk REST over an OpenAPI
 contract. Signing in is not optional — the window is the sign-in screen until there is an
-account. What this machine keeps is the device token (sealed with `safeStorage`) and
-nothing else. Using Neo Cloud is free and includes everything, with a daily allowance on
+account. What this machine keeps is the device token, a last-known copy of the
+window's data and the writes still waiting to be sent — all three sealed with
+`safeStorage`, per account, and gone on signing out (see *Cache and queued writes*
+below). Using Neo Cloud is free and includes everything, with a daily allowance on
 the two things that cost money to run (5 assistant messages, 60 minutes of transcription);
 `/v1/account` reports the plan, its features and today's usage so the app can say "3 of 5
 left today", and a later paid plan can lift the limits without the app learning a new
@@ -98,7 +100,8 @@ inside main — start-up and the notification runner read settings and workspace
 the same channels the renderer uses rather than a second set of requests beside them.
 
 **A write this window did not make still reaches the screen.** A click resolves a
-mutation, and `useApiMutation` invalidates the cache on the way back. Anything else — a
+mutation, and `useApiMutation` invalidates the cache on the way back (the common writes
+are drawn before that — see *Cache and queued writes*). Anything else — a
 write on another device, the assistant's tools, Claude through the remote connector —
 happens in Neo Cloud, which says `changed` on the event stream that `lib/cloud/events.ts`
 holds open. `lib/changes.ts` coalesces the announcements and sends one `data` message, and
@@ -148,9 +151,10 @@ for how a request runs there — row level security per account, SQL ported verb
 the TypeScript this app used to run, other devices told after every write.
 
 **The sign-in gate is the first thing the window draws.** `AccountGate` in `App.tsx` asks
-`account:status`; signed out it is `routes/SignIn.tsx`, signed in but unreachable it is
-the `Offline` screen (the account is fine; asking for a password again would be a lie about
-what went wrong), and only then the workspace provider and the rest of the app. The query
+`account:status`; signed out it is `routes/SignIn.tsx`; signed in but unreachable it is
+the app drawn from this Mac's copy when there is one, and the `Offline` screen only when
+there is none (the account is fine; asking for a password again would be a lie about what
+went wrong); and only then the workspace provider and the rest of the app. The query
 cache is emptied on signing in and out, because what was in it belonged to nobody or to
 somebody else. `account:status` is left out of the invalidate-everything that follows a
 mutation: who is signed in does not change because a task did.
@@ -167,12 +171,29 @@ PKCE-bound code (`/v1/auth/handoff`) and only the code travels. A 401 from
 any request means this device was signed out elsewhere: the session is forgotten and the
 window hears `account` and goes back to the sign-in screen.
 
-**What the machine keeps is the token.** `lib/cloud/session.ts`, sealed with
-`safeStorage` in the app's user-data folder. No database, no cache of the work on disk,
-no Markdown mirror — the mirror was a copy of the work on this machine, which is exactly
-what there is no longer. Pictures fetched for the window are held in memory
-(`lib/recording/media.ts`) and forgotten on sign-out. The one file the app writes is the
-JSON export, and only where the person tells it to.
+**What the machine keeps: the token, a copy, and a line.** Three sealed files in the
+app's user-data folder, each written through `lib/cloud/sealed.ts` (`safeStorage`, or a
+`plain`-marked owner-only file where there is no keychain):
+
+- `neo-cloud-session` — the device token and the username (`lib/cloud/session.ts`).
+- `neo-cache-<accountId>` — the renderer's TanStack Query cache, dehydrated
+  (`lib/cloud/cache.ts`; the renderer half is `lib/persist.ts`). The same answers the
+  channels gave, replaced whole a moment after the cache settles, never sent anywhere.
+  Who is signed in, conversations, transcripts, search results and the updater's state
+  are left out. It is hydrated before the first render, so online it is only a first
+  frame and every query refetches at once; offline it is what there is to read.
+- `neo-outbox-<accountId>` — writes waiting for Neo Cloud, in order, with the temporary
+  ids they were drawn under and the real ids those have since been given
+  (`lib/cloud/outbox.ts`).
+
+**All three go on signing out, on a 401 (signed out elsewhere), and the cache and outbox
+of any other account go when one signs in** (`forgetLocal()` in `ipc/account.ts`) — a
+second account must never be shown, or send, the first one's work. Signing out with
+writes still waiting asks first, by count (`AccountPane`). There is still no database
+and no Markdown mirror: Neo Cloud is the source of truth and the copy is a cache of its
+answers, not a second store anybody edits. Pictures fetched for the window are held in
+memory (`lib/recording/media.ts`) and forgotten on sign-out. The one other file the app
+writes is the JSON export, and only where the person tells it to.
 
 **Stored files are addressed, never inlined.** An icon, banner, avatar or picture in a
 note is a `neo-media://file/<name>` address (`neo-media://image/<name>` in a note's
@@ -182,10 +203,59 @@ one. Uploads go the other way through main: `icon:pick` reads the chosen file an
 to `POST /v1/files`, and the row refers to the name the server gave it. Nothing is copied
 anywhere on this machine.
 
-**Offline is a state, not a mode.** There is nothing to read without Neo Cloud, so the
-app says so rather than pretending. The exception is audio: a chunk of a recording that
-cannot be sent is kept in memory, in order, and retried until it goes
-(`ipc/recordings.ts`) — the renderer is told the audio is being held rather than lost.
+**Cache and queued writes.** Offline is still a state, not a mode — there is no
+switch, no second store and no sync engine — but it is no longer a dead end. The decision
+(which replaced "there is nothing to read without Neo Cloud") is: *the window keeps a copy
+of what it last saw, and the common writes are drawn at once and kept in line until Neo
+Cloud takes them.*
+
+- **Drawn before the answer.** `renderer/lib/optimistic.ts` has one entry per channel in
+  `SYNCABLE` (`shared/sync.ts`: tasks — save, status, column, delete — people and
+  memberships, decisions, log entries, links, notes). `useApiMutation` finds the entry by
+  channel, so call sites do nothing special: the entry patches the cached answers the
+  screens draw from (`project:get`, `task:list`, `dashboard:today`, `person:list`, …)
+  through a `Draft` that records what it replaced, and returns what the channel would
+  have returned. `mutate()` returns that guess synchronously, so a dialog closes on Save
+  and a new person and their place on the project are one click. Entries must be
+  idempotent — insert-if-absent, set rather than toggle — because they are reapplied.
+- **One line, in order.** The write then goes to main as `sync:submit`, and the outbox
+  sends it behind anything already waiting: a create and the edit made to it a moment
+  later can never pass each other, online or not. *Sent* → a create's temporary id is
+  swapped for the real one throughout the cache (`reconcile`) and everything is
+  invalidated as it always was. *Unheard* (no connection, or 502/503/504) → it stays in
+  line on disk, the caller is answered with the guess, and the line is retried with
+  backoff and the moment anything gets through (`lib/cloud/reachability.ts`, fed by every
+  request and by the event stream). *Refused* → if a click is still waiting on it, the
+  `Draft` is restored and a toast says what was not saved and why; if it was made
+  offline, it moves to `failed`, the header lists it, and a sticky toast offers Retry and
+  Discard (`sync:retry`, `sync:discard`). A refusal never holds up what is behind it.
+- **Temporary ids never reach Neo Cloud.** Something created before the server has seen
+  it is `tmp-<uuid>`; later writes name it freely. `lib/cloud/ids.ts` holds the pairings
+  (persisted with the outbox), `handle()` in `ipc/util.ts` swaps them on the way into
+  every handler and refuses one with no real id yet, and the outbox fails a queued write
+  that depends on a create that was refused ("It depends on “…”, which was not saved").
+  React keys use `stableKey(id)` (`renderer/lib/sync.ts`) so a row keeps its identity
+  when its id changes — no flicker, no replayed entrance.
+- **Waiting writes survive a refetch.** A refetch while writes are still in line answers
+  without them, so `startSync` lays every waiting write back over each fresh answer as it
+  lands (and over the whole cache for writes left waiting by the last session). On
+  reconnect the full refetch waits for the line to drain; main announces a change when it
+  has.
+- **Saying so.** `components/SyncStatus.tsx` in the header (floating bottom-left on the
+  writing screens) draws nothing while Neo Cloud answers and nothing waits; otherwise
+  *Saving N changes…*, *Offline · N waiting*, or *N not saved*, and opens to the list.
+  `Pending` says *Not on this Mac yet* offline instead of loading forever. What cannot
+  work offline is disabled with a quiet line saying why: the assistant (it runs in Neo
+  Cloud), starting a recording, and anything that uploads a picture.
+- **Not queued, deliberately:** uploads (the bytes are not kept), the assistant, recording
+  control, account business, and the less common writes (projects, folders, columns,
+  meetings, settings) — those still fail offline as they always did. Audio keeps its own
+  queue: a chunk that cannot be sent is held in memory, in order, and retried until it goes
+  (`ipc/recordings.ts`).
+- **Known limits:** a create whose response is lost after Neo Cloud stored it is sent
+  again on retry and can arrive twice — there is no idempotency key on the API yet.
+  Offline writes are applied last-writer-wins on arrival; there is no merge with what
+  another device changed meanwhile.
 
 **Deliberately not here any more:** the operation log, the hybrid logical clock, the sync
 engine and its encryption, `~/.neo`, the Markdown mirror, the local recording pipeline.
@@ -324,7 +394,9 @@ install's database and files into an empty Neo Cloud account.
   `Fields`, so nothing a client sends can reach a column by accident.
 - **Mutations invalidate the whole query cache** on purpose: the dataset is small and
   almost every write moves a derived number somewhere else. The one query left out is
-  `account:status`.
+  `account:status`. The common writes are drawn before that (see *Cache and queued
+  writes*): add a channel to `SYNCABLE` and an entry to `renderer/lib/optimistic.ts`
+  rather than writing an optimistic update at a call site.
 - **One right-click system.** `lib/contextMenu.tsx` — call sites describe items;
   positioning, edge-flipping, dismissal and the confirmation step for destructive actions
   are handled centrally. Do not reimplement a confirm at a call site. An item carrying

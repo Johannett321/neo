@@ -10,6 +10,7 @@ import { CreateDialog } from '@/components/CreateDialog'
 import { MoveTaskModal } from '@/components/MoveTaskModal'
 import { TaskDialog } from '@/components/TaskDialog'
 import { useProject } from './ProjectLayout'
+import { stableKey } from '@/lib/sync'
 
 const KIND_ICON = { task: 'check', delegated: 'arrowRight' } as const
 
@@ -493,7 +494,7 @@ function BoardColumnView({
       <div className="min-h-[5rem] space-y-1.5">
         {tasks.map((task) => (
           <Card
-            key={task.id}
+            key={stableKey(task.id)}
             task={task}
             columns={allColumns}
             revealed={revealed === task.id}

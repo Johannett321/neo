@@ -26,6 +26,8 @@ import { registerTaskHandlers } from './ipc/tasks'
 import { registerUpdateHandlers } from './ipc/updates'
 import { registerWeatherHandlers } from './ipc/weather'
 import { registerWorkspaceHandlers } from './ipc/workspaces'
+import { registerSyncHandlers } from './ipc/sync'
+import { drain, startOutbox } from './lib/cloud/outbox'
 import { invokeChannel } from './ipc/util'
 
 /**
@@ -176,6 +178,7 @@ function registerHandlers(): void {
   registerWeatherHandlers()
   registerChatHandlers()
   registerClaudeHandlers()
+  registerSyncHandlers()
 }
 
 async function start(): Promise<void> {
@@ -242,6 +245,9 @@ async function start(): Promise<void> {
   if (sweptUpdates > 0) console.log(`Removed ${sweptUpdates} staged update(s) that were never applied.`)
   registerHandlers()
   registerMediaProtocol()
+  // Writes left waiting the last time the app closed, sent now if Neo Cloud is there.
+  if (loadSession()) startOutbox()
+  powerMonitor.on('resume', () => void drain())
 
   // The morning's deadlines, for the machine that was shut at nine and opened at eleven.
   // The tick would find them a minute later anyway; this makes opening the lid and

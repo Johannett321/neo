@@ -1,7 +1,9 @@
 import { app } from 'electron'
 import type { AccountDevice, AccountStatus } from '@shared/account'
 import { SIGNED_OUT } from '@shared/account'
-import { api, CloudError, cloudUrl, must } from '../lib/cloud/client'
+import { api, CloudError, cloudUrl, must, onSignedOut } from '../lib/cloud/client'
+import { forgetCaches } from '../lib/cloud/cache'
+import { forgetOutbox, startOutbox } from '../lib/cloud/outbox'
 import { startEvents, stopEvents } from '../lib/cloud/events'
 import { signInWithPasskey } from '../lib/cloud/passkey'
 import { clearSession, loadSession, saveSession, type Session } from '../lib/cloud/session'
@@ -45,13 +47,26 @@ export async function accountStatus(): Promise<AccountStatus> {
   }
 }
 
+/**
+ * The last-known copy of the work and the writes waiting to be sent belong to one
+ * account. Signing out, being signed out, and somebody else signing in all throw them
+ * away — a second account must never be shown, or send, the first one's work.
+ */
+function forgetLocal(except?: string): void {
+  forgetCaches(except)
+  forgetOutbox(except)
+}
+
 async function begin(session: Session): Promise<AccountStatus> {
+  forgetLocal(session.accountId)
   saveSession(session)
   startEvents()
+  startOutbox()
   return accountStatus()
 }
 
 export function registerAccountHandlers(): void {
+  onSignedOut(() => forgetLocal())
   handle('account:status', accountStatus)
 
   handle('account:register', async ({ username, password }) => {
@@ -88,6 +103,7 @@ export function registerAccountHandlers(): void {
     stopEvents()
     clearSession()
     forgetMedia()
+    forgetLocal()
     return { ...SIGNED_OUT, serverUrl: cloudUrl() }
   })
 

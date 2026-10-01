@@ -7,6 +7,7 @@ import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { DateField } from '@/components/DateField'
 import { Avatar, ConfirmButton, EmptyState, Field, Modal } from '@/components/primitives'
+import { stableKey } from '@/lib/sync'
 
 /**
  * Decisions get their own record because they are the thing you re-litigate most.
@@ -79,7 +80,7 @@ export function DecisionsTab({
       ) : (
         <ol className="relative ml-2 border-l border-base-content/10 pl-6">
           {decisions.map((decision) => (
-            <li key={decision.id} className="relative mb-5 last:mb-0">
+            <li key={stableKey(decision.id)} className="relative mb-5 last:mb-0">
               <span className="absolute -left-[29px] top-2 size-2 rounded-full bg-base-content/25 ring-4 ring-base-100" />
               <button
                 className="hairline row-hover w-full rounded-box border bg-base-100 px-4 py-3 text-left"
@@ -470,9 +471,9 @@ function DecisionModal({
 
   const set = (key: keyof typeof form, value: string): void => setForm((f) => ({ ...f, [key]: value }))
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!form.title.trim()) return
-    await save.mutateAsync({ id: decision?.id, projectId, ...form, title: form.title.trim() })
+    save.mutate({ id: decision?.id, projectId, ...form, title: form.title.trim() })
     onClose()
   }
 
@@ -496,8 +497,8 @@ function DecisionModal({
             <ConfirmButton
               label="Delete"
               className="btn btn-ghost btn-sm mr-auto text-base-content/50 hover:text-error"
-              onConfirm={async () => {
-                await remove.mutateAsync({ id: decision.id })
+              onConfirm={() => {
+                remove.mutate({ id: decision.id })
                 onClose()
               }}
             />
