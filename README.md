@@ -204,6 +204,28 @@ place, and it stays put. Which pane is open lives in the address, so anything th
 what needs changing can send you to the pane itself rather than to the front of the
 screen with an instruction to go and find it.
 
+### Sharing a workspace
+A workspace can be shared with other people — a client you run a project with, a
+partner in your own company. **Sharing is the whole workspace or nothing**: everybody in
+it sees and edits every project, card, note, meeting and person in it, and nothing of
+anybody's other workspaces. That keeps the boundary above intact — a shared workspace is
+still one area of work, it just has more than one person in it — and it means there is
+no per-project permission to get wrong.
+
+The **Members** pane of workspace settings is where it happens. The owner (whoever made
+the workspace) creates an invite link — with the person's email as a reminder of who it
+was for, or without — and sends it however they like; Neo sends no email. A link lets
+one person in, for seven days, and can be revoked while it waits. The person it was
+sent to chooses **Join a workspace** in the switcher, pastes it, and the workspace is in
+their switcher. A shared workspace shows the others' faces beside its name in the
+switcher; one that is only yours shows nothing, as before.
+
+The owner invites and removes people, renames, archives and deletes; members do all of
+the work. A member can leave at any time. What they did stays, and the log keeps saying
+who did it — "Kari · Added: Pricing page" — because in a shared workspace "what changed
+since I was last here" is mostly what *other people* changed. Your profile, your theme,
+your conversations with the assistant and your notifications stay yours.
+
 ### Themes, and Liquid Glass
 
 Light, Dark and System are what they say: a palette, chosen once in **Settings →

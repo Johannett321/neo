@@ -63,6 +63,33 @@ export function registerWorkspaceHandlers(): void {
     await must(api.PUT('/v1/workspaces/order', { body: { ids } }))
   })
 
+  handle('workspace:members', ({ workspaceId }) =>
+    must(api.GET('/v1/workspaces/{id}/members', { params: { path: { id: workspaceId } } })))
+
+  handle('workspace:removeMember', async ({ workspaceId, accountId }) => {
+    await must(api.DELETE('/v1/workspaces/{id}/members/{accountId}', {
+      params: { path: { id: workspaceId, accountId } }
+    }))
+  })
+
+  handle('workspace:invites', ({ workspaceId }) =>
+    must(api.GET('/v1/workspaces/{id}/invites', { params: { path: { id: workspaceId } } })))
+
+  handle('workspace:invite', ({ workspaceId, email }) =>
+    must(api.POST('/v1/workspaces/{id}/invites', {
+      params: { path: { id: workspaceId } },
+      body: email?.trim() ? { email: email.trim() } : {}
+    })))
+
+  handle('workspace:revokeInvite', async ({ workspaceId, inviteId }) => {
+    await must(api.DELETE('/v1/workspaces/{id}/invites/{inviteId}', {
+      params: { path: { id: workspaceId, inviteId } }
+    }))
+  })
+
+  handle('workspace:acceptInvite', ({ token }) =>
+    must(api.POST('/v1/invites/accept', { body: { token: token.trim() } })))
+
   handle('icon:pick', async () => {
     const stored = await pickPicture('Choose a workspace icon', 'icon')
     return stored ? { iconPath: stored.name, dataUrl: mediaUrl(stored.name) } : null

@@ -441,7 +441,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** The workspace and everything in it, files included. */
+        /** The workspace and everything in it, files included. Owner only. */
         delete: operations["deleteWorkspace"];
         options?: never;
         head?: never;
@@ -460,6 +460,109 @@ export interface paths {
         get?: never;
         put: operations["setWorkspaceArchived"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get: operations["listWorkspaceMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/members/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * The owner removes a member; a member names themselves to leave. The owner cannot
+         *     leave — deleting the workspace is how it ends. Their conversations with the
+         *     assistant about it go with them; the work they did stays.
+         */
+        delete: operations["removeWorkspaceMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        /** The invitations still waiting to be accepted. Owner only. */
+        get: operations["listWorkspaceInvites"];
+        put?: never;
+        /** An invitation link, good for one person, for seven days. Owner only. */
+        post: operations["createWorkspaceInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** The link stops working. Owner only. */
+        delete: operations["revokeWorkspaceInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invites/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join the workspace an invitation is for, as the signed-in account. Accepting one
+         *     for a workspace you are already in is not an error. An expired, revoked, used or
+         *     unknown invitation is a 400 that says which.
+         */
+        post: operations["acceptWorkspaceInvite"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2180,6 +2283,24 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * @description `owner` made the workspace: invites and removes people, renames, archives and
+         *     deletes it. `member` was invited and can do all of the work in it.
+         * @enum {string}
+         */
+        WorkspaceRole: "owner" | "member";
+        WorkspaceMember: {
+            /** Format: uuid */
+            accountId: string;
+            /** @description The name in their profile, else what they sign in with. */
+            name: string;
+            /** @description What they sign in with. */
+            handle: string;
+            role: components["schemas"]["WorkspaceRole"];
+            /** Format: date-time */
+            joinedAt: string;
+            isMe: boolean;
+        };
         Workspace: {
             /** Format: uuid */
             id: string;
@@ -2226,6 +2347,12 @@ export interface components {
             notifyTaskDayAfter: boolean;
             /** Format: date-time */
             createdAt: string;
+            role: components["schemas"]["WorkspaceRole"];
+            /**
+             * @description Everybody in the workspace, the owner first. One entry — you — for a workspace
+             *     that is not shared.
+             */
+            members: components["schemas"]["WorkspaceMember"][];
         };
         /** @description A new workspace, or the fields of one to change. */
         WorkspaceDraft: {
@@ -2265,6 +2392,35 @@ export interface components {
         };
         Archived: {
             archived: boolean;
+        };
+        /** @description An invitation not yet accepted, revoked or expired. */
+        WorkspaceInvite: {
+            /** Format: uuid */
+            id: string;
+            /** @description Who it was meant for, as typed. Empty for a link made for anyone. */
+            email: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        WorkspaceInviteDraft: {
+            /** @description Optional. A label for the invitation; whoever has the link can use it once. */
+            email?: string;
+        };
+        /**
+         * @description A new invitation and the only time its link is shown: the server keeps a hash of
+         *     the token, never the token.
+         */
+        WorkspaceInviteCreated: {
+            invite: components["schemas"]["WorkspaceInvite"];
+            token: string;
+            /** @description The link to send, `<server>/invite/<token>`. */
+            url: string;
+        };
+        InviteAcceptance: {
+            /** @description The token, or the whole link it is in. */
+            token: string;
         };
         WorkspaceLink: {
             /** Format: uuid */
@@ -2453,6 +2609,12 @@ export interface components {
             summary: string;
             /** Format: date-time */
             createdAt: string;
+            /**
+             * @description Who did it, when that was somebody else: in a shared workspace, the member whose
+             *     change this was ("Kari"). Null for your own changes, and in a workspace nobody
+             *     else is in.
+             */
+            actorName: string | null;
         };
         ReentryBrief: {
             daysSinceOpened: number | null;
@@ -3950,7 +4112,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Every workspace, archived ones included, in order. */
+            /** @description Every workspace you own or were invited into, archived ones included, in your order. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4062,6 +4224,136 @@ export interface operations {
         };
         responses: {
             /** @description The workspace as it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    listWorkspaceMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Everybody in the workspace, the owner first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"][];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    removeWorkspaceMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    listWorkspaceInvites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceInvite"][];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    createWorkspaceInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInviteDraft"];
+            };
+        };
+        responses: {
+            /** @description Created. The link is in this answer and nowhere else. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceInviteCreated"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    revokeWorkspaceInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    acceptWorkspaceInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteAcceptance"];
+            };
+        };
+        responses: {
+            /** @description The workspace, now in your list. */
             200: {
                 headers: {
                     [name: string]: unknown;

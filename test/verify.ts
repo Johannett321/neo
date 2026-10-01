@@ -769,6 +769,77 @@ async function main(): Promise<void> {
      (await call('project:get', { id: checkout.id, touch: false })).project.name === 'Checkout rewrite' &&
      (await call('task:list', { projectId: checkout.id })).find((t: any) => t.id === openTask.id)?.status === 'done')
 
+  /* --------------------------------------------------------- a shared workspace */
+
+  /*
+   * The one way two accounts see the same work: the owner makes an invitation link,
+   * the other account pastes it, and from then on both work in that workspace — and in
+   * nothing else of each other's. Each side is driven here through its own channels,
+   * signing this machine in as one and then the other.
+   */
+  const shared = await call('workspace:save', { name: 'Shared verify' })
+  ok('a workspace you make is yours, and nobody else is in it',
+     shared.role === 'owner' && shared.members.length === 1 && shared.members[0].isMe === true,
+     JSON.stringify(shared.members))
+  const sharedProject = await call('project:save', { workspaceId: shared.id, name: 'Joint venture' })
+  await call('task:save', { projectId: sharedProject.id, title: 'Owner card' })
+  const invitation = await call('workspace:invite', { workspaceId: shared.id, email: 'partner@example.com' })
+  ok('inviting somebody makes a link to send them',
+     invitation.url.endsWith(`/invite/${invitation.token}`) && invitation.invite.email === 'partner@example.com',
+     invitation.url)
+  ok('which waits among the workspace\'s invitations',
+     (await call('workspace:invites', { workspaceId: shared.id })).map((i: any) => i.id).join() === invitation.invite.id)
+  const withdrawn = await call('workspace:invite', { workspaceId: shared.id })
+  await call('workspace:revokeInvite', { workspaceId: shared.id, inviteId: withdrawn.invite.id })
+  ok('a withdrawn invitation stops waiting',
+     !(await call('workspace:invites', { workspaceId: shared.id })).some((i: any) => i.id === withdrawn.invite.id))
+
+  await call('account:signOut')
+  await call('account:signIn', { username: intruder, password: newPassword })
+  ok('before accepting, the other account sees none of it',
+     !(await call('workspace:list')).some((w: any) => w.id === shared.id) &&
+     await refused(() => call('project:get', { id: sharedProject.id, touch: false })) &&
+     await refused(() => call('workspace:members', { workspaceId: shared.id })))
+  ok('a withdrawn link lets nobody in, and says so',
+     await threw(() => call('workspace:acceptInvite', { token: withdrawn.url }), 'withdrawn'))
+  const sharedJoined = await call('workspace:acceptInvite', { token: `  ${invitation.url}  ` })
+  ok('pasting the link joins the workspace as a member',
+     sharedJoined.id === shared.id && sharedJoined.role === 'member' && sharedJoined.members.length === 2, JSON.stringify(sharedJoined.role))
+  ok('and it is in the switcher now, with both of you in it',
+     (await call('workspace:list')).find((w: any) => w.id === shared.id)?.members.length === 2)
+  ok('the owner is listed first, and you are you',
+     (await call('workspace:members', { workspaceId: shared.id }))
+       .map((m: any) => `${m.role}:${m.isMe}`).join() === 'owner:false,member:true')
+  ok('a member sees the owner\'s projects and cards',
+     (await call('task:list', { projectId: sharedProject.id })).some((t: any) => t.title === 'Owner card'))
+  await call('task:save', { projectId: sharedProject.id, title: 'Member card' })
+  ok('and does the work in them', (await call('task:list', { projectId: sharedProject.id })).length === 2)
+  ok('but cannot rename, archive or delete the workspace',
+     await threw(() => call('workspace:save', { id: shared.id, name: 'Mine now' }), 'owner') &&
+     await threw(() => call('workspace:setArchived', { id: shared.id, archived: true }), 'owner') &&
+     await threw(() => call('workspace:delete', { id: shared.id }), 'owner'))
+  ok('nor invite anybody, or see who has been invited',
+     await threw(() => call('workspace:invite', { workspaceId: shared.id }), 'owner') &&
+     await refused(() => call('workspace:invites', { workspaceId: shared.id })))
+  ok('nor see anything else of the owner\'s', await refused(() => call('project:get', { id: checkout.id, touch: false })))
+  const me = (await call('workspace:members', { workspaceId: shared.id })).find((m: any) => m.isMe)
+  await call('workspace:removeMember', { workspaceId: shared.id, accountId: me.accountId })
+  ok('a member who leaves loses the workspace and everything in it',
+     !(await call('workspace:list')).some((w: any) => w.id === shared.id) &&
+     await refused(() => call('project:get', { id: sharedProject.id, touch: false })))
+
+  await call('account:signOut')
+  await call('account:signIn', { username, password })
+  const sharedDetail = await call('project:get', { id: sharedProject.id, touch: false })
+  ok('the work a member did stays, and the log says who did it',
+     sharedDetail.activity.some((a: any) => a.summary === 'Added: Member card' && a.actorName === intruder) &&
+     sharedDetail.activity.some((a: any) => a.summary === 'Added: Owner card' && a.actorName === null),
+     JSON.stringify(sharedDetail.activity.map((a: any) => [a.summary, a.actorName])))
+  ok('the owner cannot leave its own workspace',
+     await refused(() => call('workspace:removeMember', { workspaceId: shared.id, accountId: shared.members[0].accountId })))
+  await call('workspace:delete', { id: shared.id })
+  ok('and deletes it instead', !(await call('workspace:list')).some((w: any) => w.id === shared.id))
+
   /* -------------------------------------------------------------------- canvases */
 
   const flow = await call('canvas:save', {

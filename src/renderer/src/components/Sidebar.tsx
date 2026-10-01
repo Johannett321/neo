@@ -10,6 +10,7 @@ import { Icon, type IconName } from './Icon'
 import { Brand } from './Logo'
 import { Mark } from './Mark'
 import { WorkspaceModal } from './WorkspaceModal'
+import { AvatarStack, JoinWorkspaceModal } from './Sharing'
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Today', icon: 'today', end: true },
@@ -333,6 +334,7 @@ function WorkspaceSwitcher(): React.JSX.Element {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [joining, setJoining] = useState(false)
 
   if (!active) return <></>
 
@@ -351,6 +353,7 @@ function WorkspaceSwitcher(): React.JSX.Element {
             {workspaces.length === 1 ? 'Only workspace' : `${workspaces.length} workspaces`}
           </span>
         </span>
+        <AvatarStack workspace={active} />
         <Icon name={open ? 'chevronDown' : 'chevronUp'} size={13} className="text-base-content/35" />
       </button>
 
@@ -376,6 +379,7 @@ function WorkspaceSwitcher(): React.JSX.Element {
                 >
                   <Mark name={item.name} color={item.color} icon={item.icon} size={20} />
                   <span className="min-w-0 flex-1 truncate text-[13px]">{item.name}</span>
+                  <AvatarStack workspace={item} size={14} />
                   {item.id === active.id && <Icon name="check" size={13} className="text-primary" />}
                 </button>
               ))}
@@ -429,6 +433,16 @@ function WorkspaceSwitcher(): React.JSX.Element {
                 <Icon name="plus" size={14} className="opacity-60" />
                 New workspace
               </button>
+              <button
+                className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-base-content/70 transition hover:bg-base-200"
+                onClick={() => {
+                  setJoining(true)
+                  close()
+                }}
+              >
+                <Icon name="link" size={14} className="opacity-60" />
+                Join a workspace
+              </button>
             </div>
           </div>
         </>
@@ -440,6 +454,14 @@ function WorkspaceSwitcher(): React.JSX.Element {
         workspace={null}
         onSaved={(created) => {
           switchTo(created.id)
+          navigate('/')
+        }}
+      />
+      <JoinWorkspaceModal
+        open={joining}
+        onClose={() => setJoining(false)}
+        onJoined={(joined) => {
+          switchTo(joined.id)
           navigate('/')
         }}
       />

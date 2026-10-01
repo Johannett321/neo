@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
 import { Mark } from '@/components/Mark'
 import { NotificationPane } from '@/components/NotificationSettings'
+import { MembersPane } from '@/components/Sharing'
 import { SettingsLayout } from '@/components/SettingsLayout'
 import { TodayPane } from '@/components/today/TodaySettings'
 import { WorkspaceModal, WORKSPACE_COLORS } from '@/components/WorkspaceModal'
@@ -47,6 +48,16 @@ export function WorkspaceSettings(): React.JSX.Element {
             render: () => <IdentityPane workspace={workspace} />
           },
           {
+            id: 'members',
+            label: 'Members',
+            icon: 'people',
+            description:
+              workspace.role === 'owner'
+                ? 'Invite people to work in this workspace with you.'
+                : 'Who else works in this workspace.',
+            render: () => <MembersPane workspace={workspace} />
+          },
+          {
             id: 'today',
             label: 'Today',
             icon: 'today',
@@ -67,13 +78,21 @@ export function WorkspaceSettings(): React.JSX.Element {
             description: 'The language meetings are in, and what the recap should look for.',
             render: () => <RecordingPane workspace={workspace} />
           },
-          {
-            id: 'archive',
-            label: 'Archive and delete',
-            icon: 'archive',
-            tone: 'warn',
-            render: () => <DangerPane workspace={workspace} />
-          }
+          workspace.role === 'owner'
+            ? {
+                id: 'archive',
+                label: 'Archive and delete',
+                icon: 'archive',
+                tone: 'warn',
+                render: () => <DangerPane workspace={workspace} />
+              }
+            : {
+                id: 'archive',
+                label: 'Leave',
+                icon: 'arrowLeft',
+                tone: 'warn',
+                render: () => <LeavePane workspace={workspace} />
+              }
         ]}
       />
 
@@ -107,9 +126,17 @@ function IdentityPane({ workspace }: { workspace: Workspace }): React.JSX.Elemen
       />
 
       <div className="mt-5 space-y-4">
-        <Field label="Name">
+        <Field
+          label="Name"
+          hint={
+            workspace.role === 'owner'
+              ? undefined
+              : `Only ${workspace.members.find((m) => m.role === 'owner')?.name ?? 'the owner'} can rename it.`
+          }
+        >
           <input
             className="input input-bordered w-full"
+            disabled={workspace.role !== 'owner'}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onBlur={() =>
@@ -207,6 +234,43 @@ function RecordingPane({ workspace }: { workspace: Workspace }): React.JSX.Eleme
   )
 }
 
+/** A member's way out. The owner's is deleting, in the pane this replaces. */
+function LeavePane({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const { workspaces, switchTo } = useWorkspaces()
+  const navigate = useNavigate()
+  const remove = useApiMutation('workspace:removeMember')
+  const me = workspace.members.find((m) => m.isMe)
+  const owner = workspace.members.find((m) => m.role === 'owner')?.name ?? 'the owner'
+
+  return (
+    <Panel>
+      <div className="flex items-start gap-4">
+        <div className="flex-1">
+          <div className="text-[13px] font-medium">Leave {workspace.name}</div>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+            It disappears from your switcher and you lose access to everything in it. The work you did stays
+            for everybody else; your conversations with the assistant about it go. {owner} can invite you back.
+          </p>
+        </div>
+        {me && (
+          <ConfirmButton
+            label="Leave"
+            title={`Leave ${workspace.name}?`}
+            body={`You will need a new invitation from ${owner} to come back.`}
+            className="btn btn-sm text-base-content/60 hover:text-error"
+            onConfirm={async () => {
+              await remove.mutateAsync({ workspaceId: workspace.id, accountId: me.accountId })
+              const next = workspaces.find((w) => w.id !== workspace.id)
+              if (next) switchTo(next.id)
+              navigate('/')
+            }}
+          />
+        )}
+      </div>
+    </Panel>
+  )
+}
+
 function DangerPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { workspaces, switchTo } = useWorkspaces()
   const navigate = useNavigate()
@@ -265,7 +329,11 @@ function DangerPane({ workspace }: { workspace: Workspace }): React.JSX.Element 
         <ConfirmButton
           label="Delete"
           title={`Delete ${workspace.name}?`}
-          body={`Its ${plural(projects.data?.length ?? 0, 'project')} and everything inside them go with it. Archiving hides it instead, and keeps it all.`}
+          body={`Its ${plural(projects.data?.length ?? 0, 'project')} and everything inside them go with it${
+            workspace.members.length > 1
+              ? `, for ${plural(workspace.members.length - 1, 'other person', 'other people')} in it too`
+              : ''
+          }. Archiving hides it instead, and keeps it all.`}
           className="btn btn-sm text-base-content/60 hover:text-error"
           onConfirm={async () => {
             await remove.mutateAsync({ id: workspace.id })

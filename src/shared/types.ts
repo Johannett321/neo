@@ -135,6 +135,45 @@ export interface Workspace {
   notifyTaskDayAfter: boolean
 
   createdAt: string
+
+  /* ------------------------------------------------- who else is in it */
+
+  /**
+   * `owner` made it and is the one who invites, removes, renames, archives and deletes;
+   * `member` was invited and does all of the work. Everybody in a workspace sees all
+   * of it — sharing is the whole workspace or nothing.
+   */
+  role: WorkspaceRole
+  /** Everybody in it, the owner first. Just you, for a workspace nobody else is in. */
+  members: WorkspaceMember[]
+}
+
+export type WorkspaceRole = 'owner' | 'member'
+
+export interface WorkspaceMember {
+  accountId: string
+  /** The name in their profile, else what they sign in with. */
+  name: string
+  handle: string
+  role: WorkspaceRole
+  joinedAt: string
+  isMe: boolean
+}
+
+/** An invitation still waiting: not accepted, withdrawn or out of date. */
+export interface WorkspaceInvite {
+  id: string
+  /** Who it was meant for, as typed; empty for a link made for anyone. */
+  email: string
+  createdAt: string
+  expiresAt: string
+}
+
+/** A new invitation, and the only time its link is shown — only a hash is kept. */
+export interface WorkspaceInviteCreated {
+  invite: WorkspaceInvite
+  token: string
+  url: string
 }
 
 /* -------------------------------------------------------------- notifications */
@@ -862,6 +901,8 @@ export interface Activity {
   kind: ActivityKind
   summary: string
   createdAt: string
+  /** Who did it, when it was another member of a shared workspace. Null for your own. */
+  actorName: string | null
 }
 
 /** The "where were we" header shown at the top of every project. */

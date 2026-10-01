@@ -147,8 +147,9 @@ Aliases: `@shared/*` everywhere, `@/*` → `src/renderer/src/*` in the renderer 
 ### Neo Cloud
 
 `src/main/lib/cloud/` and the server in `../server`. Read the server's README
-for how a request runs there — row level security per account, SQL ported verbatim from
-the TypeScript this app used to run, other devices told after every write.
+for how a request runs there — row level security by workspace membership, SQL ported
+verbatim from the TypeScript this app used to run, other devices (and other members'
+devices) told after every write.
 
 **The sign-in gate is the first thing the window draws.** `AccountGate` in `App.tsx` asks
 `account:status`; signed out it is `routes/SignIn.tsx`; signed in but unreachable it is
@@ -279,6 +280,16 @@ install's database and files into an empty Neo Cloud account.
   inside another. `TaskDialog` asks for people in the task's own workspace for the same
   reason. Which workspaces "every" means is the server's `AccountWorkspaces`, in one
   place. Do not add a second screen like it; add to this one or fence the new thing.
+- **A workspace is shared whole, or not at all.** Members of a shared workspace see and
+  edit everything in it; the owner alone invites, removes, renames, archives and deletes
+  (`workspace.role`, and the server refuses the rest in words). Nothing in this app
+  decides who may see what — Neo Cloud's row level security does, by membership — so
+  there is no per-project sharing and no client-side filtering to add. The Members pane
+  and the switcher's *Join a workspace* are `components/Sharing.tsx`; an invite link is
+  shown once, at creation, because the server keeps only its hash. A workspace nobody
+  else is in must look exactly as it did before sharing existed: `AvatarStack` draws
+  nothing for it. `person.isMe` now means "the account reading", so in a shared
+  workspace every member is a person and each sees themselves as *me*.
 - **Attention is derived, never stored.** `work/Attention.java` in Neo Cloud computes it from
   overdue work, deadline proximity and staleness, and returns the single most pressing
   fact in plain words — never a level, a badge or a colour. Thresholds live in one place.
@@ -301,7 +312,8 @@ install's database and files into an empty Neo Cloud account.
   at 14:07. Whether this *machine* may interrupt you, when, and at weekends are app
   settings; *what is worth saying* is per workspace, the same seam the recording
   settings are split along. Being said once is a row and a unique index in Neo Cloud
-  (`notification (workspace_id, kind, on_date)`), claimed with `POST /v1/notifications`
+  (`notification (account_id, workspace_id, kind, on_date)` — each member of a shared
+  workspace is told once), claimed with `POST /v1/notifications`
   **before** the notification is shown — never a timer and never a comparison of
   timestamps, so four restarts before lunch interrupt you once, and two Macs signed in to
   the same account do not both say it. `notification:pending` is a channel rather than
