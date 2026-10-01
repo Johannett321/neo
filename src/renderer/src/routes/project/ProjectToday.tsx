@@ -173,15 +173,15 @@ export function ProjectToday(): React.JSX.Element {
             title="Cast"
             count={cast.length}
             action={
-              <Link to={`/projects/${project.id}/people`} className="btn btn-ghost btn-xs gap-1">
-                Manage
+              <Link to={`/projects/${project.id}/team`} className="btn btn-ghost btn-xs gap-1">
+                Team
                 <Icon name="chevronRight" size={11} />
               </Link>
             }
           >
             {cast.length === 0 ? (
               <Link
-                to={`/projects/${project.id}/people`}
+                to={`/projects/${project.id}/team`}
                 className="hairline block rounded-box border border-dashed px-3 py-3 text-center text-[12px] text-base-content/45"
               >
                 Nobody recorded yet — add the cast
@@ -191,7 +191,7 @@ export function ProjectToday(): React.JSX.Element {
                 {/*
                   One line per person rather than two: the name and the hat they wear
                   are the whole answer to "who is on this", and the rail is not the
-                  place to spend six rows on it. The People tab has the rest.
+                  place to spend six rows on it. The team chart has the rest.
                 */}
                 {cast.slice(0, 5).map((member) => (
                   <Link
@@ -210,8 +210,8 @@ export function ProjectToday(): React.JSX.Element {
                       /*
                         The first hat only. Roles are free text and often a list of
                         them, and a rail this narrow truncates the second one mid-word;
-                        the primary role is the answer to "who is this" and the People
-                        tab carries the rest.
+                        the primary role is the answer to "who is this" and the team
+                        chart carries the rest.
                       */
                       <span className="max-w-[46%] shrink-0 truncate text-[11px] text-base-content/40">
                         {member.role.split(',')[0]?.trim()}
@@ -221,7 +221,7 @@ export function ProjectToday(): React.JSX.Element {
                 ))}
                 {cast.length > 5 && (
                   <Link
-                    to={`/projects/${project.id}/people`}
+                    to={`/projects/${project.id}/team`}
                     className="mt-1 block px-0.5 text-[11px] text-base-content/40 transition hover:text-base-content/70"
                   >
                     and {plural(cast.length - 5, 'other')}
