@@ -31,6 +31,7 @@ import { ProjectMeetings } from '@/routes/project/ProjectMeetings'
 import { MeetingWriter } from '@/routes/project/MeetingWriter'
 import { ProjectSettings } from '@/routes/project/ProjectSettings'
 import { ProjectDecisions, ProjectNotes, ProjectPeople } from '@/routes/project/ProjectNotes'
+import { ProjectTeam } from '@/routes/project/ProjectTeam'
 import { NoteWriter } from '@/routes/project/NoteWriter'
 import { CanvasEditor } from '@/routes/project/CanvasEditor'
 import { NewProjectModal, ProjectsPage } from '@/routes/Projects'
@@ -53,7 +54,9 @@ function Shell(): React.JSX.Element {
   const { active, switchTo } = useWorkspaces()
   // Inside a project the target is already known, so it is never asked for.
   const inProject = useMatch('/projects/:id/*')
-  const isBoard = Boolean(useMatch('/projects/:id/kanban'))
+  const inKanban = useMatch('/projects/:id/kanban')
+  const inTeam = useMatch('/projects/:id/team')
+  const isBoard = Boolean(inKanban || inTeam)
   // Writing is the one thing that owns the window: no heading above it, no search
   // bar, no reading width. Notes and meeting write-ups both do. See NoteWriter.
   //
@@ -199,6 +202,7 @@ function Shell(): React.JSX.Element {
                   <Route path="notes" element={<ProjectNotes />} />
                   <Route path="decisions" element={<ProjectDecisions />} />
                   <Route path="people" element={<ProjectPeople />} />
+                  <Route path="team" element={<ProjectTeam />} />
                   <Route path="settings" element={<ProjectSettings />} />
                 </Route>
                 {/* Outside the project layout on purpose: the writers have no heading. */}

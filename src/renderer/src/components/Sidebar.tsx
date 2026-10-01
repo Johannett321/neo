@@ -202,7 +202,8 @@ const PROJECT_NAV: { to: string; label: string; icon: IconName; end?: boolean }[
   { to: 'meetings', label: 'Meetings', icon: 'people' },
   { to: 'notes', label: 'Notes', icon: 'note' },
   { to: 'decisions', label: 'Decisions', icon: 'decision' },
-  { to: 'people', label: 'People', icon: 'inbox' }
+  { to: 'people', label: 'People', icon: 'inbox' },
+  { to: 'team', label: 'Team', icon: 'orgchart' }
 ]
 
 /**
