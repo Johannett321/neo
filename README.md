@@ -746,12 +746,13 @@ other dialogs, and Escape or a click outside cancels.
 Never self-reported. A status you have to remember to update is always wrong, so Today
 works out for itself which projects are asking for attention and says why in plain words:
 *"2 overdue items, oldest 9 days past due"*, *"deadline in 3 days with 4 items still
-open"*, *"standing still for 12 days"*.
+open"*, *"quiet for 6 weeks"*. Quiet means a month with nothing written: a project
+waiting a week or two on somebody else is an ordinary project, not one that needs you.
 
 Only the most pressing fact is shown, because a list of six projects each with three
 caveats is not a short list. A project that is paused, dormant or done is in that state
 on purpose and never gets dragged back into view. Thresholds live in one place,
-`src/main/lib/attention.ts`.
+Neo Cloud's `work/Attention.java`.
 
 This used to be a coloured health dot on every project surface — green, amber, red, with
 the explanation hidden behind a tooltip. The colour was a thing you had to learn to read,
@@ -784,8 +785,8 @@ sentence or a page with screenshots; both are written as ordinary Markdown in
 [`changelog/`](changelog/), and the release notes on GitHub are generated from the same
 files when the tag is pushed, so a release is described once rather than twice.
 
-Not every version writes one. An entry is for something worth hearing about, and a
-release of fixes and small refinements is not made into one by being written up — so
+Not every version writes one. An entry is for a big new feature, and a release of
+small features and fixes is not made into one by being written up — so
 that screen stays shut for those versions, which is what keeps it worth reading when it
 does appear.
 
@@ -1089,7 +1090,7 @@ Releases are built by GitHub Actions on native runners for all three platforms �
 `.github/workflows/release.yml`, triggered by pushing a `v*` tag.
 
 **Cutting a release** means bumping `version` in `package.json` and tagging it, plus —
-when the release has something in it worth reading about — writing `changelog/<version>.md`
+only when the release has a big new feature in it — writing `changelog/<version>.md`
 in the same commit. The workflow sets the GitHub release notes from that file, so the
 sentence somebody reads before updating is the one the app shows them afterwards; with no
 file it falls back to a plain sentence and the app says nothing. The macOS **zip** goes up

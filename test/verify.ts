@@ -263,7 +263,7 @@ async function main(): Promise<void> {
    * Only the most pressing fact is reported, so the tiers below it are exercised with
    * projects made to be in exactly one state each. The work is real; only how long
    * ago somebody last touched a project is written straight into the row, because
-   * waiting twelve days is not a test.
+   * waiting a month is not a test.
    */
   {
     const tiers = await call('workspace:save', { name: 'Attention tiers' })
@@ -273,17 +273,19 @@ async function main(): Promise<void> {
     await call('task:save', { projectId: late.id, title: 'Overdue', dueDate: addDays(todayDate(), -4) })
     await call('task:save', { projectId: late.id, title: 'Also overdue', dueDate: addDays(todayDate(), -2) })
     const near = await make('Near', { deadline: addDays(todayDate(), 3) })
-    const still12 = await make('Still twelve')
-    const still6 = await make('Still six')
-    const still7 = await make('Still seven')
+    const still29 = await make('Still twenty-nine')
+    const still30 = await make('Still thirty')
+    const still45 = await make('Still forty-five')
+    const still75 = await make('Still seventy-five')
     const fine = await make('Fine', { deadline: addDays(todayDate(), 60) })
     const resting = await make('Resting')
     await call('task:save', { projectId: resting.id, title: 'Very late', dueDate: addDays(todayDate(), -90) })
     await call('project:save', { id: resting.id, status: 'paused' })
     psql(`UPDATE app.project SET last_activity_at = now() - (CASE id
-            WHEN '${still12.id}' THEN interval '12 days'
-            WHEN '${still6.id}' THEN interval '6 days'
-            WHEN '${still7.id}' THEN interval '7 days'
+            WHEN '${still29.id}' THEN interval '29 days'
+            WHEN '${still30.id}' THEN interval '30 days'
+            WHEN '${still45.id}' THEN interval '45 days'
+            WHEN '${still75.id}' THEN interval '75 days'
             WHEN '${resting.id}' THEN interval '90 days'
             ELSE interval '40 days' END)
           WHERE workspace_id = '${tiers.id}' AND id <> '${fine.id}'`)
@@ -293,10 +295,17 @@ async function main(): Promise<void> {
     ok('overdue outranks everything else',
        /^2 overdue items, oldest 4 days past due$/.test(reason('Late')), reason('Late'))
     ok('a near deadline comes next', /deadline in 3 days/.test(reason('Near')), reason('Near'))
-    ok('a project nobody has touched is standing still',
-       reason('Still twelve') === 'standing still for 12 days', reason('Still twelve'))
-    ok('a week is the line', reasons.get('Still six') === null && reasons.get('Still seven') !== null,
-       `${reason('Still six')} / ${reason('Still seven')}`)
+    /*
+     * A month is the line, not a week: a project waiting a fortnight on somebody else
+     * is an ordinary project, and a "needs a look" list that names it gets ignored.
+     * And the silence is said the way a person would say it, not as a count of days.
+     */
+    ok('a month is the line', reasons.get('Still twenty-nine') === null &&
+       reason('Still thirty') === 'quiet for over a month',
+       `${reason('Still twenty-nine')} / ${reason('Still thirty')}`)
+    ok('a longer silence is said in weeks, then months',
+       reason('Still forty-five') === 'quiet for 6 weeks' && reason('Still seventy-five') === 'quiet for 2 months',
+       `${reason('Still forty-five')} / ${reason('Still seventy-five')}`)
     ok('a project doing fine says nothing at all', reasons.get('Fine') === null, reason('Fine'))
     ok('and one paused on purpose is never dragged back', reasons.get('Resting') === null, reason('Resting'))
     await call('workspace:delete', { id: tiers.id })
