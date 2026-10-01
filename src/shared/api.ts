@@ -5,7 +5,7 @@ import type {
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
-  SearchHit, Settings, Task, TaskKind, TaskStatus, TodayAcross, TodayView, TranscriptCue, WeatherNow,
+  SearchHit, Settings, Task, TaskKind, TaskStatus, TeamCanvas, TeamChart, TodayAcross, TodayView, TranscriptCue, WeatherNow,
   WeatherPlace, Workspace, WorkspaceLink
 } from './types'
 
@@ -172,6 +172,14 @@ export interface ApiMap {
   /** Set your own roles on a project, creating your membership if it is missing. */
   'membership:saveMine': { in: { projectId: string; role: string }; out: CastMember }
   'membership:delete': { in: { id: string }; out: void }
+
+  /**
+   * A project's team, drawn — who reports to whom and who sits together. One per
+   * project; saving replaces the whole drawing and logs no activity, because where a
+   * card sits is not a fact about the project.
+   */
+  'team:get': { in: { projectId: string }; out: TeamCanvas }
+  'team:save': { in: { projectId: string; data: TeamChart }; out: TeamCanvas }
 
   'note:save': { in: Draft<Note>; out: Note }
   'note:delete': { in: { id: string }; out: void }

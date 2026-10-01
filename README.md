@@ -514,6 +514,27 @@ Each person also carries a free-text "how to work with them" — prefers Slack, 
 before ten, is the one who actually approves budget — and a reverse view showing every
 project they touch and their role in each.
 
+### The team, drawn
+A list of names says who is on a project; it does not say who answers to whom, or which
+three people are "the backend". The **Team** tab is a board for that: a large canvas you
+pan and pinch, with the project's people down the side. Drag someone onto the board and
+they are placed. **Drop them on a card and they report to it** — the line draws itself and
+the tree re-lays itself out around them — and **drop them into a box** ("Design",
+"Client side") and they join its grid; the box grows to fit. Boxes hang in the tree like
+anyone else, so one board can be an org chart, a set of groups, or both.
+
+While you hold a card the board shows what letting go would do — the gap opens where it
+will land, a dashed line runs to whoever it will report to, and a line at the bottom says
+it in words — and on letting go it springs into place. Drag something back onto the list
+to take it off the chart; ⌘Z puts it back. An empty board offers to start **as a tree**
+(whoever's role reads as the lead at the top, people sharing a role boxed together) or
+**in boxes** (one per role), so you adjust a drawing rather than compose one. Each card
+shows the person's role here — click it to change it — and how many open items on the
+board are theirs.
+
+The drawing is furniture, like a card's position on the board: nothing derives anything
+from it, and arranging it logs no activity.
+
 ### Re-entry
 When you have genuinely been away, a project opens with a brief: how long since your last
 visit, and what changed while you were gone.

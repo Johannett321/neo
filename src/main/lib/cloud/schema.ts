@@ -991,6 +991,26 @@ export interface paths {
         patch: operations["updateColumn"];
         trace?: never;
     };
+    "/v1/projects/{id}/team-canvas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        /** @description The project's team chart. A project that has never had one answers an empty drawing. */
+        get: operations["getTeamCanvas"];
+        /** @description Replace the drawing. Furniture, like a card's position on the board: it logs no activity and moves no project's clock. */
+        put: operations["saveTeamCanvas"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/notes": {
         parameters: {
             query?: never;
@@ -2894,6 +2914,26 @@ export interface components {
             name?: string;
             sortOrder?: number;
             isDone?: boolean;
+        };
+        /** @description A project's team, drawn — who reports to whom and which people sit together. One per project. The drawing is stored as the client sent it and never read here, the way a canvas's board is; who is on the project and in which roles stays on the memberships. */
+        TeamCanvas: {
+            /** Format: uuid */
+            projectId: string;
+            /** @description The drawing, `{nodes: [...]}` in the desktop app's shape. An empty object for a project whose team has never been drawn. */
+            data: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: date-time
+             * @description When it was last saved; null when it never has been.
+             */
+            updatedAt: string | null;
+        };
+        TeamCanvasDraft: {
+            /** @description The whole drawing, replacing what was there. */
+            data: {
+                [key: string]: unknown;
+            };
         };
         NoteDraft: {
             /** Format: uuid */
@@ -5123,6 +5163,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BoardColumn"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    getTeamCanvas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The drawing. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamCanvas"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    saveTeamCanvas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamCanvasDraft"];
+            };
+        };
+        responses: {
+            /** @description As it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamCanvas"];
                 };
             };
             default: components["responses"]["ErrorResponse"];

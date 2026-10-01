@@ -1,8 +1,18 @@
 import { api, must } from '../lib/cloud/client'
+import { teamCanvasOf } from '../lib/cloud/documents'
 import { suggestedName } from '../lib/profile'
 import { handle, withoutId } from './util'
 
 export function registerPeopleHandlers(): void {
+  handle('team:get', async ({ projectId }) =>
+    teamCanvasOf(await must(api.GET('/v1/projects/{id}/team-canvas', { params: { path: { id: projectId } } }))))
+
+  handle('team:save', async ({ projectId, data }) =>
+    teamCanvasOf(await must(api.PUT('/v1/projects/{id}/team-canvas', {
+      params: { path: { id: projectId } },
+      body: { data: data as unknown as Record<string, unknown> }
+    }))))
+
   handle('person:list', ({ workspaceId, query, projectId }) =>
     must(api.GET('/v1/people', { params: { query: { workspaceId, query, projectId } } })))
 

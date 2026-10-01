@@ -83,8 +83,8 @@ local server or file while the API is not deployed yet.)
 **Both directions are checked.** The OpenAPI types check what is sent, and `must()` returns
 the spec's own response type, so a handler whose channel in `ApiMap` promises something the
 server does not send does not compile — `shared/types.ts` cannot drift from the spec
-without a red build. The two exceptions are documents the server stores without reading
-them, a canvas's board and a message's tool records; the spec calls those open objects, and
+without a red build. The exceptions are documents the server stores without reading
+them, a canvas's board, a project's team chart and a message's tool records; the spec calls those open objects, and
 `lib/cloud/documents.ts` narrows that one field in one place rather than casting a response. `Args<C>` in the renderer is a
 conditional tuple that makes the input *required* for channels that take one — that is
 deliberate, and it is what stops a workspace-scoped channel being called with no
@@ -387,6 +387,17 @@ install's database and files into an empty Neo Cloud account.
   somewhere else. Filing a project into a different folder resets it to zero, since its
   old number described old neighbours. It logs no activity: where a card sits is not a
   fact about the project.
+- **The team chart is furniture too.** `team_canvas` in Neo Cloud is one open JSON
+  document per project (`team:get` / `team:save`, `lib/cloud/documents.ts` narrows it),
+  and nothing derives anything from it — saving logs no activity. Its meaning is
+  `renderer/src/lib/team.ts`: `parentId` is *reports to* (a tree, laid out by
+  `layout()`), `boxId` is *sits in* (a grid in a labelled box), and only nodes that are
+  neither keep an `x`/`y`. A card names a `personId` and nothing more; roles stay on
+  the membership, and someone who left the project is dropped by `sanitize()` rather
+  than drawn. `routes/project/ProjectTeam.tsx` saves with `call()` and `setQueryData`,
+  not a mutation, so dragging cards never refetches the rest of the app. Every node's
+  position is a set of motion values the layout only *targets*, which is why drops
+  spring rather than jump and the connectors (drawn from the same values) never lag.
 - **Every mutation logs activity.** The server's `work/Activity.java` inserts a row and
   bumps `last_activity_at`, which is what makes the re-entry brief possible.
 - **Row → model mapping is centralised** in the server's `work/Mapper.java` (snake_case →
