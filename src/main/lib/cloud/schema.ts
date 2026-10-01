@@ -2891,6 +2891,12 @@ export interface components {
             needsAttention: components["schemas"]["ProjectSummary"][];
             owedFromMeetings: components["schemas"]["MeetingOwing"][];
             stats: components["schemas"]["TodayStats"];
+            /**
+             * @description The board columns of every project with a card in `overdue`, `dueToday` or
+             *     `soon`, in board order, so a row on Today can be moved to another stage of its
+             *     own project's board without opening it first.
+             */
+            columns: components["schemas"]["BoardColumn"][];
         };
         ActivityItem: components["schemas"]["Activity"] & {
             projectName: string;

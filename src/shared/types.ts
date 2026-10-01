@@ -831,6 +831,12 @@ export interface TodayView {
   /** Meetings across the workspace with to-dos still open, newest first. */
   owedFromMeetings: MeetingOwing[]
   stats: { openTasks: number; activeProjects: number; peopleTracked: number }
+  /**
+   * The board columns of every project with a card on this screen, in board order.
+   * A row on Today is moved between stages of *its own* project's board, and the
+   * stages are per project, so the menu needs them without opening the project.
+   */
+  columns: BoardColumn[]
 }
 
 export interface SearchHit {
