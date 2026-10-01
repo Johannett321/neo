@@ -15,6 +15,7 @@ import type { CastMember, TeamCanvas, TeamChart, TeamNode } from '@shared/types'
 import { call, useApi, useApiMutation } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace'
 import { useContextMenu, type MenuItem } from '@/lib/contextMenu'
+import { useToast } from '@/lib/toast'
 import { EASE } from '@/lib/motion'
 import { Icon, type IconName } from '@/components/Icon'
 import { RoleInput, formatRoles, parseRoles } from '@/components/RoleInput'
@@ -31,23 +32,34 @@ import {
   CARD_H,
   CARD_W,
   EMPTY_CHART,
+  GRID,
   V_GAP,
   applyDrop,
+  applyDropAll,
   bounds,
   boxesTemplate,
   carried,
+  copySelection,
   describeDrop,
+  groupIntoBox,
   layout,
-  remove,
+  pasteClip,
+  readClip,
+  readingOrder,
+  removeAll,
   sanitize,
+  selectionJoiners,
+  selectionRoots,
   separate,
+  slotIndex,
   snap,
   tidy,
   treeTemplate,
   uid,
   type DropTarget,
   type Layout,
-  type Rect
+  type Rect,
+  type TeamClip
 } from '@/lib/team'
 import { CastMemberModal } from '@/components/project/CastMemberModal'
 import { useProject } from './ProjectLayout'
@@ -69,7 +81,24 @@ import { useProject } from './ProjectLayout'
  * whoever it will report to. Hit-testing is done against the board as it was when the
  * drag began, minus what is being carried, so targets never slide out from under the
  * pointer as the preview rearranges them.
+ *
+ * Several things can be held at once. Shift-, ⌘- or Ctrl-click adds to the selection (or
+ * takes back out), and the same modifier dragged across empty board draws a marquee —
+ * a plain drag on the board stays a pan, because that is what the board is for most of
+ * the time. Whatever is selected moves together, and every gesture on it (a drop, ⌫,
+ * ⌘G, a paste) is one step for undo.
  */
+
+/**
+ * What ⌘C last took, kept in the window as well as on the system clipboard: the menu's
+ * Paste cannot read the system clipboard (the app is not granted it), and this outlives
+ * moving from one project to another.
+ */
+let inAppClip: { text: string; clip: TeamClip } | null = null
+/** Pasting the same thing again beside its originals steps further out each time. */
+let pasteRun = { text: '', n: 0 }
+
+const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 
 /** Room kept clear on the right for the people list when the view is fitted. */
 const TRAY_SPACE = 252
@@ -101,6 +130,24 @@ interface Drag {
   carriedIds: Set<string>
   hit: Layout | null
   hitChart: TeamChart | null
+  /** What moves by itself (`selectionRoots`), and what goes in if it is dropped in a box. */
+  roots: string[]
+  joiners: string[]
+  /** The board as it was drawn when the drag began. */
+  from: Layout | null
+  /** A click that does not become a drag: narrow the selection to this, or take this out of it. */
+  collapseTo: string | null
+  toggleOff: string | null
+}
+
+interface Marquee {
+  /** Screen points, relative to the board's corner, for drawing. */
+  sx0: number
+  sy0: number
+  sx1: number
+  sy1: number
+  /** What was selected before it began, kept and added to. */
+  before: Set<string>
 }
 
 interface Pan {
@@ -118,6 +165,14 @@ interface BurstItem {
 
 const inside = (r: Rect | undefined, p: { x: number; y: number }, pad = 0): boolean =>
   !!r && p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad
+
+/** "Ann", "Ann and Bo", "Ann, Bo and 3 more". */
+const listNames = (names: string[]): string =>
+  names.length <= 1
+    ? (names[0] ?? '')
+    : names.length <= 3
+      ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+      : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
 
 const typing = (el: EventTarget | null): boolean => {
   const t = el as HTMLElement | null
@@ -400,10 +455,25 @@ export function ProjectTeam(): React.JSX.Element {
 
   /* ---------------------------------------------------------------- selection and editing */
 
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selection, setSelectionState] = useState<Set<string>>(() => new Set())
+  const selRef = useRef(selection)
+  const select = useCallback((ids: Iterable<string>) => {
+    const next = new Set(ids)
+    selRef.current = next
+    setSelectionState(next)
+  }, [])
+  /** The selection as it stands on the board now — an undo can take a selected node away. */
+  const selected = useMemo(() => {
+    const on = new Set(display.nodes.map((n) => n.id))
+    return new Set([...selection].filter((id) => on.has(id)))
+  }, [selection, display])
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const single = selected.size === 1 ? [...selected][0] : null
   const [editingRole, setEditingRole] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [bursts, setBursts] = useState<BurstItem[]>([])
+  const toast = useToast()
 
   const burst = useCallback(
     (x: number, y: number, tone: BurstItem['tone'] = 'primary') => {
@@ -424,6 +494,8 @@ export function ProjectTeam(): React.JSX.Element {
   const settleTilt = useRef<ReturnType<typeof setTimeout> | null>(null)
   const justDropped = useRef<Set<string>>(new Set())
   const spawn = useRef<Map<string, { x: number; y: number; delay: number }>>(new Map())
+  /** Things that have just been pasted, and how long each waits before popping in. */
+  const popIn = useRef<Map<string, number>>(new Map())
 
   const publish = useCallback(() => {
     if (frame.current !== null) return
@@ -439,38 +511,42 @@ export function ProjectTeam(): React.JSX.Element {
     const board = d.hitChart
     if (!hit || !board) return null
     const p = d.pointer
-    const movingKind = d.fresh?.kind ?? board.nodes.find((n) => n.id === d.nodeId)?.kind ?? displayRef.current.nodes.find((n) => n.id === d.nodeId)?.kind
-    const isPerson = movingKind === 'person'
+    const byId = new Map(board.nodes.map((n) => [n.id, n]))
+    const depth = (id: string): number => {
+      let k = 0
+      for (let cur = byId.get(id); cur?.boxId && k < 256; cur = byId.get(cur.boxId)) k++
+      return k
+    }
 
     const childIndex = (parentId: string): number =>
       board.nodes.filter((n) => n.parentId === parentId && !n.boxId).filter((n) => {
         const r = hit.rects.get(n.id)
         return r && r.x + r.w / 2 < p.x
       }).length
-    const boxIndex = (boxId: string): number =>
-      board.nodes.filter((n) => n.boxId === boxId).filter((n) => {
-        const r = hit.rects.get(n.id)
-        if (!r) return false
-        const cy = r.y + r.h / 2
-        return cy < p.y - r.h / 2 - 5 || (Math.abs(cy - p.y) <= r.h / 2 + 5 && r.x + r.w / 2 < p.x)
-      }).length
+    // Into a box, whatever is held; onto a card, under it.
     const onto = (n: TeamNode): DropTarget =>
-      n.kind === 'box' && isPerson
-        ? { kind: 'box', id: n.id, index: boxIndex(n.id) }
+      n.kind === 'box'
+        ? { kind: 'box', id: n.id, index: slotIndex(hit, n.id, p) }
         : { kind: 'parent', id: n.id, index: childIndex(n.id) }
 
-    // A card first: it is the smallest thing, and sits on top of a box.
+    // A card first: it is the smallest thing, and sits on top of a box. A card in a box
+    // means that box — the innermost one, since the card is in it.
     for (const n of board.nodes) {
       if (n.kind !== 'person' || !inside(hit.rects.get(n.id), p, 6)) continue
       if (n.boxId) {
-        const box = board.nodes.find((b) => b.id === n.boxId)
+        const box = byId.get(n.boxId)
         if (box) return onto(box)
       }
       return onto(n)
     }
+    // Then the innermost box under the pointer.
+    let innermost: { n: TeamNode; depth: number } | null = null
     for (const n of board.nodes) {
-      if (n.kind === 'box' && inside(hit.rects.get(n.id), p, 8)) return onto(n)
+      if (n.kind !== 'box' || !inside(hit.rects.get(n.id), p, 8)) continue
+      const k = depth(n.id)
+      if (!innermost || k > innermost.depth) innermost = { n, depth: k }
     }
+    if (innermost) return onto(innermost.n)
     // The space just under a card is the magnet: aim below someone to hang under them.
     let best: { n: TeamNode; dy: number } | null = null
     for (const n of board.nodes) {
@@ -486,14 +562,49 @@ export function ProjectTeam(): React.JSX.Element {
 
   const begin = useCallback((d: Drag) => {
     const board = displayRef.current
-    const carriedIds = d.nodeId ? carried(board, d.nodeId) : new Set([d.fresh!.id])
-    const hitChart: TeamChart = { version: 1, nodes: board.nodes.filter((n) => !carriedIds.has(n.id)) }
+    const from = layout(board)
+    if (d.fresh) {
+      d.roots = [d.fresh.id]
+      d.joiners = [d.fresh.id]
+      d.carriedIds = new Set([d.fresh.id])
+    } else {
+      // Holding one of several selected holds all of them.
+      const sel = selRef.current.has(d.nodeId!) ? selRef.current : new Set([d.nodeId!])
+      d.roots = readingOrder(selectionRoots(board, sel), from)
+      d.joiners = readingOrder(selectionJoiners(board, sel), from)
+      d.carriedIds = new Set()
+      for (const r of d.roots) carried(board, r).forEach((id) => d.carriedIds.add(id))
+    }
+    const hitChart: TeamChart = { version: 1, nodes: board.nodes.filter((n) => !d.carriedIds.has(n.id)) }
     d.started = true
-    d.carriedIds = carriedIds
+    d.from = from
     d.hitChart = hitChart
     d.hit = layout(hitChart)
     setEditingRole(null)
     setRenaming(null)
+  }, [])
+
+  /**
+   * The board if `d` were let go at `target`. One thing or a whole selection: onto a
+   * card the roots line up under it, into a box everything selected goes in, and on
+   * open board each root keeps where it stood relative to the one in your hand.
+   */
+  const land = useCallback((board: TeamChart, d: Drag, target: DropTarget): TeamChart => {
+    if (d.fresh) return applyDrop(board, d.fresh, target)
+    if (target.kind === 'box') return applyDropAll(board, d.joiners, target)
+    if (target.kind === 'free') {
+      const own = d.from?.rects.get(d.nodeId!)
+      const dx = own ? target.x - own.x : 0
+      const dy = own ? target.y - own.y : 0
+      const at = new Map(
+        d.roots.map((id) => {
+          const r = d.from?.rects.get(id)
+          return [id, { x: snap((r?.x ?? target.x) + dx), y: snap((r?.y ?? target.y) + dy) }] as const
+        })
+      )
+      return applyDropAll(board, d.roots, target, at)
+    }
+    return applyDropAll(board, d.roots, target)
   }, [])
 
   const onMove = useCallback(
@@ -547,9 +658,11 @@ export function ProjectTeam(): React.JSX.Element {
       } else {
         dragRef.current = null
         if (d.fresh && d.member) clickTrayRef.current(d.member)
+        else if (d.toggleOff) select([...selRef.current].filter((id) => id !== d.toggleOff))
+        else if (d.collapseTo) select([d.collapseTo])
       }
     },
-    [cancelDrag, onMove, toBoard]
+    [cancelDrag, onMove, select, toBoard]
   )
 
   const listen = useCallback(() => {
@@ -574,27 +687,36 @@ export function ProjectTeam(): React.JSX.Element {
     tilt: 0,
     carriedIds: new Set(),
     hit: null,
-    hitChart: null
+    hitChart: null,
+    roots: [],
+    joiners: [],
+    from: null,
+    collapseTo: null,
+    toggleOff: null
   })
 
   /* ---------------------------------------------------------------- what is drawn where */
 
   const base = useMemo(() => layout(display), [display])
   const moverId = drag?.started ? (drag.nodeId ?? drag.fresh?.id ?? null) : null
-  const moverNode = drag?.started ? (drag.fresh ?? display.nodes.find((n) => n.id === drag.nodeId) ?? null) : null
 
   const preview = useMemo(
     () =>
-      drag?.started && moverNode && drag.target
-        ? separate(applyDrop(display, moverNode, drag.target), drag.target.kind === 'remove' ? null : moverNode.id)
+      drag?.started && drag.target
+        ? separate(
+            land(display, drag, drag.target),
+            drag.target.kind === 'remove' ? null : (drag.fresh?.id ?? drag.roots[0] ?? null)
+          )
         : display,
     // The pointer moving inside one target does not change the preview.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [display, drag?.started, moverNode, JSON.stringify(drag?.target ?? null)]
+    [display, drag?.started, drag?.fresh, drag?.roots, JSON.stringify(drag?.target ?? null)]
   )
   const previewLayout = useMemo(() => (preview === display ? base : layout(preview)), [preview, display, base])
 
   const movingIds = drag?.started ? drag.carriedIds : null
+  /** What lifts off the board: the roots of what is held, each with its own shadow. */
+  const liftedIds = drag?.started ? new Set(drag.fresh ? [drag.fresh.id] : drag.roots) : null
   const rects = new Map(previewLayout.rects)
   let referenceIsBase = false
   if (drag?.started && moverId && movingIds) {
@@ -611,7 +733,7 @@ export function ProjectTeam(): React.JSX.Element {
     const dx = lean.x - own.x
     const dy = lean.y - own.y
     for (const id of movingIds) {
-      const r = ref.rects.get(id) ?? (id === moverId ? own : undefined)
+      const r = ref.rects.get(id) ?? base.rects.get(id) ?? (id === moverId ? own : undefined)
       if (r) rects.set(id, { ...r, x: r.x + dx, y: r.y + dy })
     }
   }
@@ -620,6 +742,20 @@ export function ProjectTeam(): React.JSX.Element {
   for (const n of display.nodes) nodeById.set(n.id, n)
   for (const n of preview.nodes) nodeById.set(n.id, n)
   if (drag?.fresh) nodeById.set(drag.fresh.id, drag.fresh)
+
+  /** How deep each node sits in boxes, and how many people each box holds at any depth. */
+  const depthOf = new Map<string, number>()
+  const peopleIn = new Map<string, number>()
+  const hasContents = new Set<string>()
+  for (const n of nodeById.values()) {
+    let k = 0
+    if (n.boxId) hasContents.add(n.boxId)
+    for (let up = n.boxId ? nodeById.get(n.boxId) : undefined; up && k < 256; up = up.boxId ? nodeById.get(up.boxId) : undefined) {
+      k++
+      if (n.kind === 'person') peopleIn.set(up.id, (peopleIn.get(up.id) ?? 0) + 1)
+    }
+    depthOf.set(n.id, k)
+  }
 
   const edges = [...previewLayout.edges]
   if (referenceIsBase && movingIds) {
@@ -689,28 +825,28 @@ export function ProjectTeam(): React.JSX.Element {
   const drop = useCallback(
     (d: Drag) => {
       dragRef.current = null
-      const mover = d.fresh ?? displayRef.current.nodes.find((n) => n.id === d.nodeId)
       const target = d.target
-      if (!mover || !target) {
+      if (!target || (!d.fresh && !d.roots.length)) {
         setDrag(null)
         return
       }
-      const next = separate(applyDrop(displayRef.current, mover, target), target.kind === 'remove' ? null : mover.id)
+      const lead = d.fresh?.id ?? (target.kind === 'box' ? d.joiners[0] : d.roots[0])
+      const next = separate(land(displayRef.current, d, target), target.kind === 'remove' ? null : lead)
       justDropped.current = new Set(d.carriedIds)
       commit(next)
       setDrag(null)
       if (target.kind === 'remove') {
         burst(d.pointer.x, d.pointer.y, 'muted')
-        setSelected(null)
+        select([])
         return
       }
-      setSelected(mover.id)
-      const r = layout(sanitize(next, cast)).rects.get(mover.id)
+      if (d.fresh) select([d.fresh.id])
+      const r = layout(sanitize(next, cast)).rects.get(lead)
       if (!r) return
       if (target.kind === 'parent') burst(r.x + r.w / 2, r.y, 'primary')
       else burst(r.x + r.w / 2, r.y + r.h / 2, 'primary')
     },
-    [burst, cast, commit]
+    [burst, cast, commit, land, select]
   )
   dropRef.current = drop
 
@@ -721,7 +857,21 @@ export function ProjectTeam(): React.JSX.Element {
     e.stopPropagation()
     const r = base.rects.get(id)
     if (!r) return
-    setSelected(id)
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey
+    const current = selRef.current
+    let toggleOff: string | null = null
+    let collapseTo: string | null = null
+    if (additive) {
+      // In, or (on a click that does not become a drag) back out again.
+      if (current.has(id)) toggleOff = id
+      else select([...current, id])
+    } else if (current.has(id) && current.size > 1) {
+      // Pressing one of several keeps them all, so they can be dragged together; a
+      // plain click narrows to this one.
+      collapseTo = id
+    } else {
+      select([id])
+    }
     if (editingRole && editingRole !== id) setEditingRole(null)
     const p = toBoard(e.clientX, e.clientY)
     dragRef.current = {
@@ -732,7 +882,9 @@ export function ProjectTeam(): React.JSX.Element {
       grab: { x: p.x - r.x, y: p.y - r.y },
       startClient: { x: e.clientX, y: e.clientY },
       lastClient: { x: e.clientX, y: e.clientY },
-      pointer: p
+      pointer: p,
+      toggleOff,
+      collapseTo
     }
     listen()
   }
@@ -770,13 +922,13 @@ export function ProjectTeam(): React.JSX.Element {
         const w = (rect?.width ?? 900) - TRAY_SPACE
         const h = rect?.height ?? 600
         moveView({ x: w / 2 - (r.x + r.w / 2) * z, y: h / 2 - (r.y + r.h / 2) * z, z }, true)
-        setSelected(existing.id)
+        select([existing.id])
         setTimeout(() => burst(r.x + r.w / 2, r.y + r.h / 2, 'primary'), reduced ? 0 : 420)
       }
       return
     }
     const node: TeamNode = { id: uid(), kind: 'person', personId: member.personId, x: 0, y: 0 }
-    const sel = selected ? board.nodes.find((n) => n.id === selected) : undefined
+    const sel = single ? board.nodes.find((n) => n.id === single) : undefined
     let target: DropTarget
     if (sel?.kind === 'box') target = { kind: 'box', id: sel.id, index: 999 }
     else if (sel?.boxId) target = { kind: 'box', id: sel.boxId, index: 999 }
@@ -807,17 +959,200 @@ export function ProjectTeam(): React.JSX.Element {
       y: snap(c.y - 60)
     }
     commit({ version: 1, nodes: [...displayRef.current.nodes, node] })
-    setSelected(node.id)
+    select([node.id])
     setRenaming(node.id)
     burst(c.x, c.y)
   }
 
-  const takeOff = (id: string): void => {
-    const r = base.rects.get(id)
-    commit(remove(displayRef.current, id, base))
-    if (r) burst(r.x + r.w / 2, r.y + r.h / 2, 'muted')
-    setSelected(null)
+  /** Off the chart, every one of them, as one step. A box's contents stay, in its place. */
+  const takeOff = (ids: Iterable<string>): void => {
+    const list = [...ids]
+    if (!list.length) return
+    commit(removeAll(displayRef.current, list, base))
+    list.slice(0, 6).forEach((id, i) => {
+      const r = base.rects.get(id)
+      if (r) setTimeout(() => burst(r.x + r.w / 2, r.y + r.h / 2, 'muted'), reduced ? 0 : i * 40)
+    })
+    select([])
     setEditingRole(null)
+  }
+
+  /** Out of whatever box or tree they are in, a step down and to the right of where they were. */
+  const standFree = (ids: Iterable<string>): void => {
+    const board = displayRef.current
+    const roots = readingOrder(selectionRoots(board, ids), base).filter((id) => {
+      const n = board.nodes.find((x) => x.id === id)
+      return n && (n.parentId || n.boxId)
+    })
+    if (!roots.length) return
+    const at = new Map(
+      roots.map((id) => {
+        const r = base.rects.get(id)!
+        return [id, { x: snap(r.x + 40), y: snap(r.y + CARD_H + 40) }] as const
+      })
+    )
+    commit(separate(applyDropAll(board, roots, { kind: 'free', x: 0, y: 0 }, at), roots[0]))
+  }
+
+  const group = (ids: Iterable<string>): void => {
+    const made = groupIntoBox(displayRef.current, ids, base)
+    if (!made) return
+    const next = separate(made.chart, made.boxId)
+    commit(next)
+    select([made.boxId])
+    setRenaming(made.boxId)
+    const r = layout(sanitize(next, cast)).rects.get(made.boxId)
+    if (r) burst(r.x + r.w / 2, r.y + 19)
+  }
+
+  /* ---------------------------------------------------------------- copy and paste */
+
+  const personName = useCallback((personId: string) => members.get(personId)?.name ?? 'Someone', [members])
+  /** Where the pointer is on the board, or null when it is not over open board. */
+  const pointerAt = useRef<{ x: number; y: number } | null>(null)
+
+  const clipOf = (ids: Iterable<string>): TeamClip | null =>
+    copySelection(displayRef.current, ids, layout(displayRef.current), personName, project.id)
+
+  /**
+   * Put a clip on the board: at the pointer when it is over the board, else a step
+   * beside the originals when they are on this board, else in the middle of the view.
+   * What lands is selected and pops in; whoever is not on this project is left out
+   * and named.
+   */
+  const pasteNow = (clip: TeamClip, key: string, at?: { x: number; y: number }): void => {
+    const board = displayRef.current
+    const onProject = new Set(cast.map((c) => c.personId))
+    const originalsHere = clip.projectId === project.id && clip.nodes.some((n) => board.nodes.some((b) => b.id === n.id))
+    let place: Parameters<typeof pasteClip>[2]
+    const pointer = at ?? pointerAt.current
+    if (pointer) place = { centre: pointer }
+    else if (originalsHere) {
+      if (pasteRun.text !== key) pasteRun = { text: key, n: 0 }
+      pasteRun.n++
+      place = { offset: { x: GRID * 2 * pasteRun.n, y: GRID * 2 * pasteRun.n } }
+    } else place = { centre: viewCentre() }
+    const { nodes, skipped } = pasteClip(clip, onProject, place)
+    if (skipped.length) {
+      const are = `${listNames(skipped)} ${skipped.length === 1 ? 'is' : 'are'} not on this project`
+      toast({
+        title: nodes.length ? `Pasted without ${skipped.length === 1 ? skipped[0] : `${skipped.length} people`}` : 'Nothing to paste here',
+        detail: nodes.length
+          ? skipped.length === 1 ? 'They are not on this project.' : `Not on this project: ${listNames(skipped)}`
+          : `${are} — add them to it first.`,
+        icon: 'people',
+        tone: 'neutral'
+      })
+    }
+    if (!nodes.length) return
+    landPasted(nodes)
+  }
+
+  /** New nodes onto the board as one step, popping in one after another. */
+  const landPasted = (nodes: TeamNode[], into?: { target: DropTarget; roots: string[] }): void => {
+    let next: TeamChart = { version: 1, nodes: [...displayRef.current.nodes, ...nodes] }
+    if (into) next = applyDropAll(next, into.roots, into.target)
+    const first = nodes.find((n) => !n.parentId && !n.boxId)?.id ?? nodes[0].id
+    next = separate(next, first)
+    if (!reduced) {
+      nodes.forEach((n, i) => popIn.current.set(n.id, Math.min(i, 14) * 0.035))
+      setTimeout(() => nodes.forEach((n) => popIn.current.delete(n.id)), 1200)
+    }
+    commit(next)
+    select(nodes.map((n) => n.id))
+  }
+
+  const copyNow = (cut: boolean): TeamClip | null => {
+    const ids = selectedRef.current
+    if (!ids.size) return null
+    const clip = clipOf(ids)
+    if (!clip) return null
+    const text = JSON.stringify(clip)
+    inAppClip = { text, clip }
+    pasteRun = { text, n: 0 }
+    if (cut) takeOff(ids)
+    return clip
+  }
+
+  /**
+   * ⌘D: a copy beside the originals that stays where they were — in the same box, or
+   * under the same person — and never touches the clipboard.
+   */
+  const duplicate = (ids: Iterable<string>): void => {
+    const board = displayRef.current
+    const list = [...ids]
+    const clip = clipOf(list)
+    if (!clip) return
+    const { nodes } = pasteClip(clip, new Set(cast.map((c) => c.personId)), { offset: { x: GRID * 2, y: GRID * 2 } })
+    if (!nodes.length) return
+    // Where the originals all sat together, the copies go in right after them.
+    const joiners = selectionJoiners(board, list)
+    const byId = new Map(board.nodes.map((n) => [n.id, n]))
+    const first = byId.get(joiners[0])
+    const sameBox = first?.boxId && joiners.every((id) => byId.get(id)?.boxId === first.boxId) ? first.boxId : null
+    const sameParent = !sameBox && first?.parentId && joiners.every((id) => !byId.get(id)?.boxId && byId.get(id)?.parentId === first.parentId)
+      ? first.parentId
+      : null
+    if (sameBox || sameParent) {
+      const roots = nodes.filter((n) => !n.parentId && !n.boxId)
+      const siblings = board.nodes.filter((n) => (sameBox ? n.boxId === sameBox : !n.boxId && n.parentId === sameParent))
+      const after = Math.max(...joiners.map((id) => siblings.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).findIndex((s) => s.id === id))) + 1
+      const target: DropTarget = sameBox ? { kind: 'box', id: sameBox, index: after } : { kind: 'parent', id: sameParent!, index: after }
+      landPasted(nodes, { target, roots: readingOrder(roots.map((n) => n.id), layout({ version: 1, nodes })) })
+    } else {
+      landPasted(nodes)
+    }
+  }
+
+  // ⌘C, ⌘X and ⌘V arrive as the clipboard's own events (from the keyboard or the Edit
+  // menu alike), which is also the only way to write and read the system clipboard
+  // without asking for it. Never while a field has focus or text is selected.
+  useEffect(() => {
+    const busy = (e: Event): boolean =>
+      typing(e.target) || typing(document.activeElement) || !!window.getSelection()?.toString() || !!dragRef.current
+    const onCopy = (e: ClipboardEvent, cut: boolean): void => {
+      if (busy(e) || !selectedRef.current.size) return
+      const clip = copyNow(cut)
+      if (!clip) return
+      e.clipboardData?.setData('text/plain', JSON.stringify(clip))
+      e.preventDefault()
+    }
+    const copy = (e: ClipboardEvent): void => onCopy(e, false)
+    const cut = (e: ClipboardEvent): void => onCopy(e, true)
+    const paste = (e: ClipboardEvent): void => {
+      if (busy(e)) return
+      const text = e.clipboardData?.getData('text/plain') ?? ''
+      // The system clipboard is the truth when it holds a piece of chart; when it holds
+      // nothing readable, what this window copied last.
+      const clip = readClip(text) ?? (!text && inAppClip ? inAppClip.clip : null)
+      if (!clip) return
+      e.preventDefault()
+      pasteNow(clip, text || inAppClip?.text || '')
+    }
+    document.addEventListener('copy', copy)
+    document.addEventListener('cut', cut)
+    document.addEventListener('paste', paste)
+    return () => {
+      document.removeEventListener('copy', copy)
+      document.removeEventListener('cut', cut)
+      document.removeEventListener('paste', paste)
+    }
+  })
+
+  /** From a menu: the system clipboard too, by asking the page to copy (which lands above). */
+  const copyFromMenu = (cut: boolean): void => {
+    let handled = false
+    const mark = (): void => {
+      handled = true
+    }
+    document.addEventListener(cut ? 'cut' : 'copy', mark, { once: true })
+    try {
+      document.execCommand(cut ? 'cut' : 'copy')
+    } catch {
+      // Not allowed here: the in-window copy below still works.
+    }
+    document.removeEventListener(cut ? 'cut' : 'copy', mark)
+    if (!handled) copyNow(cut)
   }
 
   const start = (kind: 'tree' | 'boxes'): void => {
@@ -847,31 +1182,51 @@ export function ProjectTeam(): React.JSX.Element {
     if (before && after) fit(true)
   }
 
-  // Keys: undo and redo, take the selection off, let go of everything.
+  // Keys: undo and redo, select all, group, duplicate, take the selection off, let go
+  // of everything.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (typing(e.target)) return
+      // A dialog over the board owns the keyboard.
+      if (castModal || (e.target as HTMLElement | null)?.closest?.('[role="dialog"],[data-modal-backdrop]')) return
       const mod = e.metaKey || e.ctrlKey
-      if (mod && e.key.toLowerCase() === 'z') {
+      const key = e.key.toLowerCase()
+      if (mod && key === 'z') {
         e.preventDefault()
         if (e.shiftKey) redo()
         else undo()
         return
       }
-      if (mod && e.key.toLowerCase() === 'y') {
+      if (mod && key === 'y') {
         e.preventDefault()
         redo()
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !dragRef.current) {
+      if (mod && key === 'a' && !dragRef.current) {
+        e.preventDefault()
+        select(displayRef.current.nodes.map((n) => n.id))
+        return
+      }
+      if (mod && key === 'g' && selected.size && !dragRef.current) {
+        e.preventDefault()
+        group(selected)
+        return
+      }
+      if (mod && key === 'd' && selected.size && !dragRef.current) {
+        e.preventDefault()
+        duplicate(selected)
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size && !dragRef.current && !mod) {
         e.preventDefault()
         takeOff(selected)
         return
       }
       if (e.key === 'Escape') {
         if (dragRef.current) cancelDrag()
+        else if (marqueeRef.current) endMarquee()
         else {
-          setSelected(null)
+          select([])
           setEditingRole(null)
         }
       }
@@ -882,10 +1237,70 @@ export function ProjectTeam(): React.JSX.Element {
 
   /* ---------------------------------------------------------------- the background */
 
+  const [marquee, setMarquee] = useState<Marquee | null>(null)
+  const marqueeRef = useRef<Marquee | null>(null)
+  const marqueeCleanup = useRef<(() => void) | null>(null)
+  const endMarquee = (): void => {
+    marqueeCleanup.current?.()
+    marqueeCleanup.current = null
+    marqueeRef.current = null
+    setMarquee(null)
+  }
+
+  /**
+   * Shift, ⌘ or Ctrl held, a drag on open board draws a marquee and selects what it
+   * covers — every card it touches, and every box it takes in whole (so a marquee
+   * across part of a box picks the cards in it, not the box). It adds to what was
+   * selected. It starts only on open board: a press on a box is a press on the box.
+   */
+  const startMarquee = (e: React.PointerEvent): void => {
+    const rect = containerRef.current!.getBoundingClientRect()
+    const sx = e.clientX - rect.left
+    const sy = e.clientY - rect.top
+    const m: Marquee = { sx0: sx, sy0: sy, sx1: sx, sy1: sy, before: new Set(selRef.current) }
+    marqueeRef.current = m
+    const board = displayRef.current
+    const l = base
+    const move = (ev: PointerEvent): void => {
+      const cur = marqueeRef.current
+      if (!cur) return
+      cur.sx1 = ev.clientX - rect.left
+      cur.sy1 = ev.clientY - rect.top
+      if (Math.hypot(cur.sx1 - cur.sx0, cur.sy1 - cur.sy0) < DRAG_THRESHOLD) return
+      const a = toBoard(cur.sx0 + rect.left, cur.sy0 + rect.top)
+      const b = toBoard(cur.sx1 + rect.left, cur.sy1 + rect.top)
+      const box = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) }
+      const hits = board.nodes
+        .filter((n) => {
+          const r = l.rects.get(n.id)
+          if (!r) return false
+          return n.kind === 'box'
+            ? r.x >= box.x && r.y >= box.y && r.x + r.w <= box.x2 && r.y + r.h <= box.y2
+            : r.x < box.x2 && r.x + r.w > box.x && r.y < box.y2 && r.y + r.h > box.y
+        })
+        .map((n) => n.id)
+      select([...cur.before, ...hits])
+      setMarquee({ ...cur })
+    }
+    const up = (): void => endMarquee()
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    marqueeCleanup.current = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }
+
   const onSurfacePointerDown = (e: React.PointerEvent): void => {
     if (e.button !== 0 && e.button !== 1) return
     const t = e.target as HTMLElement
     if (t.closest('[data-tray]') || t.closest('[data-toolbar]') || t.closest('[data-popover]') || t.closest('[data-start]')) return
+    if (e.button === 0 && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+      startMarquee(e)
+      return
+    }
     panRef.current = { startClient: { x: e.clientX, y: e.clientY }, origin: { x: vx.get(), y: vy.get() }, moved: false }
     const move = (ev: PointerEvent): void => {
       const pan = panRef.current
@@ -901,7 +1316,7 @@ export function ProjectTeam(): React.JSX.Element {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       if (panRef.current && !panRef.current.moved) {
-        setSelected(null)
+        select([])
         setEditingRole(null)
         setRenaming(null)
       }
@@ -911,12 +1326,25 @@ export function ProjectTeam(): React.JSX.Element {
     window.addEventListener('pointerup', up)
   }
 
+  /** Remember where the pointer is on open board, for pasting there. */
+  const onSurfacePointerMove = (e: React.PointerEvent): void => {
+    const t = e.target as HTMLElement
+    pointerAt.current =
+      t.closest('[data-tray]') || t.closest('[data-toolbar]') || t.closest('[data-popover]') || t.closest('[data-start]')
+        ? null
+        : toBoard(e.clientX, e.clientY)
+  }
+
   const boardMenu = (e: React.MouseEvent): void => {
     const t = e.target as HTMLElement
     if (t.closest('[data-tray]') || t.closest('[data-toolbar]') || t.closest('[data-node]')) return
     const at = toBoard(e.clientX, e.clientY)
     const items: MenuItem[] = [
       { label: 'Add a box here', icon: 'box', onSelect: () => addBox(at) },
+      ...(inAppClip
+        ? [{ label: 'Paste here', icon: 'paste' as IconName, shortcut: `${MOD}V`, onSelect: () => inAppClip && pasteNow(inAppClip.clip, inAppClip.text, at) }]
+        : []),
+      { label: 'Select all', icon: 'checkbox', shortcut: `${MOD}A`, onSelect: () => select(display.nodes.map((n) => n.id)), disabled: display.nodes.length === 0 },
       { label: 'Tidy up', icon: 'tidy', onSelect: tidyUp, disabled: display.nodes.length === 0 },
       { label: 'Show everything', icon: 'fit', onSelect: () => fit(true) }
     ]
@@ -927,7 +1355,7 @@ export function ProjectTeam(): React.JSX.Element {
         danger: true,
         confirm: {
           title: 'Clear the whole chart?',
-          body: 'Everybody goes back to the list. ⌘Z brings it back.',
+          body: `Everybody goes back to the list. ${MOD}Z brings it back.`,
           confirmLabel: 'Clear'
         },
         onSelect: () => commit(EMPTY_CHART)
@@ -936,32 +1364,53 @@ export function ProjectTeam(): React.JSX.Element {
     openMenu(e, items)
   }
 
+  /** What can be done to whatever is selected, one thing or many. */
+  const editItems = (ids: Set<string>, many: boolean): MenuItem[] => [
+    { label: many ? 'Group into box' : 'Put in a new box', icon: 'group', shortcut: `${MOD}G`, onSelect: () => group(ids) },
+    { label: 'Copy', icon: 'copy', shortcut: `${MOD}C`, onSelect: () => copyFromMenu(false) },
+    { label: 'Cut', icon: 'scissors', shortcut: `${MOD}X`, onSelect: () => copyFromMenu(true) },
+    { label: 'Duplicate', icon: 'plus', shortcut: `${MOD}D`, onSelect: () => duplicate(ids) }
+  ]
+
   const nodeMenu = (e: React.MouseEvent, node: TeamNode): void => {
     e.stopPropagation()
-    setSelected(node.id)
+    // Right-clicking one of several speaks for all of them.
+    if (selected.has(node.id) && selected.size > 1) {
+      const ids = new Set(selected)
+      const loose = selectionRoots(display, ids).some((id) => {
+        const n = display.nodes.find((x) => x.id === id)
+        return n?.parentId || n?.boxId
+      })
+      openMenu(e, [
+        ...editItems(ids, true),
+        ...(loose ? [{ label: 'Stand on their own', icon: 'arrowLeft' as IconName, onSelect: () => standFree(ids) }] : []),
+        'separator',
+        { label: `Take ${ids.size} off the chart`, icon: 'close', shortcut: '⌫', onSelect: () => takeOff(ids) }
+      ])
+      return
+    }
+    select([node.id])
+    const ids = new Set([node.id])
     const member = node.personId ? members.get(node.personId) : undefined
+    const loose = node.parentId || node.boxId
+      ? [{ label: 'Stand on its own', icon: 'arrowLeft' as IconName, onSelect: () => standFree(ids) }]
+      : []
     const items: MenuItem[] =
       node.kind === 'person' && member
         ? [
             { label: 'Change role', icon: 'edit', onSelect: () => setEditingRole(node.id) },
-            ...(node.parentId || node.boxId
-              ? [{
-                  label: 'Stand on its own',
-                  icon: 'arrowLeft' as IconName,
-                  onSelect: () => {
-                    const r = base.rects.get(node.id)!
-                    commit(applyDrop(displayRef.current, node, { kind: 'free', x: snap(r.x + 40), y: snap(r.y + CARD_H + 40) }))
-                  }
-                }]
-              : []),
-            { label: 'Take off the chart', icon: 'close', onSelect: () => takeOff(node.id) },
+            ...loose,
+            ...editItems(ids, false),
+            { label: 'Take off the chart', icon: 'close', shortcut: '⌫', onSelect: () => takeOff(ids) },
             'separator',
             ...memberItems(member)
           ]
         : [
             { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(node.id) },
+            ...loose,
+            ...editItems(ids, false),
             'separator',
-            { label: 'Remove the box', icon: 'trash', danger: true, onSelect: () => takeOff(node.id) }
+            { label: 'Remove the box', icon: 'trash', danger: true, shortcut: '⌫', onSelect: () => takeOff(ids) }
           ]
     openMenu(e, items)
   }
@@ -969,37 +1418,42 @@ export function ProjectTeam(): React.JSX.Element {
   /* ---------------------------------------------------------------- drawing it */
 
   const targetId = drag?.started && drag.target && (drag.target.kind === 'parent' || drag.target.kind === 'box') ? drag.target.id : null
-  const moverName = moverId ? (drag?.member?.name ?? nameOf(moverId)) : ''
-  const carriedMore = movingIds ? [...movingIds].filter((id) => nodeById.get(id)?.kind === 'person').length - (moverNode?.kind === 'person' ? 1 : 0) : 0
+  const heldList = drag?.started ? (drag.fresh ? [drag.fresh.id] : drag.target?.kind === 'box' ? drag.joiners : drag.roots) : []
+  // The one in your hand is named first; the rest are counted.
+  const named = moverId && heldList.includes(moverId) ? moverId : heldList[0]
+  const moverName = heldList.length ? (drag?.member?.name ?? nameOf(named)) : ''
+  const who = heldList.length > 1 ? `${moverName} and ${heldList.length - 1} more` : moverName
+  const carriedMore = movingIds ? movingIds.size - 1 : 0
   let caption = ''
   if (drag?.started) {
-    if (!drag.target) caption = `Let go to put ${moverName} back`
+    if (!drag.target) caption = `Let go to put ${who} back`
     else if (drag.target.kind === 'remove' && carriedMore > 0) caption = `Take ${moverName} and ${carriedMore} more off the chart`
-    else caption = describeDrop(drag.target, moverName, (id) => nameOf(id))
+    else caption = describeDrop(drag.target, who, (id) => nameOf(id), heldList.length > 1)
   }
 
   const layerNodes = (top: boolean): React.JSX.Element[] => {
     const out: React.JSX.Element[] = []
-    const ordered = [...rects.keys()].sort((a, b) => {
-      // Boxes underneath the cards that sit in them.
-      const ka = nodeById.get(a)?.kind === 'box' ? 0 : 1
-      const kb = nodeById.get(b)?.kind === 'box' ? 0 : 1
-      return ka - kb
-    })
+    // Outer boxes under inner ones, every box under the cards.
+    const rank = (id: string): number => (nodeById.get(id)?.kind === 'box' ? (depthOf.get(id) ?? 0) : 1000)
+    const ordered = [...rects.keys()].sort((a, b) => rank(a) - rank(b))
     for (const id of ordered) {
       if (!!movingIds?.has(id) !== top) continue
       const node = nodeById.get(id)
       if (!node) continue
       const m = motionFor(id, rects.get(id)!)
-      const lifted = top && id === moverId
+      const lifted = top && !!liftedIds?.has(id)
+      // Only a single thing tilts as it is swung about: a group, or a box with cards in
+      // it, is several pieces that would each tilt about their own middle.
+      const tilt = lifted && movingIds?.size === 1 ? (drag?.tilt ?? 0) : 0
       const member = node.personId ? members.get(node.personId) : undefined
       if (node.kind === 'person' && !member) continue
+      const pop = popIn.current.get(id)
       out.push(
         <motion.div
           key={id}
           data-node
           className={`absolute left-0 top-0 ${lifted ? 'cursor-grabbing' : 'cursor-grab'}`}
-          style={{ x: m.x, y: m.y, width: m.w, height: m.h, zIndex: node.kind === 'box' ? 0 : 1 }}
+          style={{ x: m.x, y: m.y, width: m.w, height: m.h, zIndex: rank(id) }}
           onPointerDown={(e) => onNodePointerDown(e, id)}
           onDoubleClick={(e) => {
             e.stopPropagation()
@@ -1010,31 +1464,45 @@ export function ProjectTeam(): React.JSX.Element {
         >
           <motion.div
             className="h-full w-full"
-            initial={reduced || spawn.current.has(id) || node.kind === 'person' ? false : { opacity: 0, scale: 0.92 }}
+            initial={
+              pop !== undefined
+                ? { opacity: 0, scale: 0.82 }
+                : reduced || spawn.current.has(id) || node.kind === 'person'
+                  ? false
+                  : { opacity: 0, scale: 0.92 }
+            }
             animate={{
               opacity: 1,
-              scale: lifted && !reduced ? 1.045 : targetId === id && node.kind === 'person' && !reduced ? 1.03 : 1,
-              rotate: lifted ? (drag?.tilt ?? 0) : 0
+              scale: lifted && !reduced ? (movingIds && movingIds.size > 1 ? 1.02 : 1.045) : targetId === id && node.kind === 'person' && !reduced ? 1.03 : 1,
+              rotate: tilt
             }}
-            transition={reduced ? STILL : { type: 'spring', stiffness: 500, damping: lifted ? 30 : 17 }}
+            transition={
+              reduced
+                ? STILL
+                : pop !== undefined
+                  ? { type: 'spring', stiffness: 520, damping: 22, delay: pop }
+                  : { type: 'spring', stiffness: 500, damping: lifted ? 30 : 17 }
+            }
           >
             {node.kind === 'person' && member ? (
               <PersonCard
                 member={member}
                 open={openCounts.get(member.personId) ?? 0}
-                selected={selected === id && !drag?.started}
+                selected={selected.has(id) && !drag?.started}
                 targeted={targetId === id}
                 lifted={lifted}
                 onEditRole={() => {
-                  setSelected(id)
+                  select([id])
                   setEditingRole(id)
                 }}
               />
             ) : (
               <BoxCard
                 label={node.label ?? ''}
-                count={preview.nodes.filter((n) => n.boxId === id).length}
-                selected={selected === id && !drag?.started}
+                count={peopleIn.get(id) ?? 0}
+                empty={!hasContents.has(id)}
+                depth={depthOf.get(id) ?? 0}
+                selected={selected.has(id) && !drag?.started}
                 targeted={targetId === id}
                 lifted={lifted}
                 editing={renaming === id}
@@ -1091,6 +1559,10 @@ export function ProjectTeam(): React.JSX.Element {
         drag?.started ? 'cursor-grabbing' : ''
       }`}
       onPointerDown={onSurfacePointerDown}
+      onPointerMove={onSurfacePointerMove}
+      onPointerLeave={() => {
+        pointerAt.current = null
+      }}
       onContextMenu={boardMenu}
     >
       {/* The dot grid, panned and zoomed with the board so it reads as the surface. */}
@@ -1112,14 +1584,26 @@ export function ProjectTeam(): React.JSX.Element {
         ))}
       </motion.div>
 
+      {marquee && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-[6px] border border-primary/50 bg-primary/[0.06]"
+          style={{
+            left: Math.min(marquee.sx0, marquee.sx1),
+            top: Math.min(marquee.sy0, marquee.sy1),
+            width: Math.abs(marquee.sx1 - marquee.sx0),
+            height: Math.abs(marquee.sy1 - marquee.sy0)
+          }}
+        />
+      )}
+
       <div data-toolbar className="absolute left-3 top-3 z-20 flex items-center gap-1">
         <div className="glass-raised hairline flex items-center gap-0.5 rounded-field border bg-base-100/95 p-1 shadow-[0_8px_24px_-16px_rgb(0_0_0/0.35)] backdrop-blur">
           <ToolButton icon="plus" label="Add person" onClick={() => setCastModal({ member: null })} />
           <ToolButton icon="box" label="Add box" onClick={() => addBox()} />
           <ToolButton icon="tidy" label="Tidy" onClick={tidyUp} disabled={display.nodes.length === 0} />
           <Divider />
-          <ToolButton icon="undo" title="Undo (⌘Z)" onClick={undo} disabled={past.current.length === 0} />
-          <ToolButton icon="redo" title="Redo (⇧⌘Z)" onClick={redo} disabled={future.current.length === 0} />
+          <ToolButton icon="undo" title={`Undo (${MOD}Z)`} onClick={undo} disabled={past.current.length === 0} />
+          <ToolButton icon="redo" title={`Redo (⇧${MOD}Z)`} onClick={redo} disabled={future.current.length === 0} />
           <Divider />
           <ToolButton icon="minus" title="Zoom out" onClick={() => zoomBy(1 / 1.25)} />
           <motion.span className="w-11 text-center text-[11px] tabular-nums text-base-content/50">{zoomLabel}</motion.span>
@@ -1187,9 +1671,16 @@ export function ProjectTeam(): React.JSX.Element {
           !empty &&
           display.nodes.length > 0 && (
             <div className="text-[11px] text-base-content/35">
-              {selected
-                ? 'Drag to move · ⌫ takes it off the chart · double-click to open'
-                : 'Drop someone on a card to report to it · into a box to group · drag the board to pan'}
+              {selected.size > 1 ? (
+                <>
+                  <span className="font-medium text-primary/80 tabular-nums">{selected.size} selected</span>
+                  {` · drag to move together · ${MOD}G groups into a box · ${MOD}C copies · ⌫ takes them off`}
+                </>
+              ) : selected.size === 1 ? (
+                `Drag to move · ⇧-click to select more · ⌫ takes it off the chart · double-click to open`
+              ) : (
+                'Drop someone on a card to report to it · into a box to group · drag the board to pan · ⇧-drag to select'
+              )}
             </div>
           )
         )}

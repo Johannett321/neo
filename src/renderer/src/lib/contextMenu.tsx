@@ -11,6 +11,8 @@ export interface MenuAction {
   onSelect: () => void
   danger?: boolean
   disabled?: boolean
+  /** The key that does the same thing, shown quietly at the end of the row. */
+  shortcut?: string
   /** When set, the action asks before running. */
   confirm?: { title: string; body?: string; confirmLabel?: string }
 }
@@ -160,6 +162,9 @@ export function ContextMenuProvider({ children }: { children: ReactNode }): Reac
       >
         {item.icon && <Icon name={item.icon} size={13} className="opacity-55" />}
         <span className="flex-1">{item.label}</span>
+        {!submenu && item.shortcut && (
+          <span className="shrink-0 text-[11px] tracking-[0.04em] text-base-content/35">{item.shortcut}</span>
+        )}
         {submenu && <Icon name="chevronRight" size={12} className="opacity-40" />}
       </button>
     )

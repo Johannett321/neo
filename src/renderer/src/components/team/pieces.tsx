@@ -90,6 +90,8 @@ export function PersonCard({
 export function BoxCard({
   label,
   count,
+  empty,
+  depth,
   selected,
   targeted,
   lifted,
@@ -98,7 +100,12 @@ export function BoxCard({
   onStartRename
 }: {
   label: string
+  /** People inside, at any depth. */
   count: number
+  /** Nothing at all sits in it — not a person, not a box. */
+  empty: boolean
+  /** How many boxes it sits inside: alternate tints keep a box inside a box legible. */
+  depth: number
   selected: boolean
   targeted: boolean
   lifted: boolean
@@ -123,8 +130,10 @@ export function BoxCard({
           ? 'border-primary/55 bg-primary/[0.06] shadow-[0_0_0_5px_color-mix(in_oklch,var(--color-primary)_13%,transparent)]'
           : selected
             ? 'border-primary/40 bg-base-200/60 shadow-[0_0_0_3px_color-mix(in_oklch,var(--color-primary)_12%,transparent)]'
-            : 'hairline bg-base-200/50',
-        lifted ? 'shadow-[0_26px_50px_-20px_rgb(0_0_0/0.4)]' : ''
+            : depth % 2
+              ? 'hairline bg-base-100'
+              : 'hairline bg-base-200/50',
+        lifted ? 'shadow-[0_26px_50px_-20px_rgb(0_0_0/0.4)]' : depth > 0 ? 'shadow-[0_1px_2px_rgb(0_0_0/0.05)]' : ''
       ].join(' ')}
     >
       <div className="flex h-[38px] items-center gap-2 px-3.5" data-handle="box">
@@ -159,7 +168,7 @@ export function BoxCard({
         )}
         <span className="shrink-0 text-[11px] tabular-nums text-base-content/40">{count || ''}</span>
       </div>
-      {count === 0 && (
+      {empty && (
         <div
           className={`pointer-events-none absolute inset-x-[14px] bottom-[14px] top-[38px] flex items-center justify-center rounded-[12px] border border-dashed text-[11.5px] transition-colors ${
             targeted ? 'border-primary/50 text-primary' : 'border-base-content/15 text-base-content/35'
