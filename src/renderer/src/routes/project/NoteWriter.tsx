@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useApi, useApiMutation } from '@/lib/api'
+import { stableKey } from '@/lib/sync'
 import { differs, relativeFromIso } from '@/lib/format'
 import { excerpt } from '@/lib/markdown'
 import { useImageDrop, useNoteLinks } from '@/lib/noteLinks'
@@ -62,7 +63,9 @@ export function NoteWriter(): React.JSX.Element {
     set(value)
   }
 
-  const note = data?.notes.find((n) => n.id === noteId) ?? null
+  // A note started offline is addressed by its temporary id until the page is left;
+  // `stableKey` is how the real one is still found under it afterwards.
+  const note = data?.notes.find((n) => n.id === noteId || stableKey(n.id) === noteId) ?? null
   const missing = Boolean(data) && noteId !== 'new' && !note && idRef.current !== noteId
 
   // Loads a note once. `new` becomes a real id the moment it first saves, and that

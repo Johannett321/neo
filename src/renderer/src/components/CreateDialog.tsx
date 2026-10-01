@@ -144,7 +144,9 @@ export function CreateDialog({
     const where = project?.name ?? 'the project'
     if (kind === 'task') {
       const assignedElsewhere = Boolean(draft.assigneePersonId) && draft.assigneePersonId !== me?.id
-      await saveTask.mutateAsync({
+      // Tasks, decisions and log entries are on screen before Neo Cloud answers, so the
+      // dialog closes at once; a meeting waits, because the toast links to its page.
+      saveTask.mutate({
         projectId: targetProject,
         title: draft.title.trim(),
         details: draft.note,
@@ -161,7 +163,7 @@ export function CreateDialog({
         to: `/projects/${targetProject}/kanban`
       })
     } else if (kind === 'decision') {
-      await saveDecision.mutateAsync({
+      saveDecision.mutate({
         projectId: targetProject,
         title: draft.title.trim(),
         rationale: draft.note,
@@ -174,7 +176,7 @@ export function CreateDialog({
         to: `/projects/${targetProject}/decisions`
       })
     } else if (kind === 'journal') {
-      await saveJournal.mutateAsync({
+      saveJournal.mutate({
         projectId: targetProject,
         body: draft.note.trim() || draft.title.trim(),
         occurredOn: draft.date

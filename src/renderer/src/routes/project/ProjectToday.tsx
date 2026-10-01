@@ -11,6 +11,7 @@ import { LogPanel } from '@/components/project/LogPanel'
 import { ReentryBrief } from '@/components/project/ReentryBrief'
 import { Standing } from '@/components/project/Standing'
 import { useProject } from './ProjectLayout'
+import { stableKey } from '@/lib/sync'
 
 /** Soonest first, so a list of dated work reads in the order it will bite. */
 const byDue = (a: TaskView, b: TaskView): number => (a.daysUntilDue ?? 0) - (b.daysUntilDue ?? 0)
@@ -148,7 +149,7 @@ export function ProjectToday(): React.JSX.Element {
                 */}
                 {cast.slice(0, 5).map((member) => (
                   <Link
-                    key={member.id}
+                    key={stableKey(member.id)}
                     to={`/people/${member.personId}`}
                     className="row-hover -mx-2 flex items-center gap-2.5 rounded-field px-2 py-1.5"
                   >

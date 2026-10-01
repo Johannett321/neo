@@ -88,12 +88,13 @@ export function TaskDialog({
       ? { id: state.assigneePersonId, name: task.assigneeName ?? 'Someone', color: task.assigneeColor }
       : null
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!task || !state.title.trim()) return
     // Whether it is delegated follows from who owns it, rather than being asked twice.
     const kind = state.assigneePersonId && state.assigneePersonId !== me?.id ? 'delegated' : 'task'
 
-    await save.mutateAsync({
+    // Drawn at once and sent behind it, so the dialog closes on Save. See `useApiMutation`.
+    save.mutate({
       id: task.id,
       title: state.title.trim(),
       details: state.details,
@@ -111,7 +112,7 @@ export function TaskDialog({
       onClose={onClose}
       title="Edit item"
       description={task?.projectName}
-      onSubmit={() => void submit()}
+      onSubmit={submit}
       isDirty={differs(state, original)}
       footer={
         <>
@@ -121,8 +122,8 @@ export function TaskDialog({
               title="Delete this item?"
               body={task.title}
               className="btn btn-ghost btn-sm mr-auto text-base-content/50 hover:text-error"
-              onConfirm={async () => {
-                await remove.mutateAsync({ id: task.id })
+              onConfirm={() => {
+                remove.mutate({ id: task.id })
                 onClose()
               }}
             />
@@ -133,7 +134,7 @@ export function TaskDialog({
           <button
             className="btn btn-primary btn-sm"
             disabled={!state.title.trim()}
-            onClick={() => void submit()}
+            onClick={submit}
           >
             Save
           </button>

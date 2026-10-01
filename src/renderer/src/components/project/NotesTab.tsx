@@ -10,6 +10,7 @@ import { Icon } from '@/components/Icon'
 import { EmptyState } from '@/components/primitives'
 import { MoveToFolderModal } from '@/components/FolderPicker'
 import { FolderTrail } from '@/components/FolderTrail'
+import { stableKey } from '@/lib/sync'
 import {
   CarryableRow, ContentFolderRow, FilingDialogs, useFiling
 } from '@/components/ContentFolders'
@@ -156,7 +157,7 @@ export function NotesTab({
             {here.map(({ kind, item }) =>
               kind === 'note' ? (
                 <NoteRow
-                  key={item.id}
+                  key={stableKey(item.id)}
                   note={item}
                   filing={filing}
                   href={noteHref(item.id)}
@@ -164,7 +165,7 @@ export function NotesTab({
                 />
               ) : (
                 <CanvasRow
-                  key={item.id}
+                  key={stableKey(item.id)}
                   canvas={item}
                   filing={filing}
                   href={canvasHref(item.id)}

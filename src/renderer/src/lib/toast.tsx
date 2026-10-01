@@ -10,9 +10,21 @@ interface Toast {
   icon?: IconName
   /** Where clicking the toast takes you. */
   to?: string
+  /**
+   * `error` is a write that did not happen — said in the warm colour and kept until
+   * dismissed, because a thing you believed was saved and was not must not slip away
+   * on a timer while you are looking at something else.
+   */
+  tone?: 'success' | 'error' | 'info'
+  /** Buttons, for the one or two things worth doing about it right here. */
+  actions?: { label: string; onClick: () => void }[]
+  /** Stays until dismissed or replaced — set for anything that needs an answer. */
+  sticky?: boolean
+  /** A toast with a key replaces the one already showing under it, rather than stacking. */
+  key?: string
 }
 
-const ToastContext = createContext<{ push: (toast: Omit<Toast, 'id'>) => void } | null>(null)
+const ToastContext = createContext<{ push: (toast: Omit<Toast, 'id'>) => void; dismissKey: (key: string) => void } | null>(null)
 
 const LIFETIME_MS = 6000
 
@@ -33,13 +45,17 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
   const push = useCallback(
     (toast: Omit<Toast, 'id'>): void => {
       const id = nextId.current++
-      setToasts((list) => [...list.slice(-2), { ...toast, id }])
-      window.setTimeout(() => dismiss(id), LIFETIME_MS)
+      setToasts((list) => [...list.filter((t) => !toast.key || t.key !== toast.key).slice(-2), { ...toast, id }])
+      if (!toast.sticky && toast.tone !== 'error') window.setTimeout(() => dismiss(id), LIFETIME_MS)
     },
     [dismiss]
   )
 
-  const value = useMemo(() => ({ push }), [push])
+  const dismissKey = useCallback((key: string): void => {
+    setToasts((list) => list.filter((t) => t.key !== key))
+  }, [])
+
+  const value = useMemo(() => ({ push, dismissKey }), [push, dismissKey])
 
   return (
     <ToastContext.Provider value={value}>
@@ -62,14 +78,42 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
               className="pointer-events-auto"
             >
               <div className="glass-raised hairline flex items-start gap-3 rounded-box border bg-base-100 px-3.5 py-3 shadow-xl shadow-black/10">
-                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-success/12 text-success">
+                <span
+                  className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
+                    toast.tone === 'error'
+                      ? 'bg-warning/15 text-warning'
+                      : toast.tone === 'info'
+                        ? 'bg-base-content/8 text-base-content/60'
+                        : 'bg-success/12 text-success'
+                  }`}
+                >
                   <Icon name={toast.icon ?? 'check'} size={13} strokeWidth={2.2} />
                 </span>
 
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-medium">{toast.title}</div>
                   {toast.detail && (
-                    <div className="truncate text-[11px] text-base-content/50">{toast.detail}</div>
+                    <div
+                      className={`text-[11px] text-base-content/50 ${toast.tone === 'error' ? 'line-clamp-3' : 'truncate'}`}
+                    >
+                      {toast.detail}
+                    </div>
+                  )}
+                  {toast.actions && toast.actions.length > 0 && (
+                    <div className="mt-1.5 flex gap-3">
+                      {toast.actions.map((action) => (
+                        <button
+                          key={action.label}
+                          className="text-[11px] font-medium text-primary hover:underline"
+                          onClick={() => {
+                            action.onClick()
+                            dismiss(toast.id)
+                          }}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
                   )}
                   {toast.to && (
                     <button
@@ -98,6 +142,15 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
       </div>
     </ToastContext.Provider>
   )
+}
+
+/** For code that may run above the provider — a mutation's refusal says so if it can. */
+export function useToastIfAny(): ((toast: Omit<Toast, 'id'>) => void) | null {
+  return useContext(ToastContext)?.push ?? null
+}
+
+export function useDismissToast(): (key: string) => void {
+  return useContext(ToastContext)?.dismissKey ?? (() => {})
 }
 
 export function useToast(): (toast: Omit<Toast, 'id'>) => void {

@@ -5,6 +5,7 @@ import { formatDate, plural, todayStr } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { DateField } from '@/components/DateField'
 import { ConfirmButton, Section } from '@/components/primitives'
+import { stableKey } from '@/lib/sync'
 
 /** How much of the log a front page shows before you ask for the rest. */
 const PREVIEW = 6
@@ -32,9 +33,9 @@ export function LogPanel({
   const [body, setBody] = useState('')
   const [occurredOn, setOccurredOn] = useState(todayStr())
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!body.trim()) return
-    await save.mutateAsync({ projectId, body: body.trim(), occurredOn })
+    save.mutate({ projectId, body: body.trim(), occurredOn })
     setBody('')
     setOccurredOn(todayStr())
     setComposing(false)
@@ -103,7 +104,7 @@ export function LogPanel({
         <>
           <div className="space-y-4">
             {shown.map((entry) => (
-              <div key={entry.id} className="group flex gap-4">
+              <div key={stableKey(entry.id)} className="group flex gap-4">
                 <div className="w-16 shrink-0 pt-0.5 text-[11px] tabular-nums text-base-content/40">
                   {formatDate(entry.occurredOn)}
                 </div>

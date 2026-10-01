@@ -6,6 +6,7 @@ import { dueLabel, formatDate, KIND_LABEL, projectColor } from '@/lib/format'
 import { useReveal } from '@/lib/reveal'
 import { Avatar, Dot } from './primitives'
 import { Icon } from './Icon'
+import { stableKey } from '@/lib/sync'
 
 const KIND_ICON = { task: 'check', delegated: 'arrowRight' } as const
 
@@ -171,7 +172,7 @@ export function TaskList({
   return (
     <div className="hairline overflow-hidden rounded-box border bg-base-100">
       {tasks.map((task) => (
-        <TaskRow key={task.id} task={task} showProject={showProject} onEdit={onEdit} />
+        <TaskRow key={stableKey(task.id)} task={task} showProject={showProject} onEdit={onEdit} />
       ))}
     </div>
   )
