@@ -50,7 +50,10 @@ export function ReentryBrief({ brief }: { brief: Brief }): React.JSX.Element | n
               <span className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-base-content/40">
                 {KIND_LABEL[change.kind] ?? change.kind}
               </span>
-              <span className="min-w-0 flex-1 truncate">{change.summary}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {change.actorName && <span className="text-base-content/90">{change.actorName} · </span>}
+                {change.summary}
+              </span>
               <span className="shrink-0 text-[11px] text-base-content/35">
                 {relativeFromIso(change.createdAt)}
               </span>

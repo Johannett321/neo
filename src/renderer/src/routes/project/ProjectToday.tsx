@@ -196,6 +196,7 @@ export function ProjectToday(): React.JSX.Element {
                 {activity.slice(0, 6).map((item) => (
                   <div key={item.id} className="flex items-baseline gap-2">
                     <span className="min-w-0 flex-1 truncate text-[11px] text-base-content/50">
+                      {item.actorName && <span className="text-base-content/70">{item.actorName} · </span>}
                       {item.summary}
                     </span>
                     <span className="shrink-0 text-[10px] text-base-content/30">
