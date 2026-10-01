@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useNavigate, type NavigateOptions } from 'react-router-dom'
 import type { Workspace } from '@shared/types'
 import { useApi, useApiMutation } from './api'
 
@@ -66,4 +67,28 @@ export function useWorkspace(): Workspace {
   const { active } = useWorkspaces()
   if (!active) throw new Error('useWorkspace used with no active workspace')
   return active
+}
+
+/**
+ * Go to something that lives in a workspace, switching to that workspace first when it
+ * is not the one on screen.
+ *
+ * Every screen but one is fenced to the active workspace, so a link on it can never
+ * lead out of it. The overview across workspaces is the exception, and a row there that
+ * opened its project without switching would draw that project inside the wrong
+ * workspace — the sidebar, the people, the search all answering for somewhere else.
+ * Switching and navigating in the same tick lands both in one render. On a fenced screen
+ * the workspace is already the right one, so this is an ordinary `navigate`.
+ */
+export function useGoIn(): (workspaceId: string, path: string, options?: NavigateOptions) => void {
+  const { active, switchTo } = useWorkspaces()
+  const navigate = useNavigate()
+  const activeId = active?.id
+  return useCallback(
+    (workspaceId: string, path: string, options?: NavigateOptions) => {
+      if (workspaceId && workspaceId !== activeId) switchTo(workspaceId)
+      navigate(path, options)
+    },
+    [activeId, switchTo, navigate]
+  )
 }

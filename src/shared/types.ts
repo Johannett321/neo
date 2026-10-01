@@ -833,6 +833,33 @@ export interface TodayView {
   stats: { openTasks: number; activeProjects: number; peopleTracked: number }
 }
 
+/** One workspace's line at the top of the overview across workspaces. */
+export interface WorkspaceDay {
+  workspaceId: string
+  name: string
+  color: string
+  icon: string | null
+  overdue: number
+  dueToday: number
+  /** Due in the next seven days, after today. */
+  soon: number
+  openTodos: number
+}
+
+/**
+ * Today across every workspace — the one view that crosses the line every other
+ * screen keeps, on purpose, and so every row in it says which workspace it is in.
+ * See `routes/Everywhere.tsx`.
+ */
+export interface TodayAcross {
+  today: string
+  workspaces: WorkspaceDay[]
+  overdue: TaskView[]
+  dueToday: TaskView[]
+  soon: TaskView[]
+  owedFromMeetings: (MeetingOwing & { workspaceId: string; workspaceName: string; workspaceColor: string })[]
+}
+
 export interface SearchHit {
   kind: 'project' | 'task' | 'person' | 'note' | 'canvas' | 'decision' | 'journal'
   id: string

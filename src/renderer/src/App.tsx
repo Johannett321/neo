@@ -37,6 +37,7 @@ import { NewProjectModal, ProjectsPage } from '@/routes/Projects'
 import { SettingsPage } from '@/routes/Settings'
 import { WorkspaceSettings } from '@/routes/WorkspaceSettings'
 import { TodayPage } from '@/routes/Today'
+import { EverywherePage } from '@/routes/Everywhere'
 
 /**
  * What counts as "a different screen" for the purposes of the transition. A project's
@@ -121,8 +122,14 @@ function Shell(): React.JSX.Element {
     } else if (meta && e.key.toLowerCase() === 'j') {
       e.preventDefault()
       assistant.toggle()
+    } else if (meta && e.shiftKey && e.code === 'Digit1') {
+      // Also in the Go menu. Matched on the key rather than the character because
+      // Shift turns the 1 into whatever the keyboard layout puts there, and on some
+      // layouts the menu's accelerator never sees it.
+      e.preventDefault()
+      if (!window.location.hash.startsWith('#/all')) navigate('/all')
     }
-  }, [assistant])
+  }, [assistant, navigate])
 
   useEffect(() => {
     window.addEventListener('keydown', onKeyDown)
@@ -191,6 +198,7 @@ function Shell(): React.JSX.Element {
             >
               <Routes location={location}>
                 <Route path="/" element={<TodayPage />} />
+                <Route path="/all" element={<EverywherePage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:id" element={<ProjectLayout />}>
                   <Route index element={<ProjectToday />} />

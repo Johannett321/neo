@@ -21,11 +21,16 @@ interface RevealState {
   reveal?: string
 }
 
+/** The history state that points a screen at one thing on it, for a caller navigating itself. */
+export function revealState(id: string): RevealState {
+  return { reveal: id }
+}
+
 /** Go to a screen, pointing at one thing on it. */
 export function useReveal(): (path: string, id: string) => void {
   const navigate = useNavigate()
   return useCallback(
-    (path: string, id: string) => navigate(path, { state: { reveal: id } satisfies RevealState }),
+    (path: string, id: string) => navigate(path, { state: revealState(id) }),
     [navigate]
   )
 }

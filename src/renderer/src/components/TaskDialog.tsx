@@ -42,10 +42,14 @@ export function TaskDialog({
   /**
    * The project's cast, not the workspace's people. An item belongs to one project, so
    * the people who can own it are the people on it.
+   *
+   * Asked in the item's own workspace, which is the active one everywhere except the
+   * overview across workspaces — where it can be any of them, and asking the active
+   * one would offer the wrong workspace's people.
    */
   const people = useApi(
     'person:list',
-    { workspaceId: workspace.id, projectId: task?.projectId ?? '' },
+    { workspaceId: task?.workspaceId ?? workspace.id, projectId: task?.projectId ?? '' },
     { enabled: open && Boolean(task?.projectId) }
   )
   const save = useApiMutation('task:save')

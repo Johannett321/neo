@@ -165,6 +165,25 @@ itself with the workspace colour so it is always obvious where you are.
 
 The app ships with nothing in it; the first thing you do is create a workspace.
 
+**One screen crosses the boundary, on purpose: All workspaces.** The boundary has a
+cost. A card going late in the workspace you are *not* in says nothing until you happen
+to look, and the deadline in the other working life is exactly the one you miss. So
+once there is more than one workspace, the top of the sidebar has **All workspaces**
+(`⇧⌘1`, or *All workspaces* in the command palette): what is overdue, due today and due
+in the next seven days in every workspace at once, plus the meetings still owing to-dos.
+It is grouped by urgency first, because that is what you came to find; each row says
+which workspace it is in with that workspace's colour down its left edge and its name
+before the project's. A strip across the top has a tile per workspace — its mark, its
+name, and how much is late and due there, grey when nothing is — and pressing one opens
+that workspace's own Today.
+
+It answers that one question and nothing more: no needs-a-look, no stats, no banner.
+Each workspace's own Today stays exactly as fenced as it was. A row there does what a
+row on Today does — tick it off, open it to edit, show it on the board, open its
+project — and anything that leads somewhere switches to the row's workspace first, so
+you never arrive at a project drawn inside the wrong life. With one workspace the entry
+is not shown, because it would be Today under another name.
+
 A workspace has its **own settings page**, reached from the switcher — its name, colour
 and icon, and archiving or deleting it. It says nothing about the other workspaces:
 switching between them is the switcher's job, not a settings screen's. That is kept apart from
@@ -1108,6 +1127,7 @@ drive the same actions the buttons and keyboard do rather than a parallel set of
 | `⌘N` | New item, from anywhere |
 | `⌘⇧N` | New project |
 | `⌘1`–`⌘3` | Today, Projects, People |
+| `⇧⌘1` | All workspaces: what is late or due in every one |
 | `⌘[` / `⌘]` | Back and forward |
 | `⌘,` | Settings |
 | `⌘↵` | Save and close a dialog |

@@ -29,6 +29,7 @@ const KIND_LABEL: Record<SearchHit['kind'], string> = {
 
 const NAV: { label: string; to: string; icon: IconName }[] = [
   { label: 'Today', to: '/', icon: 'today' },
+  { label: 'All workspaces', to: '/all', icon: 'everywhere' },
   { label: 'Projects', to: '/projects', icon: 'projects' },
   { label: 'People', to: '/people', icon: 'people' },
   { label: 'Settings', to: '/settings', icon: 'settings' }

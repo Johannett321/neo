@@ -1,9 +1,9 @@
-import { Link, useNavigate } from 'react-router-dom'
 import { useContextMenu } from '@/lib/contextMenu'
 import type { TaskView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import { dueLabel, formatDate, KIND_LABEL, projectColor } from '@/lib/format'
-import { useReveal } from '@/lib/reveal'
+import { revealState } from '@/lib/reveal'
+import { useGoIn } from '@/lib/workspace'
 import { Avatar, Dot } from './primitives'
 import { Icon } from './Icon'
 
@@ -16,21 +16,32 @@ const KIND_ICON = { task: 'check', delegated: 'arrowRight' } as const
 export function TaskRow({
   task,
   showProject = false,
+  showWorkspace = false,
   onEdit
 }: {
   task: TaskView
   showProject?: boolean
+  /**
+   * Only on the overview across workspaces, the one screen where rows from different
+   * workspaces sit together: the rule down the left and the dot become the workspace's,
+   * and its name goes in front of the project's.
+   */
+  showWorkspace?: boolean
   onEdit?: (task: TaskView) => void
 }): React.JSX.Element {
   const setStatus = useApiMutation('task:setStatus')
   const remove = useApiMutation('task:delete')
-  const navigate = useNavigate()
-  const reveal = useReveal()
+  // Every way out of a row goes through this, so a row on the overview lands in its
+  // own workspace rather than drawing its project inside whichever one was active.
+  const goIn = useGoIn()
+  const go = (path: string, reveal?: string): void =>
+    goIn(task.workspaceId, path, reveal ? { state: revealState(reveal) } : undefined)
   const openMenu = useContextMenu()
   const done = task.status === 'done'
   // Its project's colour, not its workspace's: every row on a workspace-fenced
-  // screen shares the workspace colour, so that one could never tell them apart.
-  const colour = projectColor(task)
+  // screen shares the workspace colour, so that one could never tell them apart. On
+  // the overview it is the other way round, and the workspace is the identity.
+  const colour = showWorkspace ? task.workspaceColor : projectColor(task)
   const overdue = task.daysUntilDue !== null && task.daysUntilDue < 0 && !done
   const dueToday = task.daysUntilDue === 0 && !done
 
@@ -59,7 +70,7 @@ export function TaskRow({
           {
             label: 'Show on the board',
             icon: 'board',
-            onSelect: () => reveal(`/projects/${task.projectId}/kanban`, task.id)
+            onSelect: () => go(`/projects/${task.projectId}/kanban`, task.id)
           },
           ...(task.sourceMeetingId
             ? [
@@ -67,17 +78,14 @@ export function TaskRow({
                   label: 'Show in the meeting',
                   icon: 'people' as const,
                   onSelect: () =>
-                    reveal(
-                      `/projects/${task.projectId}/meetings/${task.sourceMeetingId}`,
-                      task.id
-                    )
+                    go(`/projects/${task.projectId}/meetings/${task.sourceMeetingId}`, task.id)
                 }
               ]
             : []),
           {
             label: 'Open project',
             icon: 'projects',
-            onSelect: () => navigate(`/projects/${task.projectId}`)
+            onSelect: () => go(`/projects/${task.projectId}`)
           },
           'separator',
           {
@@ -90,7 +98,7 @@ export function TaskRow({
         ])
       }
       className="row-hover hairline group flex items-center gap-3 border-b px-3 py-2.5 last:border-b-0"
-      style={showProject ? { boxShadow: `inset 2px 0 0 ${colour}` } : undefined}
+      style={showProject || showWorkspace ? { boxShadow: `inset 2px 0 0 ${colour}` } : undefined}
     >
       <button
           className="flex size-[18px] items-center justify-center rounded-[5px] border border-base-content/25 text-transparent transition hover:border-primary hover:text-primary/50 data-[done=true]:border-primary data-[done=true]:bg-primary data-[done=true]:text-primary-content"
@@ -109,11 +117,20 @@ export function TaskRow({
           {task.title}
         </span>
         <span className="flex min-w-0 items-center gap-2 text-[11px] text-base-content/45">
-          {showProject && (
+          {showWorkspace ? (
             <span className="flex min-w-0 items-center gap-1.5">
               <Dot color={colour} size={5} />
+              <span className="shrink-0 text-base-content/60">{task.workspaceName}</span>
+              <span className="text-base-content/25">·</span>
               <span className="truncate">{task.projectName}</span>
             </span>
+          ) : (
+            showProject && (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Dot color={colour} size={5} />
+                <span className="truncate">{task.projectName}</span>
+              </span>
+            )
           )}
           {task.kind !== 'task' && (
             <span className="flex items-center gap-1">
@@ -146,14 +163,14 @@ export function TaskRow({
         </span>
       )}
 
-      {showProject && (
-        <Link
-          to={`/projects/${task.projectId}`}
+      {(showProject || showWorkspace) && (
+        <button
+          onClick={() => go(`/projects/${task.projectId}`)}
           className="btn btn-ghost btn-xs btn-circle opacity-0 transition group-hover:opacity-100"
           aria-label="Open project"
         >
           <Icon name="chevronRight" size={13} />
-        </Link>
+        </button>
       )}
     </div>
   )
@@ -162,16 +179,24 @@ export function TaskRow({
 export function TaskList({
   tasks,
   showProject = false,
+  showWorkspace = false,
   onEdit
 }: {
   tasks: TaskView[]
   showProject?: boolean
+  showWorkspace?: boolean
   onEdit?: (task: TaskView) => void
 }): React.JSX.Element {
   return (
     <div className="hairline overflow-hidden rounded-box border bg-base-100">
       {tasks.map((task) => (
-        <TaskRow key={task.id} task={task} showProject={showProject} onEdit={onEdit} />
+        <TaskRow
+          key={task.id}
+          task={task}
+          showProject={showProject}
+          showWorkspace={showWorkspace}
+          onEdit={onEdit}
+        />
       ))}
     </div>
   )

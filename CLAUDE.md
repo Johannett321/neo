@@ -197,6 +197,18 @@ install's database and files into an empty Neo Cloud account.
 - **Workspace isolation is a hard boundary.** Every scoped channel takes an explicit
   `workspaceId`; there is no implicit "all". The active workspace is ambient state in
   `lib/workspace.tsx`, persisted in settings. No screen may mix two workspaces.
+  **There is exactly one exception, and it is deliberate: `/all`** (`routes/Everywhere.tsx`,
+  `dashboard:everywhere`, the server's `GET /v1/today/all`). The boundary's cost is that
+  a card going late in the workspace you are not in is silent, and that is the deadline
+  you miss — so one screen answers "is anything late or due anywhere" and nothing more.
+  It holds to three rules: it is a read of Today's lists only (no attention, stats or
+  front block, and each workspace's Today stays pure); every row names its workspace
+  (the colour rule and the workspace's name before the project's — `showWorkspace` on
+  `TaskRow`); and **every way out of a row goes through `useGoIn()`**, which switches to
+  the row's workspace before navigating, so nothing ever draws one workspace's project
+  inside another. `TaskDialog` asks for people in the task's own workspace for the same
+  reason. Which workspaces "every" means is the server's `AccountWorkspaces`, in one
+  place. Do not add a second screen like it; add to this one or fence the new thing.
 - **Attention is derived, never stored.** `work/Attention.java` in Neo Cloud computes it from
   overdue work, deadline proximity and staleness, and returns the single most pressing
   fact in plain words — never a level, a badge or a colour. Thresholds live in one place.

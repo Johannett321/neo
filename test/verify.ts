@@ -529,6 +529,33 @@ async function main(): Promise<void> {
   ok('stats count only this workspace', today.stats.activeProjects === 3 && today.stats.peopleTracked === 6,
      `${today.stats.activeProjects} projects, ${today.stats.peopleTracked} people`)
 
+  /*
+   * Today across every workspace: the one channel that crosses the fence, on purpose.
+   * The day job's late and due cards are there, so is a card due today in another
+   * workspace, every row says which workspace it is in, and the line per workspace is
+   * counted off the same lists the rows come from.
+   */
+  const probe = await call('project:save', { workspaceId: own, name: 'Everywhere probe', status: 'active' })
+  const probeTask = await call('task:save', { projectId: probe.id, title: 'Due in my company', dueDate: todayDate() })
+  const everywhere = await call('dashboard:everywhere')
+  const acrossTasks = [...everywhere.overdue, ...everywhere.dueToday, ...everywhere.soon]
+  ok('all workspaces: the day job\'s late and due cards are all there',
+     [...today.overdue, ...today.dueToday].every((t: any) => acrossTasks.some((a: any) => a.id === t.id)))
+  ok('all workspaces: and so is a card due today in another workspace, saying where it is',
+     everywhere.dueToday.some((t: any) => t.id === probeTask.id && t.workspaceId === own && t.workspaceName === 'My company'))
+  ok('all workspaces: every row names a workspace of this account',
+     acrossTasks.every((t: any) => workspaces.some((w: any) => w.id === t.workspaceId)))
+  const dayJobLine = everywhere.workspaces.find((w: any) => w.workspaceId === dayJob)
+  ok('all workspaces: a line per live workspace, in the switcher\'s order',
+     everywhere.workspaces.map((w: any) => w.workspaceId).join() === workspaces.map((w: any) => w.id).join(),
+     everywhere.workspaces.map((w: any) => w.name).join(', '))
+  ok('all workspaces: a workspace\'s line agrees with its own Today',
+     dayJobLine?.overdue === today.overdue.length && dayJobLine?.dueToday === today.dueToday.length,
+     JSON.stringify(dayJobLine))
+  ok('all workspaces: overdue comes oldest first, whichever workspace it is in',
+     everywhere.overdue.every((t: any, i: number, all: any[]) => i === 0 || all[i - 1].dueDate <= t.dueDate))
+  await call('project:delete', { id: probe.id })
+
   const checkout = projects.find((p: any) => p.name === 'Checkout rewrite')
   const payments = projects.find((p: any) => p.name === 'Payments migration')
   const detail = await call('project:get', { id: checkout.id })
@@ -649,6 +676,10 @@ async function main(): Promise<void> {
   ok('nor change it by id',
      await refused(() => call('project:save', { id: checkout.id, name: 'Taken over' })) &&
      await refused(() => call('task:setStatus', { id: openTask.id, status: 'open' })))
+  const strangersDay = await call('dashboard:everywhere')
+  ok('nor see any of it in the overview across workspaces',
+     strangersDay.workspaces.length === 0 && strangersDay.overdue.length === 0 &&
+     strangersDay.dueToday.length === 0 && strangersDay.owedFromMeetings.length === 0)
   ok('nor fetch its files by name',
      (await fetchRaw(`/v1/files/${encodeURIComponent(picture.path)}`)).status === 404)
 

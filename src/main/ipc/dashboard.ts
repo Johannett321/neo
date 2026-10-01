@@ -5,6 +5,8 @@ export function registerDashboardHandlers(): void {
   handle('dashboard:today', ({ workspaceId }) =>
     must(api.GET('/v1/today', { params: { query: { workspaceId } } })))
 
+  handle('dashboard:everywhere', () => must(api.GET('/v1/today/all')))
+
   handle('dashboard:activity', ({ workspaceId, limit }) =>
     must(api.GET('/v1/activity', { params: { query: { workspaceId, limit } } })))
 }
