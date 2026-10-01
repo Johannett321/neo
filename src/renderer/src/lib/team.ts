@@ -54,43 +54,94 @@ const byOrder = (a: TeamNode, b: TeamNode): number => (a.order ?? 0) - (b.order 
 
 /**
  * The drawing as it can be drawn today: cards for people still on the project, links
- * only to nodes that exist, a person in a box never also hanging under something, and
- * no loops. A chart is written by a client and read by a client, so it is repaired on
- * the way in rather than trusted.
+ * only to nodes that exist, nothing both sitting in a box and hanging under something,
+ * and no loops of either kind. A chart is written by a client and read by a client, so
+ * it is repaired on the way in rather than trusted. Every step is deterministic — it
+ * walks the nodes in the order the document lists them — so every client repairs a
+ * broken chart the same way and draws the same picture.
  */
 export function sanitize(chart: TeamChart, cast: CastMember[]): TeamChart {
   const people = new Set(cast.map((c) => c.personId))
-  let nodes = (chart.nodes ?? []).filter((n) => (n.kind === 'person' ? !!n.personId && people.has(n.personId) : n.kind === 'box'))
+  // 1. Who can be drawn: a person still on the project, or a box. A repeated id keeps
+  //    its first node.
+  const seen = new Set<string>()
+  let nodes = (chart.nodes ?? []).filter((n) => {
+    if (!n || typeof n.id !== 'string' || seen.has(n.id)) return false
+    const keep = n.kind === 'person' ? !!n.personId && people.has(n.personId) : n.kind === 'box'
+    if (keep) seen.add(n.id)
+    return keep
+  })
+  // 2. Links only to what is there: `boxId` names a box (any node may sit in one, a box
+  //    included, never itself), `parentId` names any node, and sitting
+  //    in a box wins over hanging under something.
   const ids = new Map(nodes.map((n) => [n.id, n]))
   nodes = nodes.map((n) => {
     let { parentId, boxId } = n
-    if (boxId && (n.kind !== 'person' || ids.get(boxId)?.kind !== 'box')) boxId = null
+    if (boxId && (boxId === n.id || ids.get(boxId)?.kind !== 'box')) boxId = null
     if (boxId) parentId = null
     if (parentId && !ids.has(parentId)) parentId = null
     return parentId === n.parentId && boxId === n.boxId ? n : { ...n, parentId: parentId ?? null, boxId: boxId ?? null }
   })
-  // Nothing may hang under a card that sits in a box: what reports to a box member
-  // reports to the box.
+  // 3. No box inside itself: the first node, in document order, that a chain of boxes
+  //    leads back to steps out of its box.
+  const inBox = new Map(nodes.map((n) => [n.id, n]))
+  for (const n of nodes) {
+    const start = inBox.get(n.id)!
+    let cur = start.boxId ?? null
+    for (let steps = 0; cur && cur !== n.id && steps <= nodes.length; steps++) cur = inBox.get(cur)?.boxId ?? null
+    if (cur === n.id) inBox.set(n.id, { ...start, boxId: null })
+  }
+  nodes = nodes.map((n) => inBox.get(n.id)!)
+  // 4. Nothing hangs under something that sits in a box: what reports to anything in a
+  //    box reports to the outermost box around it, which is the one in the tree.
   const byId = new Map(nodes.map((n) => [n.id, n]))
   nodes = nodes.map((n) => {
     const parent = n.parentId ? byId.get(n.parentId) : undefined
-    return parent?.boxId ? { ...n, parentId: parent.boxId } : n
+    return parent?.boxId ? { ...n, parentId: outermost(byId, parent.id) } : n
   })
-  // Break any loop at the node where it is found.
+  // 5. No reporting loops: walking up from a node that finds a loop cuts that node free.
   const final = new Map(nodes.map((n) => [n.id, n]))
   for (const n of nodes) {
-    const seen = new Set<string>([n.id])
+    const loopSeen = new Set<string>([n.id])
     let cur = n.parentId ? final.get(n.parentId) : undefined
     while (cur) {
-      if (seen.has(cur.id)) {
+      if (loopSeen.has(cur.id)) {
         final.set(n.id, { ...n, parentId: null })
         break
       }
-      seen.add(cur.id)
+      loopSeen.add(cur.id)
       cur = cur.parentId ? final.get(cur.parentId) : undefined
     }
   }
   return { version: 1, nodes: [...final.values()] }
+}
+
+/** The box a node is in, the box that one is in, and so on to the top: the last one. */
+function outermost(byId: Map<string, TeamNode>, id: string): string {
+  let cur = byId.get(id)
+  for (let i = 0; cur?.boxId && i < 256; i++) {
+    const up = byId.get(cur.boxId)
+    if (!up) break
+    cur = up
+  }
+  return cur?.id ?? id
+}
+
+/** The outermost box `id` sits in (through any number of boxes), or `id` when it is in none. */
+export function topBox(chart: TeamChart, id: string): string {
+  return outermost(new Map(chart.nodes.map((n) => [n.id, n])), id)
+}
+
+/** How many boxes deep a node sits: 0 for anything not in a box. */
+export function depthOf(chart: TeamChart, id: string): number {
+  const byId = new Map(chart.nodes.map((n) => [n.id, n]))
+  let depth = 0
+  let cur = byId.get(id)
+  while (cur?.boxId && depth < 256) {
+    depth++
+    cur = byId.get(cur.boxId)
+  }
+  return depth
 }
 
 export function boxCols(n: number): number {
@@ -99,16 +150,15 @@ export function boxCols(n: number): number {
   return Math.min(4, Math.ceil(Math.sqrt(n)))
 }
 
-function boxSize(members: number): { w: number; h: number } {
-  const cols = boxCols(Math.max(members, 1))
-  const rows = Math.max(1, Math.ceil(members / cols))
-  return {
-    w: BOX_PAD * 2 + cols * CARD_W + (cols - 1) * BOX_GAP,
-    h: BOX_HEADER + BOX_PAD + rows * CARD_H + (rows - 1) * BOX_GAP
-  }
-}
-
-/** Where everything goes. */
+/**
+ * Where everything goes.
+ *
+ * A box lays out what sits in it — people and boxes alike, by `order` — as a table of
+ * `boxCols(n)` columns filled row by row: each column as wide as its widest item, each
+ * row as tall as its tallest, every item at the top-left of its cell. With nothing but
+ * cards in it that is exactly the grid a box always was; a box inside is sized to its
+ * own contents first, so the table (and the box around it) grows to fit.
+ */
 export function layout(chart: TeamChart): Layout {
   const nodes = chart.nodes
   const rects = new Map<string, Rect>()
@@ -124,8 +174,54 @@ export function layout(chart: TeamChart): Layout {
   members.forEach((list) => list.sort(byOrder))
   children.forEach((list) => list.sort(byOrder))
 
-  const size = (n: TeamNode): { w: number; h: number } =>
-    n.kind === 'box' ? boxSize(members.get(n.id)?.length ?? 0) : { w: CARD_W, h: CARD_H }
+  interface Table {
+    w: number
+    h: number
+    cols: number
+    colW: number[]
+    rowH: number[]
+  }
+  const tables = new Map<string, Table>()
+  const size = (n: TeamNode, depth = 0): { w: number; h: number } => {
+    if (n.kind !== 'box') return { w: CARD_W, h: CARD_H }
+    const known = tables.get(n.id)
+    if (known) return known
+    const list = depth > 64 ? [] : (members.get(n.id) ?? [])
+    const cols = boxCols(Math.max(list.length, 1))
+    const rows = Math.max(1, Math.ceil(list.length / cols))
+    const colW: number[] = Array.from({ length: cols }, () => (list.length ? 0 : CARD_W))
+    const rowH: number[] = Array.from({ length: rows }, () => (list.length ? 0 : CARD_H))
+    list.forEach((m, i) => {
+      const s = size(m, depth + 1)
+      colW[i % cols] = Math.max(colW[i % cols], s.w)
+      rowH[Math.floor(i / cols)] = Math.max(rowH[Math.floor(i / cols)], s.h)
+    })
+    const sum = (a: number[]): number => a.reduce((t, v) => t + v, 0)
+    const table = {
+      w: BOX_PAD * 2 + sum(colW) + (cols - 1) * BOX_GAP,
+      h: BOX_HEADER + BOX_PAD + sum(rowH) + (rows - 1) * BOX_GAP,
+      cols,
+      colW,
+      rowH
+    }
+    tables.set(n.id, table)
+    return table
+  }
+
+  const placeContents = (box: TeamNode, x: number, y: number, depth: number): void => {
+    const list = depth > 64 ? [] : (members.get(box.id) ?? [])
+    const t = tables.get(box.id) ?? (size(box), tables.get(box.id)!)
+    boxes.set(box.id, { members: list.map((m) => m.id), cols: t.cols })
+    list.forEach((m, i) => {
+      const c = i % t.cols
+      const r = Math.floor(i / t.cols)
+      const mx = x + BOX_PAD + t.colW.slice(0, c).reduce((s, v) => s + v, 0) + c * BOX_GAP
+      const my = y + BOX_HEADER + t.rowH.slice(0, r).reduce((s, v) => s + v, 0) + r * BOX_GAP
+      const s = size(m)
+      rects.set(m.id, { x: mx, y: my, w: s.w, h: s.h })
+      if (m.kind === 'box') placeContents(m, mx, my, depth + 1)
+    })
+  }
 
   const widths = new Map<string, number>()
   const subtreeWidth = (n: TeamNode, depth = 0): number => {
@@ -140,19 +236,7 @@ export function layout(chart: TeamChart): Layout {
   const place = (n: TeamNode, centreX: number, top: number, depth = 0): void => {
     const s = size(n)
     rects.set(n.id, { x: centreX - s.w / 2, y: top, w: s.w, h: s.h })
-    if (n.kind === 'box') {
-      const list = members.get(n.id) ?? []
-      const cols = boxCols(Math.max(list.length, 1))
-      boxes.set(n.id, { members: list.map((m) => m.id), cols })
-      list.forEach((m, i) => {
-        rects.set(m.id, {
-          x: centreX - s.w / 2 + BOX_PAD + (i % cols) * (CARD_W + BOX_GAP),
-          y: top + BOX_HEADER + Math.floor(i / cols) * (CARD_H + BOX_GAP),
-          w: CARD_W,
-          h: CARD_H
-        })
-      })
-    }
+    if (n.kind === 'box') placeContents(n, centreX - s.w / 2, top, 0)
     if (depth > 64) return
     const kids = children.get(n.id) ?? []
     if (!kids.length) return
@@ -171,6 +255,42 @@ export function layout(chart: TeamChart): Layout {
     place(root, root.x + size(root).w / 2, root.y)
   }
   return { rects, edges, boxes }
+}
+
+/**
+ * Where among a box's contents a drop at `p` would go: everything in the rows above
+ * the pointer, and whatever in the pointer's own row is left of it. Read off the
+ * layout, so it works for a table of mixed sizes as well as a grid of cards.
+ */
+export function slotIndex(l: Layout, boxId: string, p: { x: number; y: number }): number {
+  const entry = l.boxes.get(boxId)
+  if (!entry || !entry.members.length) return 0
+  const rows: { top: number; bottom: number; ids: string[] }[] = []
+  entry.members.forEach((id, i) => {
+    const r = l.rects.get(id)
+    if (!r) return
+    const row = Math.floor(i / entry.cols)
+    const band = rows[row] ?? (rows[row] = { top: r.y, bottom: r.y + r.h, ids: [] })
+    band.top = Math.min(band.top, r.y)
+    band.bottom = Math.max(band.bottom, r.y + r.h)
+    band.ids.push(id)
+  })
+  let count = 0
+  for (const row of rows) {
+    if (!row) continue
+    if (p.y > row.bottom + BOX_GAP / 2) {
+      count += row.ids.length
+      continue
+    }
+    if (p.y >= row.top - BOX_GAP / 2) {
+      count += row.ids.filter((id) => {
+        const r = l.rects.get(id)!
+        return r.x + r.w / 2 < p.x
+      }).length
+    }
+    break
+  }
+  return count
 }
 
 /** Nodes that keep their own position: neither under anything nor in a box. */
@@ -231,30 +351,51 @@ function siblingsOf(nodes: TeamNode[], target: DropTarget, except: string): stri
 
 /**
  * Take a node off the board. What hung under it moves up to whatever it hung under,
- * and what sat in a box steps out where it stood — nothing else on the board moves
- * because one card left.
+ * and what sat in a box takes the box's place: in the box around it if it was in one,
+ * under its parent if it hung in the tree, or standing free exactly where it was —
+ * nothing else on the board moves because one thing left.
  */
 export function remove(chart: TeamChart, id: string, current: Layout): TeamChart {
   const gone = chart.nodes.find((n) => n.id === id)
   if (!gone) return chart
-  const inherit = gone.parentId ?? gone.boxId ?? null
-  const nodes = chart.nodes
+  const contents = chart.nodes.filter((n) => n.boxId === id).sort(byOrder).map((n) => n.id)
+  const freeAt = (n: TeamNode): TeamNode => {
+    const r = current.rects.get(n.id)
+    return { ...n, boxId: null, parentId: null, x: snap(r?.x ?? n.x), y: snap(r?.y ?? n.y) }
+  }
+  let nodes = chart.nodes
     .filter((n) => n.id !== id)
     .map((n) => {
-      if (n.parentId !== id && n.boxId !== id) return n
       if (n.boxId === id) {
-        // A box's members step out: under the box's own parent if it had one, else
-        // as loose cards exactly where they were standing.
+        if (gone.boxId) return { ...n, boxId: gone.boxId, parentId: null }
         if (gone.parentId) return { ...n, boxId: null, parentId: gone.parentId }
-        const r = current.rects.get(n.id)
-        return { ...n, boxId: null, parentId: null, x: snap(r?.x ?? n.x), y: snap(r?.y ?? n.y) }
+        return freeAt(n)
       }
-      if (inherit && gone.boxId) return { ...n, parentId: gone.boxId }
-      if (inherit) return { ...n, parentId: inherit }
-      const r = current.rects.get(n.id)
-      return { ...n, parentId: null, x: snap(r?.x ?? n.x), y: snap(r?.y ?? n.y) }
+      if (n.parentId === id) {
+        if (gone.boxId) return { ...n, parentId: topBox(chart, gone.boxId) }
+        if (gone.parentId) return { ...n, parentId: gone.parentId }
+        return freeAt(n)
+      }
+      return n
     })
+  // What was in the box stands where the box stood among its neighbours.
+  const up = gone.boxId ?? gone.parentId
+  if (up && contents.length) {
+    const siblings = chart.nodes
+      .filter((n) => (gone.boxId ? n.boxId === up : !n.boxId && n.parentId === up))
+      .sort(byOrder)
+      .map((n) => n.id)
+    siblings.splice(Math.max(0, siblings.indexOf(id)), 1, ...contents)
+    nodes = renumber(nodes, siblings)
+  }
   return { version: 1, nodes }
+}
+
+/** Several off the board, one after another, as one change. */
+export function removeAll(chart: TeamChart, ids: Iterable<string>, current: Layout): TeamChart {
+  let out = chart
+  for (const id of ids) out = remove(out, id, current)
+  return out
 }
 
 /**
@@ -277,12 +418,16 @@ export function applyDrop(chart: TeamChart, node: TeamNode, target: DropTarget):
     return { version: 1, nodes }
   }
 
+  // Nothing goes into, or under, something it is carrying: that would be a loop.
+  if (exists && carried(chart, node.id).has(target.id)) return chart
+
   if (target.kind === 'box') {
-    if (node.kind !== 'person') return chart
+    const top = topBox({ version: 1, nodes }, target.id)
     nodes = nodes.map((n) => {
       if (n.id === node.id) return { ...n, boxId: target.id, parentId: null }
-      // What reported to this person now reports to the box they joined.
-      if (n.parentId === node.id) return { ...n, parentId: target.id }
+      // What reported to it now reports to the box it joined — the outermost one,
+      // since nothing hangs under anything inside a box.
+      if (n.parentId === node.id && !n.boxId) return { ...n, parentId: top }
       return n
     })
   } else {
@@ -294,18 +439,265 @@ export function applyDrop(chart: TeamChart, node: TeamNode, target: DropTarget):
   return { version: 1, nodes: renumber(nodes, order) }
 }
 
+/**
+ * Several let go at once, in the order given. Onto a card or into a box they line up
+ * side by side from the slot the pointer chose; on open board each lands at its own
+ * position from `at` (so a group keeps its shape); off the board, all of it goes.
+ */
+export function applyDropAll(
+  chart: TeamChart,
+  ids: string[],
+  target: DropTarget,
+  at?: Map<string, { x: number; y: number }>
+): TeamChart {
+  if (target.kind === 'remove') {
+    const gone = new Set<string>()
+    for (const id of ids) carried(chart, id).forEach((g) => gone.add(g))
+    return { version: 1, nodes: chart.nodes.filter((n) => !gone.has(n.id)) }
+  }
+  const moving = ids.filter((id) => chart.nodes.some((n) => n.id === id))
+  if (target.kind === 'free') {
+    let out = chart
+    for (const id of moving) {
+      const node = out.nodes.find((n) => n.id === id)!
+      const p = at?.get(id) ?? { x: target.x, y: target.y }
+      out = applyDrop(out, node, { kind: 'free', x: p.x, y: p.y })
+    }
+    return out
+  }
+  for (const id of moving) if (carried(chart, id).has(target.id)) return chart
+  // Lift them all first, so the ones already there do not count as neighbours.
+  const lifted = new Set(moving)
+  let out: TeamChart = {
+    version: 1,
+    nodes: chart.nodes.map((n) => (lifted.has(n.id) ? { ...n, parentId: null, boxId: null } : n))
+  }
+  moving.forEach((id, i) => {
+    const node = out.nodes.find((n) => n.id === id)!
+    out = applyDrop(out, node, { ...target, index: target.index + i })
+  })
+  return out
+}
+
+/** Up one step: the box a node sits in, else what it reports to. */
+const upOf = (n: TeamNode | undefined): string | null => n?.boxId ?? n?.parentId ?? null
+
+/**
+ * Of a selection, the ones that move by themselves: those not already carried along
+ * by another selected node (sitting in it, or hanging under it, at any distance).
+ */
+export function selectionRoots(chart: TeamChart, ids: Iterable<string>): string[] {
+  const sel = new Set(ids)
+  const byId = new Map(chart.nodes.map((n) => [n.id, n]))
+  return [...sel].filter((id) => {
+    if (!byId.has(id)) return false
+    let up = upOf(byId.get(id))
+    for (let i = 0; up && i < 256; i++) {
+      if (sel.has(up)) return false
+      up = upOf(byId.get(up))
+    }
+    return true
+  })
+}
+
+/**
+ * Of a selection, the ones that go *into* a box when it is dropped into one or grouped:
+ * every selected node not already inside a selected box. Selected people who report to
+ * each other all go in — inside a box there is no tree to keep.
+ */
+export function selectionJoiners(chart: TeamChart, ids: Iterable<string>): string[] {
+  const sel = new Set(ids)
+  const byId = new Map(chart.nodes.map((n) => [n.id, n]))
+  return [...sel].filter((id) => {
+    if (!byId.has(id)) return false
+    let up = byId.get(id)?.boxId ?? null
+    for (let i = 0; up && i < 256; i++) {
+      if (sel.has(up)) return false
+      up = byId.get(up)?.boxId ?? null
+    }
+    return true
+  })
+}
+
+/** Ids in the order you read the board: top to bottom, then left to right. */
+export function readingOrder(ids: Iterable<string>, l: Layout): string[] {
+  return [...ids].sort((a, b) => {
+    const ra = l.rects.get(a)
+    const rb = l.rects.get(b)
+    if (!ra || !rb) return ra ? -1 : rb ? 1 : 0
+    return ra.y - rb.y || ra.x - rb.x
+  })
+}
+
+/**
+ * Put a selection in a new box. The box takes the place of the first of them: in the
+ * box they all shared, under the parent they all shared, or on open board where their
+ * top-left corner was.
+ */
+export function groupIntoBox(
+  chart: TeamChart,
+  ids: Iterable<string>,
+  current: Layout,
+  label = 'New box'
+): { chart: TeamChart; boxId: string } | null {
+  const joiners = readingOrder(selectionJoiners(chart, ids), current)
+  if (!joiners.length) return null
+  const byId = new Map(chart.nodes.map((n) => [n.id, n]))
+  const first = byId.get(joiners[0])!
+  const box: TeamNode = { id: uid(), kind: 'box', label, x: 0, y: 0 }
+  const sharedBox = joiners.every((id) => byId.get(id)?.boxId === first.boxId) ? first.boxId : null
+  const sharedParent = !sharedBox && joiners.every((id) => !byId.get(id)?.boxId && byId.get(id)?.parentId === first.parentId)
+    ? first.parentId
+    : null
+  let out: TeamChart
+  if (sharedBox || sharedParent) {
+    const target: DropTarget = sharedBox
+      ? { kind: 'box', id: sharedBox, index: 0 }
+      : { kind: 'parent', id: sharedParent!, index: 0 }
+    const siblings = siblingsOf(chart.nodes, target, '')
+    const index = Math.min(...joiners.map((id) => siblings.indexOf(id)).filter((i) => i >= 0))
+    out = applyDrop(chart, box, { ...target, index: Number.isFinite(index) ? index : siblings.length })
+  } else {
+    let x = Infinity
+    let y = Infinity
+    for (const id of joiners) {
+      const r = current.rects.get(id)
+      if (r) {
+        x = Math.min(x, r.x)
+        y = Math.min(y, r.y)
+      }
+    }
+    out = applyDrop(chart, box, { kind: 'free', x: snap(Number.isFinite(x) ? x : 0), y: snap(Number.isFinite(y) ? y - BOX_HEADER : 0) })
+  }
+  out = applyDropAll(out, joiners, { kind: 'box', id: box.id, index: 0 })
+  return { chart: out, boxId: box.id }
+}
+
+/* ------------------------------------------------------------------ copy and paste */
+
+/** The marker that says a clipboard's text is a piece of a team chart. */
+export const CLIP_MARKER = 'neo/team-chart'
+
+export interface TeamClip {
+  [CLIP_MARKER]: 1
+  /** The project it was copied from, so a paste back into it can sit beside the originals. */
+  projectId?: string
+  /**
+   * The copied nodes, with their own ids. Links point only inside the set; every node
+   * carries the position it was drawn at, so whatever loses its link on the way in
+   * (someone not on the project) still lands where it was.
+   */
+  nodes: TeamNode[]
+  /** Names of the people in it, so a paste can say who it left out. */
+  people: Record<string, string>
+}
+
+/** Is this clipboard text one of ours? Returns it parsed, or null. */
+export function readClip(text: string | null | undefined): TeamClip | null {
+  if (!text || !text.includes(CLIP_MARKER)) return null
+  try {
+    const v = JSON.parse(text) as TeamClip
+    if (v?.[CLIP_MARKER] !== 1 || !Array.isArray(v.nodes)) return null
+    return { ...v, people: v.people ?? {} }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What ⌘C takes: the selection, each selected box with everything in it, and the links
+ * between them — a link to anything left behind is dropped, and what had one stands
+ * free where it was drawn.
+ */
+export function copySelection(
+  chart: TeamChart,
+  ids: Iterable<string>,
+  current: Layout,
+  nameOf: (personId: string) => string,
+  projectId?: string
+): TeamClip | null {
+  const set = new Set([...ids].filter((id) => chart.nodes.some((n) => n.id === id)))
+  if (!set.size) return null
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of chart.nodes) {
+      if (!set.has(n.id) && n.boxId && set.has(n.boxId)) {
+        set.add(n.id)
+        grew = true
+      }
+    }
+  }
+  const people: Record<string, string> = {}
+  const nodes = chart.nodes
+    .filter((n) => set.has(n.id))
+    .map((n) => {
+      if (n.personId) people[n.personId] = nameOf(n.personId)
+      const r = current.rects.get(n.id)
+      return {
+        ...n,
+        x: r?.x ?? n.x,
+        y: r?.y ?? n.y,
+        parentId: n.parentId && set.has(n.parentId) ? n.parentId : null,
+        boxId: n.boxId && set.has(n.boxId) ? n.boxId : null
+      }
+    })
+  return { [CLIP_MARKER]: 1, projectId, nodes, people }
+}
+
+/**
+ * A clip made ready to land on a board: fresh ids, people not on this project left
+ * out (with whatever hung on them standing free), and the free-standing ones moved so
+ * the whole piece is centred on `centre` — or, without one, shifted by `offset`.
+ */
+export function pasteClip(
+  clip: TeamClip,
+  onProject: Set<string>,
+  place: { centre: { x: number; y: number } } | { offset: { x: number; y: number } }
+): { nodes: TeamNode[]; skipped: string[] } {
+  const skippedPeople = new Set<string>()
+  const kept = clip.nodes.filter((n) => {
+    if (n.kind === 'box') return true
+    if (n.kind === 'person' && n.personId && onProject.has(n.personId)) return true
+    if (n.personId) skippedPeople.add(n.personId)
+    return false
+  })
+  const fresh = new Map(kept.map((n) => [n.id, uid()]))
+  let nodes: TeamNode[] = kept.map((n) => {
+    const boxId = n.boxId && fresh.has(n.boxId) ? fresh.get(n.boxId)! : null
+    const parentId = !boxId && n.parentId && fresh.has(n.parentId) ? fresh.get(n.parentId)! : null
+    return { ...n, id: fresh.get(n.id)!, boxId, parentId }
+  })
+  let dx: number
+  let dy: number
+  if ('centre' in place) {
+    const b = bounds(layout({ version: 1, nodes }))
+    dx = b ? place.centre.x - (b.x + b.w / 2) : 0
+    dy = b ? place.centre.y - (b.y + b.h / 2) : 0
+  } else {
+    dx = place.offset.x
+    dy = place.offset.y
+  }
+  // Move the piece by a whole number of grid steps, so what was on the grid stays on it.
+  dx = snap(dx)
+  dy = snap(dy)
+  nodes = nodes.map((n) => (n.parentId || n.boxId ? n : { ...n, x: snap(n.x + dx), y: snap(n.y + dy) }))
+  return { nodes, skipped: [...skippedPeople].map((id) => clip.people[id] ?? 'Someone') }
+}
+
 /** The sentence for what letting go would do, said while it is still undecided. */
 export function describeDrop(
   target: DropTarget | null,
   who: string,
-  nameOf: (nodeId: string) => string
+  nameOf: (nodeId: string) => string,
+  plural = false
 ): string {
   if (!target) return ''
   switch (target.kind) {
     case 'parent':
-      return `${who} reports to ${nameOf(target.id)}`
+      return `${who} ${plural ? 'report' : 'reports'} to ${nameOf(target.id)}`
     case 'box':
-      return `${who} joins ${nameOf(target.id)}`
+      return `${who} ${plural ? 'join' : 'joins'} ${nameOf(target.id)}`
     case 'free':
       return `Place ${who} here`
     case 'remove':

@@ -29,6 +29,7 @@
     "package": "npm run build && electron-builder --dir",
     "postinstall": "node scripts/dev-branding.mjs",
     "start": "electron-vite preview",
+    "verify:team": "esbuild test/team.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/verify-team.mjs --alias:@=./src/renderer/src --alias:@shared=./src/shared --log-level=warning && node out/verify-team.mjs",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
