@@ -88,6 +88,15 @@ call `invokeChannel()` so that a task the assistant creates goes down the same c
 as one you create by hand, and therefore logs activity and bumps the project clock for
 free.
 
+## Cutting a release
+
+Bump `version` in `package.json` and push a `v<version>` tag; the workflow builds and
+publishes the rest. **A changelog is only for a big new feature.** When a release has
+one, write `changelog/<version>.md` in the same commit as the bump — it becomes both the
+GitHub release notes and the *What changed* screen the app shows after updating. A
+release of small features and fixes has no file and needs nothing: the release notes fall
+back to a plain sentence and the app says nothing. See [`changelog/README.md`](changelog/README.md).
+
 ## Style
 
 Match the file you are in. A few house rules worth knowing:

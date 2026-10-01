@@ -1,6 +1,6 @@
 # Changelog
 
-One Markdown file per release worth describing, named exactly as the version is:
+One Markdown file per release with a big new feature in it, named exactly as the version is:
 `1.2.0.md`. Not every version has one — see *When to write one* below.
 The folder ships inside the application, so the screen Neo shows on the first launch
 after an update reads from here and needs no network. The release notes on GitHub are
@@ -9,10 +9,11 @@ generated from the same file when the tag is pushed — see `.github/workflows/r
 
 ## When to write one
 
-**For the things somebody would want to hear about**, and not for everything else. A
-feature that changes how the app is used, a screen that did not exist before, a
-behaviour worth knowing has changed — those get a file. A fortnight of fixes, a faster
-query, a tidier menu: those do not, and writing them up does not make them arrivals.
+**For big new features**, and not for everything else. A feature that changes how the
+app is used, a screen that did not exist before, a behaviour worth knowing has changed —
+those get a file. A small feature, a fortnight of fixes, a faster query, a tidier menu:
+those do not, and writing them up does not make them arrivals. When in doubt, leave it
+out.
 
 A version with no file here releases perfectly happily. The GitHub release falls back
 to a plain sentence, and the app's *What changed* screen stays shut for that version

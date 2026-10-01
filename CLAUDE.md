@@ -353,11 +353,14 @@ install's database and files into an empty Neo Cloud account.
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,
   and if a screen needs more than about five, the screen is doing too much.
-- **The app updates itself, and the changelog ships with it.** `changelog/<version>.md`
-  is written in the same commit as the version bump; the release workflow refuses a tag
-  without one and generates the GitHub release notes from it, so a release is described
-  once. See *Updating itself* below for why there is no `electron-updater` here and what
-  the ad-hoc signature costs on every update.
+- **The app updates itself, and a big release's changelog ships with it.** Only a
+  release with a big new feature in it gets a `changelog/<version>.md`, written in the
+  same commit as the version bump; a release of small features and fixes ships without
+  one. Do not write one for every change. The release workflow takes the GitHub release
+  notes from the file when there is one and a plain sentence when there is not, and the
+  app's *What changed* screen stays shut for a version with no file. See *Updating
+  itself* below for why there is no `electron-updater` here and what the ad-hoc signature
+  costs on every update.
 - **Icons are hand-rolled paths** in `components/Icon.tsx` on a 24px grid, single stroke
   weight. Nothing is fetched at runtime; add a path rather than a dependency.
 - **Dates use `components/DateField.tsx`**, never `<input type="date">`.
@@ -490,8 +493,16 @@ holds one Markdown file per version with its illustrations in `media/`; it ships
 `extraResources` and is found by looking for the file. The screen that reads it appears
 on the first launch after an update, which is exactly the launch most likely to have no
 network. The release workflow generates the GitHub release notes from the same files, so
-a release is described **once**: do not write notes into a tag by hand. A tag with no
-changelog file fails the workflow, and `verify.ts` asserts the same thing a step earlier.
+a release is described **once**: do not write notes into a tag by hand.
+
+**Not every version has a file, and that is the rule rather than a gap in it.** A
+changelog is for a big new feature — a screen that did not exist, a way of working that
+changed. Small features and fixes ship without one: written up one by one they become
+pages nobody reads, and a screen that opens after every update is a screen people learn
+to close unread. A tag with no file releases normally — the workflow falls back to a plain
+sentence — and `WhatsNew` draws nothing for that version (`changelog:get` answers `null`,
+and with no permissions to ask back there is no dialog at all). `verify.ts` asserts that a
+missing entry is an answer, not an error.
 
 Illustrations are relative paths rewritten to `neo-media://changelog/…` by the parser,
 because the renderer's CSP allows an image from `self` and a data URL and nothing else,

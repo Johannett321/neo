@@ -88,10 +88,10 @@ jobs:
       # relative paths — they resolve inside the app, where the files are bundled — so
       # they are rewritten to raw URLs here, and only here.
       #
-      # A version with no file is a release, not a mistake. Changelogs are for the
-      # arrivals somebody would want to read about; a fortnight of fixes and small
-      # refinements does not become one by being written up, and a rule that demanded
-      # one for every tag only ever produced pages nobody read. So the fallback below
+      # A version with no file is a release, not a mistake. Changelogs are for big new
+      # features only; small features and a fortnight of fixes do not become one by
+      # being written up, and a rule that demanded one for every tag only ever
+      # produced pages nobody read. So the fallback below
       # says the true and boring thing, and the app's *What changed* screen stays shut
       # for that version rather than opening on a heading with nothing under it.
       - name: Take the release notes from the changelog
