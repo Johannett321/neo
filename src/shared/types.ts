@@ -620,6 +620,51 @@ export interface Canvas {
   updatedAt: string
 }
 
+/* ------------------------------------------------------------------ team */
+
+/**
+ * A project's team, drawn: a card per person and a labelled box for people who sit
+ * together, on a board of their own. Two relations make the picture — a card or box
+ * *reports to* another (`parentId`, drawn as a tree with lines), and a person *sits in*
+ * a box (`boxId`, laid out in a grid inside it). Positions are kept only for the ones
+ * that are neither: everything hanging off something is placed by the layout, which is
+ * what keeps the tree tidy however it was built.
+ *
+ * It is furniture. Who is on the project and with which roles stays on the membership;
+ * a card only names a person, and one who has left the project is simply not drawn.
+ */
+export type TeamNodeKind = 'person' | 'box'
+
+export interface TeamNode {
+  id: string
+  kind: TeamNodeKind
+  /** For a person's card. */
+  personId?: string
+  /** For a box: "Design", "Backend", "Client side". */
+  label?: string
+  /** Where a free-standing one was put, on the board's own grid. */
+  x: number
+  y: number
+  /** Reports to: the card or box this one hangs under. */
+  parentId?: string | null
+  /** Sits in: the box this person's card is in. */
+  boxId?: string | null
+  /** Left to right among the ones under the same parent, or in the same box. */
+  order?: number
+}
+
+export interface TeamChart {
+  version: 1
+  nodes: TeamNode[]
+}
+
+export interface TeamCanvas {
+  projectId: string
+  data: TeamChart
+  /** Null when the team has never been drawn — the board offers to start one. */
+  updatedAt: string | null
+}
+
 /* ------------------------------------------------------------------ recording */
 
 /**

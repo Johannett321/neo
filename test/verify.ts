@@ -708,6 +708,42 @@ async function main(): Promise<void> {
   await call('canvas:delete', { id: flow.id })
   ok('a canvas can be deleted', !(await call('project:get', { id: checkout.id })).canvases.some((c: any) => c.id === flow.id))
 
+  /* ------------------------------------------------------------------------ team */
+
+  {
+    const fresh = await call('team:get', { projectId: checkout.id })
+    ok('a project whose team has never been drawn is an empty drawing, not an error',
+       fresh.updatedAt === null && fresh.data.version === 1 && fresh.data.nodes.length === 0)
+
+    const lead = (await call('project:get', { id: checkout.id, touch: false })).cast[0]
+    const activityBefore = (await call('project:get', { id: checkout.id, touch: false })).activity.length
+    const drawn = await call('team:save', {
+      projectId: checkout.id,
+      data: {
+        version: 1,
+        nodes: [
+          { id: 'lead', kind: 'person', personId: lead.personId, x: 480, y: 96 },
+          { id: 'design', kind: 'box', label: 'Design', x: 0, y: 0, parentId: 'lead', order: 0 },
+          { id: 'member', kind: 'person', personId: lead.personId, x: 0, y: 0, boxId: 'design', order: 0 }
+        ]
+      }
+    })
+    ok('a team chart is kept: who reports to whom, the boxes and who sits in them',
+       drawn.updatedAt !== null && drawn.data.nodes.length === 3)
+    const back = await call('team:get', { projectId: checkout.id })
+    ok('and comes back exactly as it was drawn',
+       back.data.nodes.find((n) => n.id === 'design')?.parentId === 'lead' &&
+       back.data.nodes.find((n) => n.id === 'design')?.label === 'Design' &&
+       back.data.nodes.find((n) => n.id === 'member')?.boxId === 'design' &&
+       back.data.nodes.find((n) => n.id === 'lead')?.x === 480)
+    ok('arranging the team logs no activity',
+       (await call('project:get', { id: checkout.id, touch: false })).activity.length === activityBefore)
+
+    await call('team:save', { projectId: checkout.id, data: { version: 1, nodes: [] } })
+    ok('clearing the board saves an empty drawing',
+       (await call('team:get', { projectId: checkout.id })).data.nodes.length === 0)
+  }
+
   /* ----------------------------------------------------------------------- board */
 
   const todoColumn = detail.columns[0]
