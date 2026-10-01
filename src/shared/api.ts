@@ -6,7 +6,7 @@ import type {
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
   SearchHit, Settings, Task, TaskKind, TaskStatus, TodayView, TranscriptCue, WeatherNow,
-  WeatherPlace, Workspace, WorkspaceLink
+  WeatherPlace, Workspace, WorkspaceInvite, WorkspaceInviteCreated, WorkspaceLink, WorkspaceMember
 } from './types'
 
 /** Every scoped request names its workspace explicitly — there is no implicit "all". */
@@ -41,6 +41,20 @@ export interface ApiMap {
   'workspace:delete': { in: { id: string }; out: void }
   'workspace:reorder': { in: { ids: string[] }; out: void }
   'workspace:setArchived': { in: { id: string; archived: boolean }; out: Workspace }
+
+  /*
+   * Sharing a workspace. Everybody in it sees and edits all of it; the owner invites,
+   * removes, renames, archives and deletes. An invitation is a link, good for one
+   * person for seven days, shown once — Neo Cloud keeps only a hash of it.
+   */
+  'workspace:members': { in: { workspaceId: string }; out: WorkspaceMember[] }
+  /** The owner removes somebody, or a member names themselves to leave. */
+  'workspace:removeMember': { in: { workspaceId: string; accountId: string }; out: void }
+  'workspace:invites': { in: { workspaceId: string }; out: WorkspaceInvite[] }
+  'workspace:invite': { in: { workspaceId: string; email?: string }; out: WorkspaceInviteCreated }
+  'workspace:revokeInvite': { in: { workspaceId: string; inviteId: string }; out: void }
+  /** Paste a link (or just its token) to join; the workspace comes back, now in your list. */
+  'workspace:acceptInvite': { in: { token: string }; out: Workspace }
   /**
    * Opens a file picker in the main process, copies the chosen image into the data
    * folder and hands back a data URL. Works before the workspace exists, so creating
