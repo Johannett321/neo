@@ -554,6 +554,26 @@ to take it off the chart; ⌘Z puts it back. An empty board offers to start **as
 shows the person's role here — click it to change it — and how many open items on the
 board are theirs.
 
+**Boxes go inside boxes.** Drop a box into another box (or onto a card that is in one)
+and it sits there, sized to what is in it, and the box around it grows to fit — so
+"Engineering" can hold "Backend" and "Client side". Whatever you drop lands in the
+innermost box under the pointer; drag a box back out and it stands on its own again.
+Removing a box never removes the people in it: they take its place.
+
+**The usual things work.** Shift-, ⌘- or Ctrl-click adds a card or a box to the
+selection (and takes it back out); with the same key held, dragging across empty board
+draws a marquee — a plain drag still pans, because that is what the board is mostly for.
+⌘A selects everything, Esc lets go. Whatever is selected moves together, ⌫ takes it off
+the chart, ⌘G puts it in a new box, and right-clicking one of several offers the same
+for all of them. ⌘C, ⌘X and ⌘V copy, cut and paste — a box with everything in it, and
+who reports to whom inside what you copied — at the pointer, and between projects too:
+anyone not on the project you paste into is left out, and a note says who. ⌘D
+duplicates beside the original. Each of these is one step for ⌘Z.
+
+How the drawing is stored, repaired and laid out — precisely enough that the web and
+phone apps draw the same chart — is written down in `CLAUDE.md` (*The team chart is
+furniture too*) and checked by `npm run verify:team`.
+
 **The Team tab is where a project's people live** — there is no separate list of them.
 *Add person* in the toolbar (or at the foot of the list, or on an empty project's board)
 opens the same search-first dialog described above, and the person lands at the top of

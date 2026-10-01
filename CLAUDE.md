@@ -30,6 +30,7 @@ npm run typecheck       # both projects; typecheck:node / typecheck:web individu
 npm run gen:api         # regenerate src/main/lib/cloud/schema.ts from Neo Cloud's published spec
 npm run check:contract  # fail if schema.ts is not what the published spec generates
 npm run verify          # the main process's handlers against a running Neo Cloud, headless
+npm run verify:team     # the team chart's rules (renderer/lib/team.ts), no server needed
 npm run package         # unpacked app into dist/
 npm run dist            # packaged, signed-if-possible application
 ```
@@ -409,13 +410,68 @@ install's database and files into an empty Neo Cloud account.
   document per project (`team:get` / `team:save`, `lib/cloud/documents.ts` narrows it),
   and nothing derives anything from it — saving logs no activity. Its meaning is
   `renderer/src/lib/team.ts`: `parentId` is *reports to* (a tree, laid out by
-  `layout()`), `boxId` is *sits in* (a grid in a labelled box), and only nodes that are
-  neither keep an `x`/`y`. A card names a `personId` and nothing more; roles stay on
-  the membership, and someone who left the project is dropped by `sanitize()` rather
-  than drawn. `routes/project/ProjectTeam.tsx` saves with `call()` and `setQueryData`,
-  not a mutation, so dragging cards never refetches the rest of the app. Every node's
-  position is a set of motion values the layout only *targets*, which is why drops
-  spring rather than jump and the connectors (drawn from the same values) never lag.
+  `layout()`), `boxId` is *sits in* (a table in a labelled box — and a box may sit in a
+  box, to any depth), and only nodes that are neither keep an `x`/`y`. A card names a
+  `personId` and nothing more; roles stay on the membership, and someone who left the
+  project is dropped by `sanitize()` rather than drawn. `routes/project/ProjectTeam.tsx`
+  saves with `call()` and `setQueryData`, not a mutation, so dragging cards never
+  refetches the rest of the app. Every node's position is a set of motion values the
+  layout only *targets*, which is why drops spring rather than jump and the connectors
+  (drawn from the same values) never lag. **The rules below are the contract the web
+  and phone clients port; `npm run verify:team` (`test/team.ts`) asserts them.**
+  - *The document.* `{ version: 1, nodes: TeamNode[] }`, each node `{ id, kind:
+    'person' | 'box', personId?, label?, x, y, parentId?, boxId?, order? }`. Boxes in
+    boxes added no field and no version: a box simply carries `boxId` the way a card
+    always could, so a chart without nesting is read, repaired and drawn exactly as
+    before. `order` places a node among its siblings — same `parentId`, or same
+    `boxId` — ascending, missing = 0. `x`/`y` are the top-left of a free node, in board
+    units, snapped to the 24-unit grid when written.
+  - *`sanitize()`*, run on every read, in this order, each step walking the nodes in
+    document order: (1) keep a `person` whose `personId` is on the project and every
+    `box`; drop any other kind and any repeat of an id (the first wins). (2) `boxId` is
+    cleared unless it names a box other than the node itself; a node with a `boxId`
+    has its `parentId` cleared; a `parentId` naming no node is cleared. (3) box rings:
+    follow `boxId` up from each node in turn (reading the nodes as repaired so far);
+    if the chain comes back to that node, clear *its* `boxId` — so the first node the
+    document lists on a ring steps out, and the rest stay nested. (4) a `parentId`
+    naming a node that sits in a box is replaced by the *outermost* box around that
+    node (follow `boxId` to the top): nothing hangs in the tree from inside a box.
+    (5) reporting loops: walk `parentId` up from each node in turn (reading nodes as
+    repaired so far); if any node is met twice, clear this node's `parentId`.
+  - *`layout()`.* Roots (no `parentId`, no `boxId`) stand at their `x`/`y`. The tree
+    under each is drawn as before: children by `order`, a row centred under the
+    parent, 28 between sibling subtrees (each as wide as its widest row), 64 between a
+    node's bottom and its children's top, one edge parent → child. A box lays out its
+    direct contents — people and boxes, by `order` — as a table of `cols =
+    boxCols(n)` (n ≤ 1 → 1, n ≤ 3 → n, else min(4, ⌈√n⌉)) filled row by row: column
+    width = widest item in it, row height = tallest item in it, an empty box counting
+    as one 224×64 cell; the box is `14 + Σcolumns + 10·(cols−1) + 14` wide and `38 +
+    Σrows + 10·(rows−1) + 14` tall; item (column c, row r) sits at `box.x + 14 +
+    Σcolumns before c + 10·c`, `box.y + 38 + Σrows before r + 10·r`, at its own size
+    (a card is 224×64; a nested box is sized from its own contents first, recursively).
+    Draw boxes outer to inner, cards above all boxes. A box's header counts the people
+    inside it at any depth.
+  - *Gestures.* Into a box (a card *or* a box): `boxId` set, `parentId` cleared, and
+    whatever reported to the dropped node now reports to the outermost box; refused
+    if the target is inside what is being dropped. Drop targeting picks the card under
+    the pointer first (a card in a box means its own, innermost box), then the
+    deepest box under it, then the strip under a card (hang under it). Removing a
+    box puts its direct contents in its place — into the box around it at its slot,
+    under its parent at its slot, or standing free where they were drawn — and its
+    reports go to its parent (or stand free). Several at once: the *roots* of a
+    selection (not carried by another selected node, through `boxId` or `parentId`)
+    move; onto a card they line up under it in reading order, on open board each
+    keeps its offset; into a box the *joiners* go in (every selected node not inside
+    a selected box). "Group into box" puts the joiners in a new box that takes the
+    first one's place (same box, same parent, or their top-left on open board).
+  - *The clipboard.* Text `{ "neo/team-chart": 1, projectId, nodes, people }`: the
+    selected nodes plus everything inside each selected box, links kept only inside
+    the set, every node carrying the `x`/`y` it was drawn at, and `people` mapping
+    each `personId` to a name. A paste gives every node a new id, leaves out people
+    not on the target project (naming them; what hung on them stands free where it
+    was drawn), and moves the free nodes by a whole number of grid steps — centred on
+    the pointer, else a step beside the originals, else in the middle of the view.
+    Placing the same person twice is allowed.
 - **Every mutation logs activity.** The server's `work/Activity.java` inserts a row and
   bumps `last_activity_at`, which is what makes the re-entry brief possible.
 - **Row → model mapping is centralised** in the server's `work/Mapper.java` (snake_case →

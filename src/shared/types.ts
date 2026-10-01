@@ -707,7 +707,7 @@ export interface TeamNode {
   y: number
   /** Reports to: the card or box this one hangs under. */
   parentId?: string | null
-  /** Sits in: the box this person's card is in. */
+  /** Sits in: the box this card — or this box — is inside. Boxes nest to any depth. */
   boxId?: string | null
   /** Left to right among the ones under the same parent, or in the same box. */
   order?: number
