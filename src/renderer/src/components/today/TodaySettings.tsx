@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getSync } from '@/lib/sync'
 import { Link } from 'react-router-dom'
 import type { WeatherPlace, Workspace } from '@shared/types'
 import { call, useApi, useApiMutation } from '@/lib/api'
@@ -39,6 +40,10 @@ function BannerPanel({ workspace }: { workspace: Workspace }): React.JSX.Element
   const position = dragged ?? { x: workspace.bannerX, y: workspace.bannerY }
 
   const choose = async (): Promise<void> => {
+    if (!getSync().online) {
+      setError('Adding a picture needs Neo Cloud. Try again when this Mac is back online.')
+      return
+    }
     try {
       const picked = await call('banner:pick')
       if (!picked) return

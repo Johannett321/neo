@@ -46,7 +46,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }): React.
         workspaces: list,
         archived,
         active,
-        ready: workspaces.isSuccess && settings.isSuccess,
+        // Having the answers, not having just fetched them: offline, the copy kept on
+        // this Mac is the answer, and a refetch that failed does not take it away.
+        ready: workspaces.data !== undefined && settings.data !== undefined,
         switchTo
       }}
     >

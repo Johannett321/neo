@@ -9,6 +9,7 @@ import { readFileForUpload, useAssistant, type LiveTool } from '@/lib/assistant'
 import { useWorkspace } from '@/lib/workspace'
 import { useContextMenu } from '@/lib/contextMenu'
 import { Icon } from './Icon'
+import { useOnline } from '@/lib/sync'
 import { Markdown } from './Markdown'
 import { EmptyState } from './primitives'
 
@@ -212,6 +213,9 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`
   }, [text])
 
+  // The assistant runs in Neo Cloud, so offline it can be written to but not sent.
+  const online = useOnline()
+
   const take = useCallback(async (list: FileList | File[]): Promise<void> => {
     setReading(true)
     try {
@@ -223,7 +227,7 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
   }, [])
 
   const submit = useCallback((): void => {
-    if (running || reading) return
+    if (running || reading || !online) return
     if (!text.trim() && files.length === 0) return
     const sentText = text
     const sentFiles = files
@@ -235,7 +239,7 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
     })
     setText('')
     setFiles([])
-  }, [files, projectId, reading, running, send, text])
+  }, [files, online, projectId, reading, running, send, text])
 
   return (
     <div
@@ -317,15 +321,20 @@ function Composer({ projectId }: { projectId?: string }): React.JSX.Element {
           <button
             className="btn btn-primary btn-sm btn-circle"
             onClick={submit}
-            disabled={reading || (!text.trim() && files.length === 0)}
-            title="Send"
+            disabled={!online || reading || (!text.trim() && files.length === 0)}
+            title={online ? 'Send' : 'The assistant needs Neo Cloud'}
           >
             <Icon name="arrowUp" size={14} />
           </button>
         )}
       </div>
 
-      {allowance && allowance.limit !== null && (
+      {!online ? (
+        <p className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-base-content/40">
+          <Icon name="cloudOff" size={11} />
+          The assistant runs in Neo Cloud, so it is back when this Mac is. What you type stays here.
+        </p>
+      ) : allowance && allowance.limit !== null && (
         <p className="mt-1.5 px-1 text-[11px] text-base-content/40">
           {Math.max(0, allowance.limit - allowance.used)} of {allowance.limit} left today
         </p>

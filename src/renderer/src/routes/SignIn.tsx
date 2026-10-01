@@ -188,11 +188,13 @@ export function SignIn({ onSignedIn }: { onSignedIn: (status: AccountStatus) => 
 }
 
 /**
- * Signed in, and Neo Cloud cannot be reached.
+ * Signed in, Neo Cloud cannot be reached, and this Mac has no copy of the work.
  *
  * Not the sign-in screen: the account is fine and asking for a password again would be
- * a lie about what went wrong. Nothing is kept on this machine, so there is nothing to
- * show until the connection comes back — this says so, and tries again when asked.
+ * a lie about what went wrong. With a copy kept from the last time Neo Cloud answered,
+ * the app opens on that instead and this is never seen (`lib/persist.ts`); without
+ * one — the first launch after signing in — there is nothing to show until the
+ * connection comes back. This says so, and goes by itself the moment it does.
  */
 export function Offline({
   username,
@@ -213,8 +215,8 @@ export function Offline({
         </div>
         <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.02em]">Neo Cloud cannot be reached</h1>
         <p className="mt-2 text-[13px] leading-relaxed text-base-content/60">
-          Your work is safe in your account{username ? `, ${username}` : ''}. It will be here as soon as this
-          machine is back online.
+          Your work is safe in your account{username ? `, ${username}` : ''}. This Mac has no copy of it yet, so it
+          will be here as soon as Neo Cloud can be reached — after that, Neo keeps working offline.
         </p>
         <div className="mt-6 flex justify-center gap-2">
           <button className="btn btn-primary btn-sm gap-1.5" onClick={onRetry}>

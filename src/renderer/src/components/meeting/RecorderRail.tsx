@@ -1,4 +1,5 @@
 import type { RecordingView } from '@shared/types'
+import { useOnline } from '@/lib/sync'
 import { useApiMutation } from '@/lib/api'
 import { formatBytes, formatDuration } from '@/lib/format'
 import { useRecorder } from '@/lib/recorder'
@@ -49,6 +50,7 @@ export function RecorderRail({
     recorder.recordingId !== null && !mine && meetingId !== null && recorder.meetingId !== meetingId
 
   const live = mine && recorder.status !== 'idle'
+  const online = useOnline()
 
   return (
     <div>
@@ -77,8 +79,10 @@ export function RecorderRail({
       ) : (
         <button
           className="btn btn-sm w-full gap-1.5"
-          disabled={elsewhere || recorder.status !== 'idle'}
-          title={elsewhere ? 'Another meeting is being recorded' : undefined}
+          disabled={!online || elsewhere || recorder.status !== 'idle'}
+          title={
+            !online ? 'Recording needs Neo Cloud' : elsewhere ? 'Another meeting is being recorded' : undefined
+          }
           onClick={async () => {
             const id = meetingId ?? (await ensureSaved())
             if (id) await recorder.start(id, projectId)
@@ -91,6 +95,12 @@ export function RecorderRail({
 
       {recorder.error && (mine || !recorder.recordingId) && (
         <p className="mt-2 text-[11px] leading-relaxed text-error">{recorder.error}</p>
+      )}
+      {/* Starting needs Neo Cloud; a recording already running holds its audio and carries on. */}
+      {!online && !live && !recording && (
+        <p className="mt-1.5 text-[11px] text-base-content/40">
+          Recording needs Neo Cloud. It can start again when this Mac is back online.
+        </p>
       )}
       {elsewhere && !recording && (
         <p className="mt-1.5 text-[11px] text-base-content/40">

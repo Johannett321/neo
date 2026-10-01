@@ -4,7 +4,8 @@ import { SIGNED_OUT } from '@shared/account'
 import { call, useApi, useApiMutation } from '@/lib/api'
 import { formatBytes, relativeFromIso } from '@/lib/format'
 import { Icon } from '@/components/Icon'
-import { Field, Panel } from '@/components/primitives'
+import { ConfirmButton, Field, Panel } from '@/components/primitives'
+import { useSync } from '@/lib/sync'
 
 /**
  * The account, as this machine is signed in to it.
@@ -18,6 +19,10 @@ export function AccountPane(): React.JSX.Element {
   const client = useQueryClient()
   const { data: status } = useApi('account:status')
   const [leaving, setLeaving] = useState(false)
+  const sync = useSync()
+  // Changes made offline that Neo Cloud has not got yet. Signing out throws them away
+  // with the rest of this Mac's copy, so it is asked about first, by count.
+  const unsent = sync.pending.length + sync.failed.length
 
   if (!status) {
     return (
@@ -48,14 +53,25 @@ export function AccountPane(): React.JSX.Element {
               {status.plan.name} plan · everything included
             </div>
           </div>
-          <button className="btn btn-sm" disabled={leaving} onClick={() => void signOut()}>
-            {leaving ? 'Signing out…' : 'Sign out'}
-          </button>
+          {unsent > 0 && !leaving ? (
+            <ConfirmButton
+              label="Sign out"
+              title={`Sign out with ${unsent} ${unsent === 1 ? 'change' : 'changes'} not yet in Neo Cloud?`}
+              body="They were made on this Mac while Neo Cloud could not be reached, and signing out throws them away. Wait until the header stops saying they are waiting to keep them."
+              confirmLabel="Sign out and discard"
+              className="btn btn-sm"
+              onConfirm={() => void signOut()}
+            />
+          ) : (
+            <button className="btn btn-sm" disabled={leaving} onClick={() => void signOut()}>
+              {leaving ? 'Signing out…' : 'Sign out'}
+            </button>
+          )}
         </div>
 
         <p className="mt-4 text-[12px] leading-relaxed text-base-content/55">
           Your work is kept in Neo Cloud and nowhere else, so it is on every machine you sign in to.
-          Signing out leaves it exactly where it is.
+          Signing out leaves it exactly where it is, and removes the copy this Mac keeps for working offline.
           {status.storage.usedBytes > 0 && (
             <> Files and recordings are using {formatBytes(status.storage.usedBytes)}.</>
           )}

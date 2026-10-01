@@ -96,9 +96,9 @@ does the whole thing itself — no disk image, nothing to drag, no Gatekeeper da
 second time. See [Updating itself](#updating-itself).
 
 **Neo keeps your work in Neo Cloud.** The first thing it asks for is an account — a
-username and a password, or a passkey — and everything you put in it is kept there and
-nowhere else. Sign in on a second Mac and it is all there; nothing is left behind on the
-first. Neo Cloud is free, and free includes everything.
+username and a password, or a passkey — and everything you put in it is kept there. Sign
+in on a second Mac and it is all there; sign out of the first and its copy goes with you.
+Neo Cloud is free, and free includes everything.
 
 ## Run it from source
 
@@ -737,6 +737,30 @@ leaving it takes you back to the folder it is in rather than to the top of the l
 with no folders at all, both
 pages are exactly the lists they were before any of this existed.
 
+### Working offline
+A train, a plane, hotel Wi-Fi that lets you join and then lets nothing through: Neo keeps
+going. It opens on the work as it last saw it, and the things you do most — adding and
+ticking off tasks, moving cards, adding people to a project, logging decisions and
+entries, links, notes — happen at once, exactly as they do online. They are kept on the
+Mac, in the order you made them, and sent to Neo Cloud the moment it can be reached. A
+card made on the train and edited twice before you land arrives as one card, edited
+twice.
+
+The corner of the header says so only when there is something to say — *Offline · 3
+waiting* — and pressing it lists what is waiting by name. If Neo Cloud turns anything
+down when it finally arrives (the project was deleted from another machine in the
+meantime, say), you are told which change and why, with *Try again* and *Discard*.
+
+Three things need Neo Cloud itself and wait for it, and say so where you would press
+them: the assistant, starting a recording, and adding a picture. A recording already
+running carries on — its audio is held and sent when the connection comes back. A screen
+you have never opened on this Mac has no copy to show, and says that rather than
+spinning.
+
+This is also why saving feels instant online: every common write is drawn on screen
+first and confirmed by Neo Cloud a moment later. If it is refused, it is taken back off
+the screen and a note in the corner says what was not saved.
+
 ### Confirmations
 Anything destructive opens a dialog that says what is about to happen and what it will
 take with it, rather than a button that quietly turns into "Sure?". It works from inside
@@ -986,10 +1010,13 @@ parse.
 
 Everything lives in **your Neo Cloud account**: every workspace, project, task, note,
 meeting, decision, journal entry, conversation with the assistant, the pictures and
-files in them, and the audio of recorded meetings. Nothing is kept on the Mac — the one
-thing Neo stores there is the token that says you are signed in, sealed in the login
-keychain. Sign in on another machine and everything is there; sign out and nothing is
-left behind.
+files in them, and the audio of recorded meetings. What Neo keeps on the Mac is three
+things, all sealed with the login keychain in the app's own folder: the token that says
+you are signed in, a copy of what the app last showed you (so it can open without a
+connection), and any changes made offline that have not reached Neo Cloud yet. All three
+belong to one account and are deleted when you sign out — or when another account signs
+in on that Mac. Sign in on another machine and everything is there; sign out and nothing
+is left behind.
 
 Neo Cloud is free, and free includes everything. **Settings → Account** shows who you are
 signed in as, on which machines, and lets you sign any of them out.
@@ -1139,7 +1166,7 @@ server means today where you are.
 `npm run verify` stubs Electron and drives the real IPC handlers end to end against a
 running Neo Cloud — sample data, the attention reasons, workspace and account isolation,
 the Today dashboard, the re-entry brief, the board, meetings and recordings, search, the
-assistant's run relay and daily limit, and the export — in plain Node, with no window and
+assistant's run relay and daily limit, the writes kept offline and sent in order, the sealed copy of the work and its removal on signing out, and the export — in plain Node, with no window and
 no display. It registers a fresh account each run. The assistant's runs need a Neo Cloud
 started against the server's scripted OpenAI stand-in (`test/fake_openai.py` in the server
 repository, with `NEO_OPENAI_BASE_URL` pointing at it), as CI does.
