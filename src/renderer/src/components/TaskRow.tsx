@@ -124,6 +124,16 @@ export function TaskRow({
         </span>
       </button>
 
+      {task.commentCount > 0 && (
+        <span
+          className="flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-base-content/35"
+          title={task.commentCount === 1 ? '1 comment' : `${task.commentCount} comments`}
+        >
+          <Icon name="chat" size={11} />
+          {task.commentCount}
+        </span>
+      )}
+
       {task.assigneeName && (
         <span className="shrink-0" title={`Assigned to ${task.assigneeIsMe ? 'you' : task.assigneeName}`}>
           <Avatar

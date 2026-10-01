@@ -5,6 +5,7 @@ import { differs } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
 import { Avatar, ConfirmButton, Field, Modal } from './primitives'
 import { DateField } from './DateField'
+import { TaskComments } from './TaskComments'
 
 interface State {
   title: string
@@ -65,9 +66,12 @@ export function TaskDialog({
     [task]
   )
   const [state, setState] = useState<State>(original)
+  // Something typed in the comment box and not sent is work to lose, like an edit.
+  const [commentDraft, setCommentDraft] = useState(false)
 
   useEffect(() => {
     if (open) setState(original)
+    if (!open) setCommentDraft(false)
   }, [open, original])
 
   const set = <K extends keyof State>(key: K, value: State[K]): void =>
@@ -112,7 +116,7 @@ export function TaskDialog({
       title="Edit item"
       description={task?.projectName}
       onSubmit={() => void submit()}
-      isDirty={differs(state, original)}
+      isDirty={differs(state, original) || commentDraft}
       footer={
         <>
           {task && (
@@ -212,6 +216,11 @@ export function TaskDialog({
           </Field>
         </div>
 
+        {/*
+          Keyed by the card so a dialog reused for another card never shows the last
+          one's thread, or its unsent reply, for a frame.
+        */}
+        {task && <TaskComments key={task.id} taskId={task.id} onDraftChange={setCommentDraft} />}
       </div>
     </Modal>
   )
