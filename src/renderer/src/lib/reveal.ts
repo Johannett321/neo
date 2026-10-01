@@ -15,7 +15,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
  * would make an otherwise identical screen two different places to go back to. This is
  * a thing said once on arrival, which is exactly what history state is for.
  */
-const FLASH_MS = 1400
+/** The flash's 1.4s plus the 0.25s it waits for the page to arrive — see `.reveal-flash`. */
+const FLASH_MS = 1700
 
 interface RevealState {
   reveal?: string

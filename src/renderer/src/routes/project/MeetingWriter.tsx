@@ -543,6 +543,14 @@ function Todos({
    * Read once for the list; see `lib/reveal.ts`.
    */
   const revealed = useRevealed()
+  /*
+   * Or it names the meeting itself, which is what Today's "open to-dos from meetings"
+   * row has to hand: then what lights is every item still owed, since those are what
+   * that row was counting. The first of them is the one scrolled to.
+   */
+  const lit = (todo: MeetingTodo): boolean =>
+    revealed !== null && (todo.taskId === revealed || (revealed === meeting?.id && !todo.done))
+  const lead = todos.find(lit)?.id ?? null
 
   const add = async (): Promise<void> => {
     const text = adding.trim()
@@ -570,7 +578,8 @@ function Todos({
             key={todo.id}
             todo={todo}
             projectId={projectId}
-            revealed={revealed !== null && todo.taskId === revealed}
+            revealed={lit(todo)}
+            lead={todo.id === lead}
           />
         ))}
       </div>
@@ -600,19 +609,22 @@ function Todos({
 function TodoRow({
   todo,
   projectId,
-  revealed
+  revealed,
+  lead
 }: {
   todo: MeetingTodo
   projectId: string
   /** This is the item the screen was opened to point at. */
   revealed: boolean
+  /** And the first of them, which is the one brought into view. */
+  lead: boolean
 }): React.JSX.Element {
   const save = useApiMutation('meetingTodo:save')
   const remove = useApiMutation('meetingTodo:delete')
   const promote = useApiMutation('meetingTodo:promote')
   const openMenu = useContextMenu()
   const reveal = useReveal()
-  const ref = useRevealTarget<HTMLDivElement>(revealed)
+  const ref = useRevealTarget<HTMLDivElement>(revealed && lead)
 
   const [text, setText] = useState(todo.text)
   const focused = useRef(false)

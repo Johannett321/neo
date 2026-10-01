@@ -360,8 +360,14 @@ summary,
       inset 0 0 0 999px color-mix(in oklch, var(--color-primary) 3%, transparent);
   }
 }
+/*
+ * Held back by the length of the page's own arrival (`ENTER` in `lib/motion.ts`, plus a
+ * hair): the screen fades in over 220ms, and a first pulse spent while it was still
+ * half transparent was the one nobody saw. `FLASH_MS` in `lib/reveal.ts` counts the
+ * delay in, so the class is not taken off mid-pulse.
+ */
 .reveal-flash {
-  animation: reveal-flash 1.4s ease-in-out;
+  animation: reveal-flash 1.4s ease-in-out 0.25s;
   /* The ring is outside the box, so it must not be painted under the row beside it. */
   position: relative;
   z-index: 1;
