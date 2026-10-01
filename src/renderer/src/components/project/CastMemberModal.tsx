@@ -1,154 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useContextMenu } from '@/lib/contextMenu'
+import { Link } from 'react-router-dom'
 import type { CastMember, Person } from '@shared/types'
 import { useApi, useApiMutation } from '@/lib/api'
 import { differs, ROLE_SUGGESTIONS } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
-import { Avatar, ConfirmButton, EmptyState, Field, Modal, Section } from '@/components/primitives'
-import { formatRoles, parseRoles, RoleBadges, RoleInput } from '@/components/RoleInput'
+import { Avatar, Field, Modal } from '@/components/primitives'
+import { formatRoles, parseRoles, RoleInput } from '@/components/RoleInput'
 import { stableKey } from '@/lib/sync'
-
-/**
- * The cast sits above the fold on every project, because "who is who here again"
- * is a question you ask on the way into a project, not once you are deep in it.
- */
-export function CastPanel({
-  projectId,
-  cast
-}: {
-  projectId: string
-  cast: CastMember[]
-}): React.JSX.Element {
-  const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<CastMember | null>(null)
-  const remove = useApiMutation('membership:delete')
-  const navigate = useNavigate()
-  const openMenu = useContextMenu()
-
-  return (
-    <Section
-      title="Cast"
-      count={cast.length}
-      action={
-        <button className="btn btn-ghost btn-xs gap-1" onClick={() => setAdding(true)}>
-          <Icon name="plus" size={12} />
-          Add
-        </button>
-      }
-    >
-      {cast.length === 0 ? (
-        <EmptyState
-          icon="people"
-          title="Nobody recorded yet."
-          hint="Roles live on the connection, not the person — the same person can be a tech lead here and a stakeholder somewhere else."
-        />
-      ) : (
-        <div className="hairline overflow-hidden rounded-box border bg-base-100">
-          {cast.map((member) => (
-            <div
-              key={stableKey(member.id)}
-              className={`row-hover hairline group flex items-start gap-3 border-b px-3 py-2.5 last:border-b-0 ${
-                member.isMe ? 'bg-primary/[0.03]' : ''
-              }`}
-              onContextMenu={(e) =>
-                openMenu(e, [
-                  { label: 'Edit role…', icon: 'edit', onSelect: () => setEditing(member) },
-                  {
-                    label: 'Open profile',
-                    icon: 'people',
-                    onSelect: () => navigate(`/people/${member.personId}`)
-                  },
-                  ...(member.isMe
-                    ? []
-                    : ([
-                        'separator',
-                        {
-                          label: 'Remove from project',
-                          icon: 'trash' as const,
-                          danger: true,
-                          onSelect: () => remove.mutate({ id: member.id }),
-                          confirm: {
-                            title: `Remove ${member.name} from this project?`,
-                            body: 'They stay in the workspace and on any other project they are part of.',
-                            confirmLabel: 'Remove'
-                          }
-                        }
-                      ] as const))
-                ])
-              }
-            >
-              <Avatar name={member.name} color={member.avatarColor} image={member.avatar} size={26} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <Link to={`/people/${member.personId}`} className="truncate text-[13px] font-medium hover:underline">
-                    {member.name}
-                  </Link>
-                  {member.isMe && (
-                    <span className="rounded-full bg-primary/12 px-1.5 py-px text-[10px] font-medium text-primary">
-                      You
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  {member.isMe && !member.role.trim() ? (
-                    <button
-                      className="text-[11px] text-primary hover:underline"
-                      onClick={() => setEditing(member)}
-                    >
-                      Set your role on this project
-                    </button>
-                  ) : (
-                    <RoleBadges value={member.role} />
-                  )}
-                  {member.org && <span className="text-[11px] text-base-content/40">{member.org}</span>}
-                </div>
-                {member.howToWorkWith && (
-                  <div className="mt-1 text-[11px] leading-snug text-base-content/45">
-                    {member.howToWorkWith}
-                  </div>
-                )}
-                {member.note && (
-                  <div className="mt-0.5 text-[11px] leading-snug text-base-content/45">{member.note}</div>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-                <button
-                  className="btn btn-ghost btn-xs text-base-content/45"
-                  onClick={() => setEditing(member)}
-                >
-                  Edit
-                </button>
-                {!member.isMe && (
-                  <ConfirmButton
-                    label="Remove"
-                    title={`Remove ${member.name} from this project?`}
-                    body="They stay in the workspace and on any other project they are part of."
-                    confirmLabel="Remove"
-                    onConfirm={() => remove.mutate({ id: member.id })}
-                  />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <CastMemberModal
-        open={adding || editing !== null}
-        onClose={() => {
-          setAdding(false)
-          setEditing(null)
-        }}
-        member={editing}
-        projectId={projectId}
-        existing={cast.map((c) => c.personId)}
-      />
-    </Section>
-  )
-}
 
 interface Form {
   roles: string[]
@@ -160,7 +20,7 @@ interface Form {
  * already somewhere else in the workspace, and retyping their details would create a
  * second, slightly different copy of the same person.
  */
-function CastMemberModal({
+export function CastMemberModal({
   open,
   onClose,
   member,

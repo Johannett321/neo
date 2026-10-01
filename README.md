@@ -529,7 +529,7 @@ would create a second, slightly different copy of the same person. Pick them and
 photo, organisation and details come along; their role on *this* project is still yours
 to set. Only if nobody matches do you fill in a new person.
 
-People can have **uploaded photos**, which then follow them into the cast panel, meeting
+People can have **uploaded photos**, which then follow them onto the team chart, meeting
 attendees and project cards. Without one, the coloured initials are used.
 
 Each person also carries a free-text "how to work with them" — prefers Slack, no meetings
@@ -553,6 +553,13 @@ to take it off the chart; ⌘Z puts it back. An empty board offers to start **as
 **in boxes** (one per role), so you adjust a drawing rather than compose one. Each card
 shows the person's role here — click it to change it — and how many open items on the
 board are theirs.
+
+**The Team tab is where a project's people live** — there is no separate list of them.
+*Add person* in the toolbar (or at the foot of the list, or on an empty project's board)
+opens the same search-first dialog described above, and the person lands at the top of
+the list, ready to be dragged on. Right-click a card or a row in the list to edit their
+details on this project, open their profile, or remove them from the project, which
+takes them off the chart too. The old `…/people` address lands on Team.
 
 The drawing is furniture, like a card's position on the board: nothing derives anything
 from it, and arranging it logs no activity.

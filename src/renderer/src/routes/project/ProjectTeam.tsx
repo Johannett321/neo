@@ -49,6 +49,7 @@ import {
   type Layout,
   type Rect
 } from '@/lib/team'
+import { CastMemberModal } from '@/components/project/CastMemberModal'
 import { useProject } from './ProjectLayout'
 
 /*
@@ -133,6 +134,35 @@ export function ProjectTeam(): React.JSX.Element {
   const { data: remote } = useApi('team:get', { projectId: project.id })
   const roleSuggestions = useApi('membership:roles', { workspaceId: workspace.id })
   const saveMembership = useApiMutation('membership:save')
+  const removeMember = useApiMutation('membership:delete')
+  /*
+   * The team chart is the project's people screen — there is no list beside it — so
+   * adding someone, and editing who they are on this project, open from here. `member`
+   * null is adding.
+   */
+  const [castModal, setCastModal] = useState<{ member: CastMember | null } | null>(null)
+
+  /** What can be done about a person on this project, from their card or their row in the list. */
+  const memberItems = (member: CastMember): MenuItem[] => [
+    { label: 'Open profile', icon: 'external', onSelect: () => navigate(`/people/${member.personId}`) },
+    { label: 'Edit details…', icon: 'edit', onSelect: () => setCastModal({ member }) },
+    ...(member.isMe
+      ? []
+      : ([
+          'separator',
+          {
+            label: 'Remove from project',
+            icon: 'trash',
+            danger: true,
+            confirm: {
+              title: `Remove ${member.name} from this project?`,
+              body: 'They come off the chart, and stay in the workspace and on any other project they are part of.',
+              confirmLabel: 'Remove'
+            },
+            onSelect: () => removeMember.mutate({ id: member.id })
+          }
+        ] as MenuItem[]))
+  ]
 
   /* ---------------------------------------------------------------- the drawing */
 
@@ -913,7 +943,6 @@ export function ProjectTeam(): React.JSX.Element {
     const items: MenuItem[] =
       node.kind === 'person' && member
         ? [
-            { label: 'Open profile', icon: 'external', onSelect: () => navigate(`/people/${member.personId}`) },
             { label: 'Change role', icon: 'edit', onSelect: () => setEditingRole(node.id) },
             ...(node.parentId || node.boxId
               ? [{
@@ -925,8 +954,9 @@ export function ProjectTeam(): React.JSX.Element {
                   }
                 }]
               : []),
+            { label: 'Take off the chart', icon: 'close', onSelect: () => takeOff(node.id) },
             'separator',
-            { label: 'Take off the chart', icon: 'trash', danger: true, onSelect: () => takeOff(node.id) }
+            ...memberItems(member)
           ]
         : [
             { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(node.id) },
@@ -1084,6 +1114,7 @@ export function ProjectTeam(): React.JSX.Element {
 
       <div data-toolbar className="absolute left-3 top-3 z-20 flex items-center gap-1">
         <div className="glass-raised hairline flex items-center gap-0.5 rounded-field border bg-base-100/95 p-1 shadow-[0_8px_24px_-16px_rgb(0_0_0/0.35)] backdrop-blur">
+          <ToolButton icon="plus" label="Add person" onClick={() => setCastModal({ member: null })} />
           <ToolButton icon="box" label="Add box" onClick={() => addBox()} />
           <ToolButton icon="tidy" label="Tidy" onClick={tidyUp} disabled={display.nodes.length === 0} />
           <Divider />
@@ -1106,7 +1137,12 @@ export function ProjectTeam(): React.JSX.Element {
           style={{ right: TRAY_SPACE }}
         >
           <div data-start className="pointer-events-auto">
-            <StartChoices people={cast.length} onTree={() => start('tree')} onBoxes={() => start('boxes')} />
+            <StartChoices
+              people={cast.length}
+              onTree={() => start('tree')}
+              onBoxes={() => start('boxes')}
+              onAddPeople={() => setCastModal({ member: null })}
+            />
           </div>
         </div>
       )}
@@ -1119,7 +1155,8 @@ export function ProjectTeam(): React.JSX.Element {
         trayRef={trayRef}
         onPick={onTrayPick}
         onClickPerson={onTrayClick}
-        onAddPeople={() => navigate(`/projects/${project.id}/people`)}
+        onAddPeople={() => setCastModal({ member: null })}
+        onMenu={(e, member) => openMenu(e, memberItems(member))}
       />
 
       {/* What is in your hand, above the list so it can be dragged back onto it. */}
@@ -1181,6 +1218,14 @@ export function ProjectTeam(): React.JSX.Element {
           onOpen={() => navigate(`/people/${roleMember.personId}`)}
         />
       )}
+
+      <CastMemberModal
+        open={castModal !== null}
+        onClose={() => setCastModal(null)}
+        member={castModal?.member ?? null}
+        projectId={project.id}
+        existing={cast.map((c) => c.personId)}
+      />
     </div>
   )
 }

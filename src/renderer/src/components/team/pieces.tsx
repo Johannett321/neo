@@ -273,7 +273,8 @@ export function Tray({
   trayRef,
   onPick,
   onClickPerson,
-  onAddPeople
+  onAddPeople,
+  onMenu
 }: {
   cast: CastMember[]
   placed: Map<string, number>
@@ -283,6 +284,7 @@ export function Tray({
   onPick: (e: React.PointerEvent, member: CastMember) => void
   onClickPerson: (member: CastMember) => void
   onAddPeople: () => void
+  onMenu: (e: React.MouseEvent, member: CastMember) => void
 }): React.JSX.Element {
   const count = cast.filter((m) => placed.has(m.personId)).length
   const unplaced = cast.filter((m) => !placed.has(m.personId))
@@ -321,7 +323,7 @@ export function Tray({
         <div className="scroll-area min-h-0 flex-1 px-2 pb-2">
           {unplaced.length > 0 && <TrayHeading>Not on the chart yet</TrayHeading>}
           {unplaced.map((m) => (
-            <TrayRow key={m.id} member={m} placed={0} dragging={dragging} onPick={onPick} onClick={onClickPerson} />
+            <TrayRow key={m.id} member={m} placed={0} dragging={dragging} onPick={onPick} onClick={onClickPerson} onMenu={onMenu} />
           ))}
           {done.length > 0 && <TrayHeading>On the chart</TrayHeading>}
           {done.map((m) => (
@@ -332,6 +334,7 @@ export function Tray({
               dragging={dragging}
               onPick={onPick}
               onClick={onClickPerson}
+              onMenu={onMenu}
             />
           ))}
         </div>
@@ -361,13 +364,15 @@ function TrayRow({
   placed,
   dragging,
   onPick,
-  onClick
+  onClick,
+  onMenu
 }: {
   member: CastMember
   placed: number
   dragging: boolean
   onPick: (e: React.PointerEvent, member: CastMember) => void
   onClick: (member: CastMember) => void
+  onMenu: (e: React.MouseEvent, member: CastMember) => void
 }): React.JSX.Element {
   const roles = parseRoles(member.role)
   return (
@@ -377,7 +382,10 @@ function TrayRow({
       className={`group flex cursor-grab touch-none select-none items-center gap-2.5 rounded-field px-1.5 py-1.5 transition active:cursor-grabbing ${
         dragging ? '' : 'hover:bg-base-content/[0.05]'
       } ${placed ? 'opacity-50 hover:opacity-90' : ''}`}
-      onPointerDown={(e) => onPick(e, member)}
+      onPointerDown={(e) => {
+        if (e.button === 0) onPick(e, member)
+      }}
+      onContextMenu={(e) => onMenu(e, member)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onClick(member)
       }}
@@ -406,12 +414,40 @@ function TrayRow({
 export function StartChoices({
   people,
   onTree,
-  onBoxes
+  onBoxes,
+  onAddPeople
 }: {
   people: number
   onTree: () => void
   onBoxes: () => void
+  onAddPeople: () => void
 }): React.JSX.Element {
+  /*
+   * Nobody on the project yet, so neither start has anyone to place: the one useful
+   * thing to offer is the person. Once somebody is added the templates take over.
+   */
+  if (people === 0) {
+    return (
+      <motion.div
+        className="pointer-events-auto flex w-[min(420px,calc(100%-32px))] flex-col items-center text-center"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+      >
+        <div className="flex h-[92px] w-[132px] items-center justify-center rounded-[10px] bg-base-200/60 text-base-content/30">
+          <TreeSketch />
+        </div>
+        <div className="mt-4 text-[17px] font-semibold tracking-[-0.01em]">Who is on this project?</div>
+        <div className="mt-1.5 text-[12.5px] leading-relaxed text-base-content/55">
+          Add the people involved — someone from the workspace or someone new — and draw how they fit together.
+        </div>
+        <button className="btn btn-primary btn-sm mt-5 gap-1.5" onClick={onAddPeople}>
+          <Icon name="plus" size={14} />
+          Add the first person
+        </button>
+      </motion.div>
+    )
+  }
   return (
     <motion.div
       className="pointer-events-auto flex w-[min(560px,calc(100%-32px))] flex-col items-center text-center"

@@ -399,6 +399,12 @@ install's database and files into an empty Neo Cloud account.
   somewhere else. Filing a project into a different folder resets it to zero, since its
   old number described old neighbours. It logs no activity: where a card sits is not a
   fact about the project.
+- **A project's people are its team chart.** There is no People tab: `ProjectTeam.tsx`
+  is the one screen for who is on a project, and it opens `CastMemberModal` (search the
+  workspace first, then a new person) for adding someone and for editing their details
+  on this project. `/projects/:id/people` redirects to `team`. Anything a person-on-a-
+  project needs — a new field, a new action — goes on the card, the list's row menu or
+  that dialog, not on a list beside the chart.
 - **The team chart is furniture too.** `team_canvas` in Neo Cloud is one open JSON
   document per project (`team:get` / `team:save`, `lib/cloud/documents.ts` narrows it),
   and nothing derives anything from it — saving logs no activity. Its meaning is

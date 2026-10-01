@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { HashRouter, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { SIGNED_OUT } from '@shared/account'
 import { AssistantPanel } from '@/components/AssistantPanel'
 import { CommandPalette } from '@/components/CommandPalette'
@@ -32,7 +32,7 @@ import { ProjectLayout } from '@/routes/project/ProjectLayout'
 import { ProjectMeetings } from '@/routes/project/ProjectMeetings'
 import { MeetingWriter } from '@/routes/project/MeetingWriter'
 import { ProjectSettings } from '@/routes/project/ProjectSettings'
-import { ProjectDecisions, ProjectNotes, ProjectPeople } from '@/routes/project/ProjectNotes'
+import { ProjectDecisions, ProjectNotes } from '@/routes/project/ProjectNotes'
 import { ProjectTeam } from '@/routes/project/ProjectTeam'
 import { NoteWriter } from '@/routes/project/NoteWriter'
 import { CanvasEditor } from '@/routes/project/CanvasEditor'
@@ -274,7 +274,8 @@ function Frame({ onSearch, onNew }: { onSearch: () => void; onNew: () => void })
                   <Route path="meetings" element={<ProjectMeetings />} />
                   <Route path="notes" element={<ProjectNotes />} />
                   <Route path="decisions" element={<ProjectDecisions />} />
-                  <Route path="people" element={<ProjectPeople />} />
+                  {/* The team chart is where a project's people are now; old links land there. */}
+                  <Route path="people" element={<Navigate to="../team" replace />} />
                   <Route path="team" element={<ProjectTeam />} />
                   <Route path="settings" element={<ProjectSettings />} />
                 </Route>
