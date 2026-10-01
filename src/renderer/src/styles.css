@@ -1230,6 +1230,25 @@ summary,
 }
 
 /*
+ * The settings layer (components/SettingsOverlay.tsx) covers the whole app, so unlike
+ * every other surface it must not let the app show through it: the sheet is what the
+ * window would have been without the app on it. Opaque in the solid themes. Under
+ * Liquid Glass it is the window's own backdrop again — the solid capture with the same
+ * slow colour as `paint` mode — at nearly full strength, so the chrome and the page
+ * inside it can still thin over something without the board underneath reading
+ * through a settings pane.
+ */
+.settings-sheet {
+  background-color: var(--color-base-100);
+}
+[data-glass] .settings-sheet {
+  background-color: color-mix(in oklch, var(--glass-solid-300) 97%, transparent);
+  background-image:
+    radial-gradient(64% 58% at 12% 0%, color-mix(in oklch, var(--color-primary) 10%, transparent), transparent 70%),
+    radial-gradient(70% 66% at 78% 100%, color-mix(in oklch, var(--color-accent) 8%, transparent), transparent 72%);
+}
+
+/*
  * The sidebar's own tint, painted from the custom property the component sets rather
  * than from an inline background — which is what lets the rule below make the very
  * same colour translucent. In every other theme this is the only rule that runs.

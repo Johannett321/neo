@@ -11,6 +11,7 @@ import { UpdateNotice } from '@/components/Updates'
 import { WhatsNew } from '@/components/WhatsNew'
 import { CreateDialog } from '@/components/CreateDialog'
 import { RecordingBar } from '@/components/meeting/RecordingBar'
+import { SettingsOverlay, usePageLocation } from '@/components/SettingsOverlay'
 import { WorkspaceModal } from '@/components/WorkspaceModal'
 import { call, useApi, useLiveData } from '@/lib/api'
 import { AssistantProvider, useAssistant } from '@/lib/assistant'
@@ -54,20 +55,10 @@ function Shell(): React.JSX.Element {
   const { active, switchTo } = useWorkspaces()
   // Inside a project the target is already known, so it is never asked for.
   const inProject = useMatch('/projects/:id/*')
-  const isBoard = Boolean(useMatch('/projects/:id/kanban'))
-  // Writing is the one thing that owns the window: no heading above it, no search
-  // bar, no reading width. Notes and meeting write-ups both do. See NoteWriter.
-  //
-  // Both matches are taken before they are combined, and deliberately so: `||` does
-  // not evaluate its right-hand side once the left is true, and a `useMatch` skipped
-  // on some renders and not others is a hook that changes position in the list.
-  const inNote = useMatch('/projects/:id/notes/:noteId')
-  const inCanvas = useMatch('/projects/:id/canvas/:canvasId')
-  const inMeeting = useMatch('/projects/:id/meetings/:meetingId')
-  const writing = Boolean(inNote || inCanvas || inMeeting)
   const navigate = useNavigate()
-  const location = useLocation()
-  const scroller = useRef<HTMLElement>(null)
+  // While the app's or a workspace's settings are open over the window, the page
+  // underneath is still the one they were opened from. See SettingsOverlay.
+  const { page, overlay, close } = usePageLocation()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
@@ -137,6 +128,77 @@ function Shell(): React.JSX.Element {
   }, [onKeyDown])
 
   return (
+    <>
+      {/*
+        The page is drawn against `page` rather than the address: a route of its own
+        whose location is the page's, so every `useMatch` and `useLocation` below —
+        the sidebar's, the header's, the screen's — answers for the page underneath
+        while settings are open over it, and nothing moves behind them.
+      */}
+      <Routes location={page}>
+        <Route
+          path="*"
+          element={
+            <Frame
+              onSearch={() => setPaletteOpen(true)}
+              onNew={() => setQuickAddOpen(true)}
+            />
+          }
+        />
+      </Routes>
+
+      <SettingsOverlay open={overlay} close={close}>
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/workspace" element={<WorkspaceSettings />} />
+      </SettingsOverlay>
+      {/*
+        Mounted here rather than at the gate: it is a thing the app says once you are
+        already inside it, and a first run has an introduction of its own to give.
+      */}
+      <WhatsNew />
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CreateDialog
+        open={quickAddOpen}
+        onClose={() => setQuickAddOpen(false)}
+        projectId={inProject?.params.id}
+      />
+      <NewProjectModal open={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
+      <WorkspaceModal
+        open={newWorkspaceOpen}
+        onClose={() => setNewWorkspaceOpen(false)}
+        workspace={null}
+        onSaved={(created) => {
+          switchTo(created.id)
+          navigate('/')
+        }}
+      />
+    </>
+  )
+}
+
+/**
+ * The window with the app in it: the sidebar, the bar across the top, the page and the
+ * assistant. Rendered inside a route whose location is the *page* (see `Shell`), so it
+ * stays exactly as it was while settings are open over it.
+ */
+function Frame({ onSearch, onNew }: { onSearch: () => void; onNew: () => void }): React.JSX.Element {
+  const isBoard = Boolean(useMatch('/projects/:id/kanban'))
+  // Writing is the one thing that owns the window: no heading above it, no search
+  // bar, no reading width. Notes and meeting write-ups both do. See NoteWriter.
+  //
+  // Both matches are taken before they are combined, and deliberately so: `||` does
+  // not evaluate its right-hand side once the left is true, and a `useMatch` skipped
+  // on some renders and not others is a hook that changes position in the list.
+  const inNote = useMatch('/projects/:id/notes/:noteId')
+  const inCanvas = useMatch('/projects/:id/canvas/:canvasId')
+  const inMeeting = useMatch('/projects/:id/meetings/:meetingId')
+  const writing = Boolean(inNote || inCanvas || inMeeting)
+  const location = useLocation()
+  const scroller = useRef<HTMLElement>(null)
+  const assistant = useAssistant()
+
+  return (
     <div className="glass-window flex h-full bg-base-100 text-base-content">
       <Sidebar />
 
@@ -145,7 +207,7 @@ function Shell(): React.JSX.Element {
           <header className="glass-chrome drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b px-6">
             <button
               className="hairline flex h-8 w-full max-w-md items-center gap-2 rounded-field border bg-base-200/60 px-3 text-left text-[13px] text-base-content/40 transition hover:bg-base-200"
-              onClick={() => setPaletteOpen(true)}
+              onClick={onSearch}
               title="Search everything (⌘K)"
             >
               <Icon name="search" size={14} />
@@ -173,7 +235,7 @@ function Shell(): React.JSX.Element {
 
             <button
               className="btn btn-primary btn-sm gap-1.5"
-              onClick={() => setQuickAddOpen(true)}
+              onClick={onNew}
               title="New (⌘N)"
             >
               <Icon name="plus" size={14} />
@@ -215,8 +277,6 @@ function Shell(): React.JSX.Element {
                 <Route path="/projects/:id/meetings/:meetingId" element={<MeetingWriter />} />
                 <Route path="/people" element={<PeoplePage />} />
                 <Route path="/people/:id" element={<PersonPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/workspace" element={<WorkspaceSettings />} />
               </Routes>
             </PageTransition>
           </div>
@@ -232,29 +292,6 @@ function Shell(): React.JSX.Element {
       </div>
 
       <AssistantPanel />
-
-      {/*
-        Mounted here rather than at the gate: it is a thing the app says once you are
-        already inside it, and a first run has an introduction of its own to give.
-      */}
-      <WhatsNew />
-
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <CreateDialog
-        open={quickAddOpen}
-        onClose={() => setQuickAddOpen(false)}
-        projectId={inProject?.params.id}
-      />
-      <NewProjectModal open={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
-      <WorkspaceModal
-        open={newWorkspaceOpen}
-        onClose={() => setNewWorkspaceOpen(false)}
-        workspace={null}
-        onSaved={(created) => {
-          switchTo(created.id)
-          navigate('/')
-        }}
-      />
     </div>
   )
 }

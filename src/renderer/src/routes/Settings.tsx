@@ -21,6 +21,7 @@ export function SettingsPage(): React.JSX.Element {
   return (
     <SettingsLayout
       title="Settings"
+      mark={<Icon name="settings" size={16} className="text-base-content/50" />}
       exitTo="/"
       subtitle={
         <>

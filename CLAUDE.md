@@ -365,6 +365,20 @@ install's database and files into an empty Neo Cloud account.
   render through `components/SettingsLayout.tsx`: a short list down the left, one pane at
   a time on the right. Add a pane rather than another section stacked below the last one,
   and if a screen needs more than about five, the screen is doing too much.
+  **The app's settings and a workspace's are a layer over the whole window**
+  (`components/SettingsOverlay.tsx`), Shopify's arrangement: they cover the sidebar and
+  the header, carry a ✕ at the top right, close on Escape, and closing returns to the
+  exact screen they were opened from. They stay routes (`/settings`, `/workspace`,
+  `?pane=`), so every link and the menu work unchanged; what makes it a layer is that
+  the shell draws its page against `usePageLocation()` — the last page — inside a route
+  whose location is that page, so every `useMatch` beneath it (sidebar, header, screen)
+  answers for the page and nothing behind the layer moves or remounts. Closing goes
+  *back* through history to that page when it can, rather than pushing it again, so Back
+  afterwards does not reopen settings. The layer's bar is the window's title bar: a drag
+  region, indented past the traffic lights, and the sheet is opaque under Liquid Glass
+  too (`.settings-sheet`) because the app must not read through a settings pane.
+  A project's settings are not in the layer — inside a project the sidebar is the
+  project, and its settings are one of its places.
 - **The app updates itself, and the changelog ships with it.** `changelog/<version>.md`
   is written in the same commit as the version bump; the release workflow refuses a tag
   without one and generates the GitHub release notes from it, so a release is described

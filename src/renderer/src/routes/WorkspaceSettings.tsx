@@ -7,6 +7,7 @@ import { useWorkspace, useWorkspaces } from '@/lib/workspace'
 import { plural } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { IconPicker } from '@/components/IconPicker'
+import { Mark } from '@/components/Mark'
 import { NotificationPane } from '@/components/NotificationSettings'
 import { SettingsLayout } from '@/components/SettingsLayout'
 import { TodayPane } from '@/components/today/TodaySettings'
@@ -28,6 +29,7 @@ export function WorkspaceSettings(): React.JSX.Element {
     <>
       <SettingsLayout
         title={workspace.name}
+        mark={<Mark name={workspace.name} color={workspace.color} icon={workspace.icon} size={22} />}
         subtitle="Everything about this workspace. Its projects and people stay inside it."
         exitTo="/"
         actions={

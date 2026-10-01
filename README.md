@@ -190,6 +190,13 @@ switching between them is the switcher's job, not a settings screen's. That is k
 **Settings** in the sidebar, which is about the app rather than any one area: your
 profile, the theme, where your data lives, and how to get it out.
 
+The app's settings and a workspace's open as a **layer over the whole window**, in
+front of the sidebar and everything else, with a ✕ at the top right. Closing it — the ✕,
+or Escape — puts you back exactly where you were, on the same board, scrolled to the same
+place, because that screen never went anywhere. Settings is somewhere you step into for a
+minute, not a place in your workspace, and the sidebar beside it used to suggest
+otherwise.
+
 Every settings screen — the app's, a workspace's, a project's — is the same shape: a
 short list of panes down the left, one pane at a time on the right. A long scroll of
 sections meant the thing you came to change was never where you left it; a pane is a
@@ -1131,7 +1138,7 @@ drive the same actions the buttons and keyboard do rather than a parallel set of
 | `⌘[` / `⌘]` | Back and forward |
 | `⌘,` | Settings |
 | `⌘↵` | Save and close a dialog |
-| `Esc` | Close a dialog, or leave a settings screen |
+| `Esc` | Close a dialog, or close settings and go back to where you were |
 
 ## How it is built
 
