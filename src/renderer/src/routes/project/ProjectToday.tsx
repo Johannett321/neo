@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { TaskView } from '@shared/types'
-import { formatDate, plural, relativeFromIso } from '@/lib/format'
+import { dueLabel, formatDate, plural, relativeFromIso } from '@/lib/format'
 import { Icon } from '@/components/Icon'
 import { Avatar, Panel, Section } from '@/components/primitives'
 import { TaskDialog } from '@/components/TaskDialog'
@@ -26,7 +26,7 @@ const byDue = (a: TaskView, b: TaskView): number => (a.daysUntilDue ?? 0) - (b.d
  * links, the cast, the activity feed — is in the rail at rail weight.
  */
 export function ProjectToday(): React.JSX.Element {
-  const { project, brief, cast, links, journal, activity, meetings, columns, tasks } = useProject()
+  const { project, brief, cast, links, journal, activity, meetings, columns, tasks, openQuestions } = useProject()
   const [editing, setEditing] = useState<TaskView | null>(null)
 
   /*
@@ -105,6 +105,52 @@ export function ProjectToday(): React.JSX.Element {
                         {plural(meeting.openTodos, 'open to-do', 'open to-dos')}
                       </span>
                     </span>
+                    <Icon
+                      name="chevronRight"
+                      size={13}
+                      className="shrink-0 text-base-content/25 opacity-0 transition group-hover:opacity-100"
+                    />
+                  </Link>
+                ))}
+              </Panel>
+            </Section>
+          )}
+
+          {/*
+            Questions nobody has settled are work the board does not hold. Listed here
+            so they are not only remembered by whoever opens the Decisions page; each
+            row goes there, which is where deciding happens.
+          */}
+          {openQuestions.length > 0 && (
+            <Section title="Waiting on a decision" count={openQuestions.length}>
+              <Panel padded={false}>
+                {openQuestions.slice(0, 5).map((question) => (
+                  <Link
+                    key={question.id}
+                    to={`/projects/${project.id}/decisions`}
+                    className="row-hover hairline group flex items-center gap-3 border-b px-3 py-2.5 last:border-b-0"
+                  >
+                    <span className="size-[14px] shrink-0 rounded-full border-[1.5px] border-dashed border-base-content/35" />
+                    <span className="min-w-0 flex-1 truncate text-[13px]">{question.question}</span>
+                    {question.ownerName && (
+                      <Avatar
+                        name={question.ownerName}
+                        color={question.ownerColor ?? '#64748b'}
+                        image={question.ownerAvatar}
+                        size={20}
+                      />
+                    )}
+                    {question.dueDate && (
+                      <span
+                        className={`shrink-0 text-xs tabular-nums ${
+                          question.daysUntilDue !== null && question.daysUntilDue < 0
+                            ? 'font-medium text-error'
+                            : 'text-base-content/40'
+                        }`}
+                      >
+                        {dueLabel(question.daysUntilDue)}
+                      </span>
+                    )}
                     <Icon
                       name="chevronRight"
                       size={13}

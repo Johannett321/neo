@@ -9,8 +9,8 @@ export function ProjectNotes(): React.JSX.Element {
 }
 
 export function ProjectDecisions(): React.JSX.Element {
-  const { project, decisions } = useProject()
-  return <DecisionsTab projectId={project.id} decisions={decisions} />
+  const { project, decisions, openQuestions } = useProject()
+  return <DecisionsTab projectId={project.id} decisions={decisions} openQuestions={openQuestions} />
 }
 
 export function ProjectPeople(): React.JSX.Element {
