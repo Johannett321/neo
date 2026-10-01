@@ -11,7 +11,9 @@ const KIND_LABEL: Record<string, string> = {
   state_updated: 'updated',
   person_added: 'people',
   link_added: 'link',
-  project_created: 'created'
+  project_created: 'created',
+  comment: 'comment',
+  question: 'question'
 }
 
 /**

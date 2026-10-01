@@ -43,6 +43,18 @@ export function registerContentHandlers(): void {
     await must(api.DELETE('/v1/decisions/{id}', { params: { path: { id } } }))
   })
 
+  handle('openQuestion:save', (draft) =>
+    draft.id
+      ? must(api.PATCH('/v1/open-questions/{id}', { params: { path: { id: draft.id } }, body: withoutId(draft) }))
+      : must(api.POST('/v1/open-questions', { body: withoutId(draft) })))
+
+  handle('openQuestion:delete', async ({ id }) => {
+    await must(api.DELETE('/v1/open-questions/{id}', { params: { path: { id } } }))
+  })
+
+  handle('openQuestion:decide', ({ id, ...decision }) =>
+    must(api.POST('/v1/open-questions/{id}/decision', { params: { path: { id } }, body: decision })))
+
   handle('link:save', (draft) =>
     draft.id
       ? must(api.PATCH('/v1/links/{id}', { params: { path: { id: draft.id } }, body: withoutId(draft) }))

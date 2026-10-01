@@ -1,7 +1,7 @@
 import type { AccountDevice, AccountStatus } from './account'
 import type {
   Activity, AttachmentUpload, BoardColumn, Canvas, CastMember, ChatMessage, ChatSendResult, ContentFolder, Conversation, NoteImage,
-  Decision, JournalEntry, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
+  Decision, JournalEntry, OpenQuestion, TaskComment, Link, LinkKind, Membership, Note, Meeting, MeetingTodo, MeetingView, Person,
   PersonProject, Project, ProjectCollapsible, ProjectCollapsibleView, ProjectDetail, ProjectFolder,
   ProjectFolderView, ProjectStatus,
   ProjectSummary, Profile, RecordingView,
@@ -145,6 +145,13 @@ export interface ApiMap {
   'column:reorder': { in: { ids: string[] }; out: void }
   'task:delete': { in: { id: string }; out: void }
   'task:reorder': { in: { ids: string[] }; out: void }
+
+  /** A card's conversation, oldest first. Fetched when its dialog opens, not with the board. */
+  'taskComment:list': { in: { taskId: string }; out: TaskComment[] }
+  /** With `id` it rewrites one of your own comments; without, it adds one to `taskId`. */
+  'taskComment:save': { in: { id?: string; taskId?: string; body: string }; out: TaskComment }
+  /** Only your own. Anybody else's is refused by Neo Cloud. */
+  'taskComment:delete': { in: { id: string }; out: void }
 
   /**
    * `projectId` narrows the list to that project's cast. Assigning work is the reason
@@ -318,6 +325,28 @@ export interface ApiMap {
 
   'decision:save': { in: Draft<Decision>; out: Decision }
   'decision:delete': { in: { id: string }; out: void }
+
+  /*
+   * Open questions come back on `project:get` (`openQuestions`), which the Decisions page
+   * has already fetched, so there is no list channel.
+   */
+  'openQuestion:save': {
+    in: {
+      id?: string
+      projectId?: string
+      question?: string
+      context?: string
+      ownerPersonId?: string | null
+      dueDate?: string | null
+    }
+    out: OpenQuestion
+  }
+  'openQuestion:delete': { in: { id: string }; out: void }
+  /** Settle it: the decision is logged with the question on it, and the question is gone. */
+  'openQuestion:decide': {
+    in: { id: string; title: string; rationale?: string; alternatives?: string; decidedBy?: string; decidedOn?: string }
+    out: Decision
+  }
 
   'link:save': { in: Draft<Link> & { kind?: LinkKind }; out: Link }
   'link:delete': { in: { id: string }; out: void }

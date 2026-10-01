@@ -37,6 +37,7 @@ export type ActivityKind =
   | 'state_updated' | 'person_added' | 'link_added' | 'project_created'
   /** From when a board had lanes. Nothing writes it now, but old entries still come back. */
   | 'lane_added'
+  | 'comment' | 'question'
 
 export interface Workspace {
   id: string
@@ -443,6 +444,26 @@ export interface TaskView extends Task {
    * ordinary case of a card that was made on the board.
    */
   sourceMeetingId: string | null
+  /** How many comments the card has — drawn as a quiet count on the row when there are any. */
+  commentCount: number
+}
+
+/**
+ * One comment in a card's conversation. Who wrote it is stored on the comment as they
+ * were when they wrote it, so the thread still says who said what once more than one
+ * person can write in it. `isMine` is the only licence to edit or delete it.
+ */
+export interface TaskComment {
+  id: string
+  taskId: string
+  /** Markdown. */
+  body: string
+  authorAccountId: string | null
+  authorName: string
+  authorAvatar: string | null
+  isMine: boolean
+  createdAt: string
+  editedAt: string | null
 }
 
 /**
@@ -747,7 +768,30 @@ export interface Decision {
   alternatives: string
   decidedBy: string
   decidedOn: string
+  /** The open question this settled, when it started as one. Empty otherwise. */
+  question: string
   createdAt: string
+}
+
+/**
+ * Something on a project that has not been settled yet. It lives on the Decisions page
+ * because that is what it is waiting to become: deciding it writes the decision, with
+ * the question kept on it, and the question is gone.
+ */
+export interface OpenQuestion {
+  id: string
+  projectId: string
+  question: string
+  /** What is known so far — the options, the constraint. Markdown. */
+  context: string
+  ownerPersonId: string | null
+  ownerName: string | null
+  ownerAvatar: string | null
+  ownerColor: string | null
+  dueDate: string | null
+  daysUntilDue: number | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Link {
@@ -802,6 +846,8 @@ export interface ProjectDetail {
   noteFolders: ContentFolderView[]
   meetingFolders: ContentFolderView[]
   decisions: Decision[]
+  /** Still waiting on an answer, soonest due first. */
+  openQuestions: OpenQuestion[]
   journal: JournalEntry[]
   activity: Activity[]
 }

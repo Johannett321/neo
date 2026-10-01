@@ -901,6 +901,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        /** The conversation on a card, oldest first. */
+        get: operations["listTaskComments"];
+        put?: never;
+        /** Add a comment to a card, written as the account that sends it. */
+        post: operations["createTaskComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/task-comments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Take a comment back. Only its author may; anybody else is refused with 403. */
+        delete: operations["deleteTaskComment"];
+        options?: never;
+        head?: never;
+        /** Rewrite a comment. Only its author may; anybody else is refused with 403. */
+        patch: operations["updateTaskComment"];
+        trace?: never;
+    };
     "/v1/columns": {
         parameters: {
             query?: never;
@@ -1102,6 +1142,64 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["updateDecision"];
+        trace?: never;
+    };
+    "/v1/open-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createOpenQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/open-questions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Drop a question without deciding it — it stopped mattering. */
+        delete: operations["deleteOpenQuestion"];
+        options?: never;
+        head?: never;
+        patch: operations["updateOpenQuestion"];
+        trace?: never;
+    };
+    "/v1/open-questions/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Settle a question. The decision is logged on the question's project with the
+         *     question kept on it, and the question is gone — both in one transaction. The
+         *     draft's `projectId` is ignored; `title` (what was decided) is required.
+         */
+        post: operations["decideOpenQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/links": {
@@ -2300,7 +2398,7 @@ export interface components {
          *     and still come back.
          * @enum {string}
          */
-        ActivityKind: "task_created" | "task_completed" | "note" | "canvas" | "decision" | "journal" | "meeting" | "state_updated" | "person_added" | "link_added" | "project_created" | "lane_added";
+        ActivityKind: "task_created" | "task_completed" | "note" | "canvas" | "decision" | "journal" | "meeting" | "state_updated" | "person_added" | "link_added" | "project_created" | "lane_added" | "comment" | "question";
         Activity: {
             /** Format: uuid */
             id: string;
@@ -2374,6 +2472,8 @@ export interface components {
              * @description The meeting this card was put on the board from, when it was. Null for a card made on the board.
              */
             sourceMeetingId: string | null;
+            /** @description How many comments the card has. */
+            commentCount: number;
         };
         /**
          * @description What a project's link points at. `staging` is any running environment.
@@ -2575,8 +2675,39 @@ export interface components {
             decidedBy: string;
             /** @description YYYY-MM-DD. */
             decidedOn: string;
+            /** @description The open question this decision settled, when it started as one. Empty otherwise. */
+            question: string;
             /** Format: date-time */
             createdAt: string;
+        };
+        /**
+         * @description A question on a project that has not been settled yet. Deciding it
+         *     (`POST /v1/open-questions/{id}/decision`) turns it into a decision.
+         */
+        OpenQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            projectId: string;
+            question: string;
+            /** @description What is known so far, the options on the table. Markdown. */
+            context: string;
+            /**
+             * Format: uuid
+             * @description Who is getting it answered.
+             */
+            ownerPersonId: string | null;
+            ownerName: string | null;
+            ownerAvatar: string | null;
+            ownerColor: string | null;
+            /** @description YYYY-MM-DD — when it has to be settled by. */
+            dueDate: string | null;
+            /** @description Negative is overdue by that many days, zero is today. */
+            daysUntilDue: number | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
         };
         JournalEntry: {
             /** Format: uuid */
@@ -2601,6 +2732,8 @@ export interface components {
             noteFolders: components["schemas"]["ContentFolderView"][];
             meetingFolders: components["schemas"]["ContentFolderView"][];
             decisions: components["schemas"]["Decision"][];
+            /** @description The questions still waiting on an answer, oldest first. */
+            openQuestions: components["schemas"]["OpenQuestion"][];
             journal: components["schemas"]["JournalEntry"][];
             activity: components["schemas"]["Activity"][];
         };
@@ -2701,6 +2834,35 @@ export interface components {
             /** Format: uuid */
             projectId: string;
         };
+        /**
+         * @description One comment on a card. The author is stored on the comment as it was when it was
+         *     written, so a thread still says who said what when more than one person writes in it.
+         */
+        TaskComment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            taskId: string;
+            /** @description Markdown. */
+            body: string;
+            /**
+             * Format: uuid
+             * @description The account that wrote it; null once that account is gone.
+             */
+            authorAccountId: string | null;
+            authorName: string;
+            /** @description A `neo-media://file/…` address, or null when the author has no photo. */
+            authorAvatar: string | null;
+            /** @description Written by the account asking — the only comments it may edit or delete. */
+            isMine: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            editedAt: string | null;
+        };
+        TaskCommentDraft: {
+            body: string;
+        };
         BoardColumnDraft: {
             /** Format: uuid */
             projectId?: string;
@@ -2772,6 +2934,15 @@ export interface components {
             alternatives?: string;
             decidedBy?: string;
             decidedOn?: string;
+        };
+        OpenQuestionDraft: {
+            /** Format: uuid */
+            projectId?: string;
+            question?: string;
+            context?: string;
+            /** Format: uuid */
+            ownerPersonId?: string | null;
+            dueDate?: string | null;
         };
         LinkDraft: {
             /** Format: uuid */
@@ -4719,6 +4890,98 @@ export interface operations {
             default: components["responses"]["ErrorResponse"];
         };
     };
+    listTaskComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Comments, in the order they were written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskComment"][];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    createTaskComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskCommentDraft"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskComment"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    deleteTaskComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    updateTaskComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskCommentDraft"];
+            };
+        };
+        responses: {
+            /** @description As it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskComment"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
     createColumn: {
         parameters: {
             query?: never;
@@ -5090,6 +5353,100 @@ export interface operations {
         responses: {
             /** @description As it now is. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Decision"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    createOpenQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenQuestionDraft"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenQuestion"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    deleteOpenQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    updateOpenQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenQuestionDraft"];
+            };
+        };
+        responses: {
+            /** @description As it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenQuestion"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    decideOpenQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionDraft"];
+            };
+        };
+        responses: {
+            /** @description The decision it became. */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
