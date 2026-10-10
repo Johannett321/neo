@@ -212,8 +212,9 @@ of what it last saw, and the common writes are drawn at once and kept in line un
 Cloud takes them.*
 
 - **Drawn before the answer.** `renderer/lib/optimistic.ts` has one entry per channel in
-  `SYNCABLE` (`shared/sync.ts`: tasks — save, status, column, delete — people and
-  memberships, decisions, log entries, links, notes). `useApiMutation` finds the entry by
+  `SYNCABLE` (`shared/sync.ts`: tasks — save, status, column, order, project, delete —
+  their comments, people and memberships, decisions and open questions, log entries,
+  links, notes) and in `ONLINE_ONLY` (see below). `useApiMutation` finds the entry by
   channel, so call sites do nothing special: the entry patches the cached answers the
   screens draw from (`project:get`, `task:list`, `dashboard:today`, `person:list`, …)
   through a `Draft` that records what it replaced, and returns what the channel would
@@ -249,9 +250,17 @@ Cloud takes them.*
   `Pending` says *Not on this Mac yet* offline instead of loading forever. What cannot
   work offline is disabled with a quiet line saying why: the assistant (it runs in Neo
   Cloud), starting a recording, and anything that uploads a picture.
-- **Not queued, deliberately:** uploads (the bytes are not kept), the assistant, recording
-  control, account business, and the less common writes (projects, folders, columns,
-  meetings, settings) — those still fail offline as they always did. Audio keeps its own
+- **Drawn but never kept: `ONLINE_ONLY`.** The less common writes — projects (save,
+  archive, delete, order), folders, collapsibles, a board's columns, meetings and their
+  to-dos — have optimists too, so they are on screen at once, and they stand in the same
+  line, so they can name something made a moment ago. But they are not written to disk,
+  and the moment Neo Cloud cannot be reached they are refused rather than held: the
+  guess comes back out with a toast, as they always failed offline. A create whose
+  answer is not the row it made says how to find its id in `createdId()` (a meeting's
+  to-do answers with the whole meeting).
+- **Not drawn or queued, deliberately:** uploads (the bytes are not kept), the assistant,
+  recording control, account business, workspaces and settings — those still wait for
+  Neo Cloud and fail offline as they always did. Audio keeps its own
   queue: a chunk that cannot be sent is held in memory, in order, and retried until it goes
   (`ipc/recordings.ts`).
 - **Known limits:** a create whose response is lost after Neo Cloud stored it is sent

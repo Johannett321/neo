@@ -188,7 +188,7 @@ export function ProjectKanban(): React.JSX.Element {
         <div className="flex min-w-full items-stretch gap-3">
           {columns.map((column, index) => (
             <BoardColumnView
-              key={column.id}
+              key={stableKey(column.id)}
               column={column}
               index={index}
               total={columns.length}

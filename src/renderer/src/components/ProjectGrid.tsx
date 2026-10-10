@@ -5,6 +5,7 @@ import { useApiMutation } from '@/lib/api'
 import type { Dragged } from '@/lib/folders'
 import { EASE } from '@/lib/motion'
 import { ProjectCard } from './ProjectCard'
+import { stableKey } from '@/lib/sync'
 
 /**
  * The grid of project cards, and the one place they can be put in an order.
@@ -226,7 +227,7 @@ export function ProjectGrid({
     >
       {drawn.map((project) => (
         <motion.div
-          key={project.id}
+          key={stableKey(project.id)}
           /*
            * Position only. Every card is the same size, so there is nothing about their
            * shape to animate, and asking for the whole layout animation is what makes

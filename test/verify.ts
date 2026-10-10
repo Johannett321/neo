@@ -2905,6 +2905,45 @@ async function main(): Promise<void> {
        syncState().failed.length === 2 && retried.pending.length <= 1)
     const discarded = await call('sync:discard', {})
     ok('discarding lets the refused writes go', discarded.failed.length === 0 && discarded.pending.length === 0)
+
+    /*
+     * The less common writes are drawn ahead too and sent through the same line, but are
+     * never kept: refused on the spot while Neo Cloud is out of reach, and never on disk.
+     */
+    const column = await submit('column:save', { projectId: place.id, name: 'Drawn ahead' }, 'tmp-verify-column')
+    ok('online, a write that is drawn but never kept is sent through the line like any other',
+       column.state === 'sent' && syncState().ids['tmp-verify-column'] === column.output?.id)
+    const standup = await call('meeting:save', { projectId: place.id, title: 'Stand-up on the train' })
+    const todo = await submit('meetingTodo:save', { meetingId: standup.id, text: 'Bring the slides' }, 'tmp-verify-todo')
+    ok('a to-do drawn under a temporary id is paired with the item, not the meeting it answers with',
+       todo.state === 'sent' &&
+       syncState().ids['tmp-verify-todo'] === todo.output?.todos.find((t: any) => t.text === 'Bring the slides')?.id,
+       JSON.stringify(syncState().ids['tmp-verify-todo']))
+    await submit('meetingTodo:save', { id: 'tmp-verify-todo', done: true })
+    ok('and a later write naming it lands on the item',
+       (await call('project:get', { id: place.id })).meetings.find((m: any) => m.id === standup.id)?.todos[0]?.done === true)
+
+    const asked = await submit('openQuestion:save', { projectId: place.id, question: 'Window or aisle?' }, 'tmp-verify-question')
+    unplugged = true
+    const commented = await submit('taskComment:save', { taskId: after.ids['tmp-verify-task'], body: 'Typed in a tunnel' }, 'tmp-verify-comment')
+    const decided = await submit('openQuestion:decide', { id: (asked as any).output.id, title: 'Window' }, 'tmp-verify-decision')
+    ok('offline, comments and settling a question wait like the other common writes',
+       commented.state === 'queued' && decided.state === 'queued')
+    ok('but a write that is never kept is refused at once, with the reason',
+       await threw(() => submit('project:save', { id: place.id, name: 'Renamed in a tunnel' }), 'cannot be reached'))
+    const line = syncState()
+    ok('and it is neither in the line nor on disk',
+       line.pending.length === 2 && !line.pending.some((p) => p.channel === 'project:save') &&
+       readSealed<any>(`neo-outbox-${accountId}`)?.pending.length === 2)
+    unplugged = false
+    await drain()
+    await until(async () => (syncState().pending.length === 0 ? true : null), 10_000)
+    const caught = await call('project:get', { id: place.id })
+    ok('back online, the comment and the decision arrive, and the question has gone',
+       (await call('taskComment:list', { taskId: after.ids['tmp-verify-task']! })).some((c: any) => c.body === 'Typed in a tunnel') &&
+       caught.decisions.some((d: any) => d.title === 'Window' && d.question === 'Window or aisle?') &&
+       !caught.openQuestions.some((q: any) => q.question === 'Window or aisle?') &&
+       caught.project.name === 'Offline on a train')
   }
 
   /* --------------------------------------------------------------- the last of it */

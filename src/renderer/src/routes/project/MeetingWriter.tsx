@@ -14,6 +14,7 @@ import { useImageDrop, useNoteLinks } from '@/lib/noteLinks'
 import { Avatar, ConfirmButton, EmptyState, Field } from '@/components/primitives'
 import { RecorderRail } from '@/components/meeting/RecorderRail'
 import { RecordingPane } from '@/components/meeting/RecordingPane'
+import { stableKey } from '@/lib/sync'
 
 /**
  * Writing up a meeting is writing, so it gets a page rather than a dialog.
@@ -558,7 +559,7 @@ function Todos({
     const meetingId = await ensureSaved()
     if (!meetingId) return
     setAdding('')
-    await saveTodo.mutateAsync({ meetingId, text })
+    saveTodo.mutate({ meetingId, text })
   }
 
   return (
@@ -575,7 +576,7 @@ function Todos({
       <div className="space-y-0.5">
         {todos.map((todo) => (
           <TodoRow
-            key={todo.id}
+            key={stableKey(todo.id)}
             todo={todo}
             projectId={projectId}
             revealed={lit(todo)}

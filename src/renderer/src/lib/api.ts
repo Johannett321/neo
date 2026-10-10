@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient, type QueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import type { Channel, Input, Output } from '@shared/api'
-import { tempId as newTempId, type SyncableChannel } from '@shared/sync'
+import { createdId, tempId as newTempId, type DrawnChannel } from '@shared/sync'
 import { contextFor, Draft, optimistFor, type Optimist } from './optimistic'
 import { finishOp, reconcile, relay, startOp } from './sync'
 import { useToastIfAny } from './toast'
@@ -82,7 +82,8 @@ interface MutateCallbacks<C extends Channel> {
  * working out which screens a write touched.
  *
  * **The common writes are drawn before Neo Cloud answers.** A channel with an entry in
- * `optimistic.ts` — tasks, people and their roles, decisions, the log, links, notes —
+ * `optimistic.ts` — tasks and their comments, people and their roles, decisions and open
+ * questions, the log, links, notes —
  * changes the screens' cached data the moment it is called, so a dialog can close on
  * Save and the card is already on the board. The write then goes to main's outbox
  * (`sync:submit`), which sends it in order behind anything already waiting. Three ways
@@ -97,6 +98,11 @@ interface MutateCallbacks<C extends Channel> {
  * - **refused**: the guess is taken back out and a toast says what was not saved and
  *   why. Nothing is half-done: the write was never in Neo Cloud.
  *
+ * The less common writes — projects and their filing, a board's columns, meetings and
+ * their to-dos (`ONLINE_ONLY`) — are drawn the same way and stand in the same line, but
+ * are never kept: with Neo Cloud out of reach they are refused at once, and the guess
+ * comes back out the way any refusal does.
+ *
  * `mutate` returns the guess, synchronously, so a call site can chain writes without
  * waiting — a new person, and then their place on the project, in one click.
  */
@@ -110,7 +116,7 @@ export function useApiMutation<C extends Channel>(channel: C) {
       if (!op) return window.api.invoke(channel, input)
       const result = await window.api.invoke('sync:submit', {
         id: op.id,
-        channel: channel as SyncableChannel,
+        channel: channel as DrawnChannel,
         input,
         tempId: op.tempId,
         label: op.label
@@ -119,12 +125,12 @@ export function useApiMutation<C extends Channel>(channel: C) {
       op.queued = true
       return (op.placeholder ?? input) as Output<C>
     },
-    onSuccess: (output, { op }) => {
+    onSuccess: (output, { input, op }) => {
       if (op) {
         finishOp(op.id)
         // Still in line: keep drawing the guess. It is refetched once the line is sent.
         if (op.queued) return
-        if (op.tempId) reconcile(client, op.tempId, (output as { id?: string } | null)?.id)
+        if (op.tempId) reconcile(client, op.tempId, createdId(channel, input, output))
       }
       void client.invalidateQueries(everythingButTheAccount)
     },

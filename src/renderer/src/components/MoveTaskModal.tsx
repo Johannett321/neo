@@ -58,9 +58,10 @@ export function MoveTaskModal({
   const leavesAssignee =
     crossing && task.assigneeName !== null && !task.assigneeIsMe;
 
-  const submit = async (to = target): Promise<void> => {
-    if (!to || move.isPending) return;
-    await move.mutateAsync({ id: task.id, projectId: to.id });
+  // Drawn at once — off this board and onto the other — so the dialog closes on Move.
+  const submit = (to = target): void => {
+    if (!to) return;
+    move.mutate({ id: task.id, projectId: to.id });
     toast({
       title: `Moved to ${to.name}`,
       detail: task.title,
@@ -77,7 +78,7 @@ export function MoveTaskModal({
       title="Move to another project"
       description={task.title}
       width="max-w-md"
-      onSubmit={() => void submit()}
+      onSubmit={() => submit()}
       footer={
         <>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -85,8 +86,8 @@ export function MoveTaskModal({
           </button>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!target || move.isPending}
-            onClick={() => void submit()}
+            disabled={!target}
+            onClick={() => submit()}
           >
             Move
           </button>
@@ -153,7 +154,7 @@ export function MoveTaskModal({
                     : "hover:bg-base-content/5"
                 }`}
                 onClick={() => setChosen(p.id)}
-                onDoubleClick={() => void submit(p)}
+                onDoubleClick={() => submit(p)}
               >
                 <Mark
                   name={p.name}

@@ -234,8 +234,8 @@ export function PersonPage(): React.JSX.Element {
               title={`Delete ${person.name}?`}
               body="They are removed from every project in this workspace. Notes and decisions stay."
               className="btn btn-ghost btn-xs text-base-content/35 hover:text-error"
-              onConfirm={async () => {
-                await remove.mutateAsync({ id: person.id })
+              onConfirm={() => {
+                remove.mutate({ id: person.id })
                 navigate('/people')
               }}
             />

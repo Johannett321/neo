@@ -55,7 +55,7 @@ export function DecisionsTab({
           <ul className="hairline overflow-hidden rounded-box border bg-base-100">
             {openQuestions.map((question) => (
               <QuestionRow
-                key={question.id}
+                key={stableKey(question.id)}
                 question={question}
                 deciding={deciding === question.id}
                 onDecide={() => setDeciding(question.id)}
@@ -264,15 +264,17 @@ function DecideForm({ question, onDone }: { question: OpenQuestion; onDone: () =
   })
   const set = (key: keyof typeof form, value: string): void => setForm((f) => ({ ...f, [key]: value }))
 
-  const submit = async (): Promise<void> => {
-    if (!form.title.trim() || decide.isPending) return
-    await decide.mutateAsync({ id: question.id, ...form, title: form.title.trim() })
+  // Drawn at once — the question leaves the list and the decision is logged — so the
+  // form closes on Save. See `useApiMutation`.
+  const submit = (): void => {
+    if (!form.title.trim()) return
+    decide.mutate({ id: question.id, ...form, title: form.title.trim() })
     onDone()
   }
   const keys = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
-      void submit()
+      submit()
     } else if (e.key === 'Escape') {
       e.preventDefault()
       onDone()
@@ -290,7 +292,7 @@ function DecideForm({ question, onDone }: { question: OpenQuestion; onDone: () =
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            void submit()
+            submit()
           }
         }}
       />
@@ -314,8 +316,8 @@ function DecideForm({ question, onDone }: { question: OpenQuestion; onDone: () =
         </button>
         <button
           className="btn btn-primary btn-sm"
-          disabled={!form.title.trim() || decide.isPending}
-          onClick={() => void submit()}
+          disabled={!form.title.trim()}
+          onClick={() => submit()}
         >
           Log decision
         </button>
@@ -355,9 +357,9 @@ function QuestionModal({
   const set = (key: keyof typeof form, value: string): void => setForm((f) => ({ ...f, [key]: value }))
   const owner = (people.data ?? []).find((p) => p.id === form.ownerPersonId)
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!form.question.trim()) return
-    await save.mutateAsync({
+    save.mutate({
       id: question?.id,
       projectId,
       question: form.question.trim(),
@@ -374,7 +376,7 @@ function QuestionModal({
       onClose={onClose}
       title={question ? 'Open question' : 'Ask an open question'}
       description="Something not settled yet. It waits at the top of Decisions until it is."
-      onSubmit={() => void submit()}
+      onSubmit={() => submit()}
       isDirty={differs(form, initial)}
       footer={
         <>
@@ -384,8 +386,8 @@ function QuestionModal({
               title="Drop this question without deciding it?"
               body={question.question}
               className="btn btn-ghost btn-sm mr-auto text-base-content/50 hover:text-error"
-              onConfirm={async () => {
-                await remove.mutateAsync({ id: question.id })
+              onConfirm={() => {
+                remove.mutate({ id: question.id })
                 onClose()
               }}
             />
@@ -393,7 +395,7 @@ function QuestionModal({
           <button className="btn btn-ghost btn-sm" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary btn-sm" disabled={!form.question.trim()} onClick={() => void submit()}>
+          <button className="btn btn-primary btn-sm" disabled={!form.question.trim()} onClick={() => submit()}>
             {question ? 'Save' : 'Ask'}
           </button>
         </>
@@ -506,7 +508,7 @@ function DecisionModal({
           <button className="btn btn-ghost btn-sm" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary btn-sm" disabled={!form.title.trim()} onClick={() => void submit()}>
+          <button className="btn btn-primary btn-sm" disabled={!form.title.trim()} onClick={() => submit()}>
             Save
           </button>
         </>

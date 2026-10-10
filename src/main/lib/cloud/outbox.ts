@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { Channel } from '@shared/api'
-import { isSyncable, type QueuedWrite, type SubmitResult, type SyncState } from '@shared/sync'
+import { createdId, isDrawn, isSyncable, type QueuedWrite, type SubmitResult, type SyncState } from '@shared/sync'
 import { announceChange } from '../changes'
 import { invokeChannel } from '../../ipc/util'
 import { CloudError } from './client'
@@ -25,6 +25,11 @@ import { listSealed, readSealed, removeSealed, writeSealed } from './sealed'
  * offline has nobody waiting: it is kept in `failed`, the window lists it, and the
  * person retries or discards it. Either way the line moves on: one refused write does
  * not hold back everything behind it.
+ *
+ * The less common writes the window draws ahead (`ONLINE_ONLY`) stand in the same line,
+ * so they are sent in order and may name what was made a moment before, but they are
+ * never kept: not written to disk, and refused rather than held the moment Neo Cloud
+ * cannot be reached, so the window takes back what it drew and says so.
  */
 
 const PREFIX = 'neo-outbox-'
@@ -71,14 +76,20 @@ function ensureLoaded(): void {
   }
 }
 
+/** Whether a write may wait for Neo Cloud, rather than being refused when it cannot be reached. */
+const kept = (write: QueuedWrite): boolean => isSyncable(write.channel)
+
+const UNREACHABLE = 'Neo Cloud cannot be reached, so this was not saved.'
+
 function persist(): void {
   if (!loadedFor) return
+  const waiting = pending.filter(kept)
   const ids = Object.fromEntries(Object.entries(knownIds()).slice(-IDS_KEPT))
-  if (pending.length === 0 && failed.length === 0 && Object.keys(ids).length === 0) {
+  if (waiting.length === 0 && failed.length === 0 && Object.keys(ids).length === 0) {
     removeSealed(fileFor(loadedFor))
     return
   }
-  writeSealed(fileFor(loadedFor), { accountId: loadedFor, pending, failed, ids } satisfies Stored)
+  writeSealed(fileFor(loadedFor), { accountId: loadedFor, pending: waiting, failed, ids } satisfies Stored)
 }
 
 export function syncState(): SyncState {
@@ -115,7 +126,7 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
 /** Hand over one write. Resolves when it has been sent, or as soon as it has to wait. */
 export function submit(write: Omit<QueuedWrite, 'at' | 'error'>): Promise<SubmitResult> {
   ensureLoaded()
-  if (!isSyncable(write.channel)) return Promise.reject(new Error(`${write.channel} cannot be sent later.`))
+  if (!isDrawn(write.channel)) return Promise.reject(new Error(`${write.channel} cannot be sent later.`))
   if (!loadedFor) return Promise.reject(new Error('Nobody is signed in.'))
   const entry: QueuedWrite = { ...write, at: new Date().toISOString() }
   pending.push(entry)
@@ -132,8 +143,18 @@ export function submit(write: Omit<QueuedWrite, 'at' | 'error'>): Promise<Submit
   return answer
 }
 
-/** Everyone waiting hears that their write is kept rather than sent. */
+/**
+ * Everyone waiting hears that their write is kept rather than sent — or, for a write
+ * that is never kept, that it was not saved, and it leaves the line.
+ */
 function hold(): void {
+  const unkept = pending.filter((entry) => !kept(entry))
+  pending = pending.filter(kept)
+  for (const entry of unkept) {
+    const waiter = waiters.get(entry.id)
+    waiters.delete(entry.id)
+    waiter?.reject(new Error(UNREACHABLE))
+  }
   for (const entry of pending) {
     const waiter = waiters.get(entry.id)
     if (!waiter) continue
@@ -171,8 +192,8 @@ export async function drain(): Promise<void> {
         const output = (await invokeChannel(head.channel as Channel, input as never)) as unknown
         if (pending[0]?.id !== head.id) continue
         pending.shift()
-        const id = (output as { id?: unknown } | null)?.id
-        if (head.tempId && typeof id === 'string') rememberId(head.tempId, id)
+        const id = head.tempId ? createdId(head.channel, input, output) : undefined
+        if (head.tempId && id) rememberId(head.tempId, id)
         persist()
         backoff = RETRY_MS
         const waiter = waiters.get(head.id)
@@ -210,7 +231,7 @@ function refuse(entry: QueuedWrite, error: unknown): void {
   if (waiter) {
     waiters.delete(entry.id)
     waiter.reject(error)
-  } else {
+  } else if (kept(entry)) {
     failed.push({ ...entry, error: message(error) })
   }
   persist()
