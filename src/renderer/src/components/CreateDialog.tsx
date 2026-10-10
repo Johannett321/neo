@@ -5,9 +5,10 @@ import { differs, projectColor, todayStr } from '@/lib/format'
 import { useToast } from '@/lib/toast'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon, type IconName } from './Icon'
-import { Avatar, Field, Modal } from './primitives'
+import { Field, Modal } from './primitives'
 import { DateField } from './DateField'
 import { Mark } from './Mark'
+import { PersonSelect } from './PersonSelect'
 
 type Kind = 'task' | 'decision' | 'journal' | 'meeting'
 
@@ -342,36 +343,12 @@ export function CreateDialog({
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Assigned to">
-                <div className="flex items-center gap-2">
-                  {draft.assigneePersonId && (
-                    <Avatar
-                      name={
-                        (people.data ?? []).find((p) => p.id === draft.assigneePersonId)?.name ?? ''
-                      }
-                      color={
-                        (people.data ?? []).find((p) => p.id === draft.assigneePersonId)?.avatarColor ??
-                        '#64748b'
-                      }
-                      image={(people.data ?? []).find((p) => p.id === draft.assigneePersonId)?.avatar}
-                      size={26}
-                    />
-                  )}
-                  <select
-                    className="select select-bordered w-full"
-                    value={draft.assigneePersonId}
-                    onChange={(e) => set('assigneePersonId', e.target.value)}
-                  >
-                    <option value="">Nobody yet</option>
-                    {me && <option value={me.id}>Me</option>}
-                    {(people.data ?? [])
-                      .filter((p) => !p.isMe)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+                <PersonSelect
+                  label="Assigned to"
+                  value={draft.assigneePersonId}
+                  onChange={(id) => set('assigneePersonId', id)}
+                  people={people.data ?? []}
+                />
               </Field>
               <Field label="Due date" hint="Optional — dated items show up on Today.">
                 <DateField value={draft.dueDate} onChange={(v) => set('dueDate', v)} />
