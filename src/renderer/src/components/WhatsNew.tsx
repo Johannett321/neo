@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { PermissionName, PermissionReport } from '@shared/update'
 import { call, useApi } from '@/lib/api'
+import { ChangelogBody } from '@/components/ChangelogItems'
 import { Icon } from '@/components/Icon'
-import { Markdown } from '@/components/Markdown'
 import { Modal } from '@/components/primitives'
 
 /**
@@ -72,15 +72,19 @@ export function WhatsNew(): React.JSX.Element | null {
         open
         onClose={advance}
         title={changelog.title}
-        description={`Version ${version}`}
-        width="max-w-2xl"
+        description={`New in version ${version}`}
+        // A short list reads best in a narrow column; an older long-form entry keeps
+        // the width its prose and illustrations were written for.
+        width={changelog.items.length ? 'max-w-md' : 'max-w-2xl'}
         footer={
           <button className="btn btn-primary btn-sm" onClick={advance}>
-            Done
+            {showPermissions ? 'Continue' : 'Done'}
           </button>
         }
       >
-        <Markdown source={changelog.body} className="text-[13px]" />
+        <div className={changelog.items.length ? 'py-1' : ''}>
+          <ChangelogBody entry={changelog} />
+        </div>
       </Modal>
     )
   }

@@ -90,11 +90,31 @@ export interface ChangelogEntry {
   /** `YYYY-MM-DD`, or empty. */
   date: string
   /**
+   * What arrived, one line each — the shape a changelog is written in now. Empty
+   * for a file written in the older long form, which then draws from `body`.
+   */
+  items: ChangelogItem[]
+  /**
    * Markdown, rendered by the app's own parser. Illustrations are written as
    * ordinary image syntax and rewritten to `neo-media://changelog/…` on the way
-   * out, so a changelog can be as plain or as pictorial as the release deserves.
+   * out. Always filled, items or not, so anything that only knows how to draw
+   * Markdown still has something to draw.
    */
   body: string
+}
+
+/**
+ * One feature in a changelog: `- [orgchart] **Draw the team** — One sentence.`
+ *
+ * The icon is a name from the renderer's own icon set rather than anything drawn
+ * here, so the main process does not have to know which names exist — one it does
+ * not recognise draws as a sparkle rather than as nothing.
+ */
+export interface ChangelogItem {
+  icon: string
+  title: string
+  /** At most a sentence. Empty when the title says it all. */
+  detail: string
 }
 
 export type PermissionName = 'microphone' | 'systemAudio' | 'notifications'

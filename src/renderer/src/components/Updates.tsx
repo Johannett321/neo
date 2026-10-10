@@ -4,7 +4,7 @@ import { RELEASES_PAGE } from '@shared/update'
 import { call, openExternal, useApi, useApiMutation } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { Icon } from '@/components/Icon'
-import { Markdown } from '@/components/Markdown'
+import { ChangelogBody } from '@/components/ChangelogItems'
 import { Field, Panel } from '@/components/primitives'
 
 /**
@@ -273,7 +273,7 @@ export function UpdatesPane(): React.JSX.Element {
                 </button>
                 {showing && (
                   <div className="px-4 pb-4 pl-[2.1rem]">
-                    <Markdown source={entry.body} className="text-[12.5px]" />
+                    <ChangelogBody entry={entry} compact />
                   </div>
                 )}
               </div>

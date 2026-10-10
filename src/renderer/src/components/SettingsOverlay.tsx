@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useRef, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Routes, useLocation, useNavigate, type Location } from 'react-router-dom'
-import { ENTER, EXIT } from '@/lib/motion'
+import { EASE } from '@/lib/motion'
 
 /**
  * The app's settings and a workspace's are a layer over the app rather than a screen in
@@ -18,6 +18,12 @@ import { ENTER, EXIT } from '@/lib/motion'
  * open, the shell keeps drawing the *last page* underneath (`usePageLocation`), and this
  * draws the settings on top. A project's settings stay where they are — inside a project
  * the sidebar *is* the project, and its settings are one of its places.
+ *
+ * The layer is a sheet that rises from the bottom of the window: the page stays on
+ * screen above and around it, dimmed, so it reads as something put down over where you
+ * were rather than somewhere else you went. It reaches the bottom edge, stops just
+ * short of the top, and is as wide as the window up to a measure past which a settings
+ * pane only gets emptier.
  */
 const OVERLAY_PATHS = ['/settings', '/workspace']
 
@@ -74,10 +80,74 @@ const CloseContext = createContext<(() => void) | null>(null)
 /** How a settings screen drawn in the layer closes it; null when it is not in one. */
 export const useOverlayClose = (): (() => void) | null => useContext(CloseContext)
 
+/** Wider than this and a pane is mostly air; the sheet stops and centres instead. */
+const SHEET_MAX_WIDTH = 1100
+
 /**
- * The layer itself. Its content is the settings routes, drawn against the location
- * they were opened at and held there while the layer leaves — otherwise the closing
- * frames would draw the page's address through the settings routes, which is nothing.
+ * How much of the page shows above the sheet. On macOS the window has no title bar of
+ * its own and the traffic lights sit in this strip, so it is tall enough to clear them.
+ */
+const SHEET_TOP = window.api.platform === 'darwin' ? 44 : 28
+
+/** Rising is a little slower than anything else that arrives: it travels the window. */
+const RISE = { duration: 0.34, ease: EASE } as const
+const FALL = { duration: 0.2, ease: [0.4, 0, 1, 1] } as const
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Tab goes round the sheet rather than out into the page under it, focus starts in the
+ * sheet when it opens, and goes back to whatever had it when it closes.
+ */
+function useFocusTrap(open: boolean): React.RefObject<HTMLDivElement | null> {
+  const sheet = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    // A pane that focuses a field of its own has already done better than this.
+    if (!sheet.current?.contains(document.activeElement)) sheet.current?.focus({ preventScroll: true })
+
+    const onKey = (e: KeyboardEvent): void => {
+      const root = sheet.current
+      // A dialog opened from a pane is portalled outside the sheet and traps its own.
+      if (e.key !== 'Tab' || !root || document.querySelector('[data-modal-backdrop]')) return
+      const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null)
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      const at = document.activeElement
+      if (!root.contains(at)) {
+        e.preventDefault()
+        first.focus()
+      } else if (e.shiftKey && (at === first || at === root)) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && at === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      if (before?.isConnected) before.focus({ preventScroll: true })
+    }
+  }, [open])
+
+  return sheet
+}
+
+/**
+ * The layer itself: a dimmed field over the page, and the sheet on it. Its content is
+ * the settings routes, drawn against the location they were opened at and held there
+ * while the sheet goes back down — otherwise the closing frames would draw the page's
+ * address through the settings routes, which is nothing.
+ *
+ * Clicking the field closes it, as Escape and the ✕ in the sheet's bar do. Escape
+ * itself is `SettingsLayout`'s, because it has to give a dialog or a field inside the
+ * pane first refusal on the press.
  */
 export function SettingsOverlay({
   open,
@@ -93,24 +163,41 @@ export function SettingsOverlay({
   const held = useRef<Location>(location)
   if (open) held.current = location
   const still = useReducedMotion() ?? false
+  const sheet = useFocusTrap(open)
 
   return (
     <AnimatePresence>
       {open && (
-        <motion.div
+        <div
           key="settings-layer"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Settings"
-          className="settings-sheet fixed inset-0 z-40 flex flex-col text-base-content"
-          initial={{ opacity: 0, y: still ? 0 : 10, scale: still ? 1 : 0.995 }}
-          animate={{ opacity: 1, y: 0, scale: 1, transition: ENTER }}
-          exit={{ opacity: 0, y: still ? 0 : 6, transition: EXIT }}
+          className="fixed inset-0 z-40 flex flex-col items-center"
+          style={{ paddingTop: SHEET_TOP }}
         >
-          <CloseContext.Provider value={close}>
-            <Routes location={held.current}>{children}</Routes>
-          </CloseContext.Provider>
-        </motion.div>
+          <motion.div
+            className="settings-backdrop absolute inset-0"
+            aria-hidden="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { duration: still ? 0.12 : 0.24 } }}
+            exit={{ opacity: 0, transition: { duration: still ? 0.08 : 0.2 } }}
+            onMouseDown={close}
+          />
+          <motion.div
+            ref={sheet}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+            tabIndex={-1}
+            className="settings-sheet relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-t-[14px] text-base-content shadow-[0_-12px_48px_-12px_rgba(0,0,0,0.3)] outline-none"
+            style={{ maxWidth: SHEET_MAX_WIDTH }}
+            initial={still ? { opacity: 0 } : { y: '100%' }}
+            animate={still ? { opacity: 1, transition: { duration: 0.12 } } : { y: 0, transition: RISE }}
+            exit={still ? { opacity: 0, transition: { duration: 0.08 } } : { y: '100%', transition: FALL }}
+          >
+            <CloseContext.Provider value={close}>
+              <Routes location={held.current}>{children}</Routes>
+            </CloseContext.Provider>
+          </motion.div>
+        </div>
       )}
     </AnimatePresence>
   )

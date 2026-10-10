@@ -82,7 +82,8 @@ jobs:
         with:
           path: artifacts
 
-      # The release notes are the changelog file this version shipped with, so the
+      # The release notes are the changelog file this version shipped with — a short
+      # list, each item a bold title and a sentence — so the
       # sentence read *before* updating and the one the app shows *after* it are the
       # same sentence rather than two descriptions that drift apart. Illustrations are
       # relative paths — they resolve inside the app, where the files are bundled — so
@@ -103,9 +104,12 @@ jobs:
           FILE="changelog/$VERSION.md"
           if [ -f "$FILE" ]; then
             RAW="https://raw.githubusercontent.com/$REPO/$TAG/changelog/"
-            # Drop the front matter, then point every relative image at the tag it
-            # belongs to — a `main` URL would go stale the moment the next release lands.
+            # Drop the front matter, take the `[icon]` off each item — the app draws
+            # it, GitHub would print it — so the list reads as an ordinary bulleted
+            # one, then point every relative image at the tag it belongs to: a `main`
+            # URL would go stale the moment the next release lands.
             awk 'NR==1 && /^---$/ {front=1; next} front && /^---$/ {front=0; next} !front' "$FILE" \
+              | sed -E 's/^([-*][[:space:]]+)\[[A-Za-z][A-Za-z0-9_-]*\][[:space:]]+/\1/' \
               | sed -E "s#\]\((\./)?(media/[^)]+)\)#](${RAW}\2)#g" > notes.md
           else
             echo "No changelog/$VERSION.md — releasing without one."
