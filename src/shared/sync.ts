@@ -26,12 +26,16 @@ export const tempId = (): string => `${TEMP_PREFIX}${crypto.randomUUID()}`
  * The channels that may be kept and sent later. Only writes whose effect the window
  * can draw before Neo Cloud answers, and whose answer nothing else waits on: no
  * uploads (the bytes are not kept), nothing the assistant does, nothing a recording
- * does (audio has its own queue), and no account business.
+ * does (audio has its own queue), and no account business. Neo Cloud takes no
+ * idempotency key, so a create whose answer is lost can arrive twice; an edit, a
+ * delete or an order is the same write however often it lands.
  */
 export const SYNCABLE = [
-  'task:save', 'task:setStatus', 'task:setColumn', 'task:delete',
-  'person:save', 'membership:save',
+  'task:save', 'task:setStatus', 'task:setColumn', 'task:delete', 'task:reorder', 'task:setProject',
+  'taskComment:save', 'taskComment:delete',
+  'person:save', 'person:delete', 'membership:save', 'membership:delete',
   'decision:save', 'decision:delete',
+  'openQuestion:save', 'openQuestion:delete', 'openQuestion:decide',
   'journal:save', 'journal:delete',
   'link:save', 'link:delete',
   'note:save', 'note:delete'
@@ -42,11 +46,51 @@ export type SyncableChannel = (typeof SYNCABLE)[number]
 export const isSyncable = (channel: string): channel is SyncableChannel =>
   (SYNCABLE as readonly string[]).includes(channel)
 
+/**
+ * The channels that are drawn at once but never kept. They go through the same line,
+ * so they can name something made a moment ago and never pass a write made before
+ * them, but when Neo Cloud cannot be reached they are refused on the spot rather than
+ * held: the shape of the work — projects and their filing, a board's columns, meetings
+ * — is not changed from a copy that may be out of date.
+ */
+export const ONLINE_ONLY = [
+  'project:save', 'project:setArchived', 'project:delete', 'project:reorder',
+  'folder:save', 'folder:delete',
+  'collapsible:save', 'collapsible:delete',
+  'column:save', 'column:delete', 'column:reorder',
+  'meeting:save', 'meeting:delete',
+  'meetingTodo:save', 'meetingTodo:delete'
+] as const satisfies readonly Channel[]
+
+export type OnlineOnlyChannel = (typeof ONLINE_ONLY)[number]
+
+/** Every channel the window draws before Neo Cloud answers. */
+export type DrawnChannel = SyncableChannel | OnlineOnlyChannel
+
+export const isDrawn = (channel: string): channel is DrawnChannel =>
+  isSyncable(channel) || (ONLINE_ONLY as readonly string[]).includes(channel)
+
+/**
+ * The real id a create came back with. Almost every create answers with the row it
+ * made; a meeting's to-do answers with the whole meeting, and the new item is the last
+ * one carrying the text that was sent.
+ */
+export function createdId(channel: string, input: unknown, output: unknown): string | undefined {
+  if (channel === 'meetingTodo:save') {
+    const text = (input as { text?: string } | null)?.text?.trim()
+    const todos = (output as { todos?: { id: string; text: string; sortOrder: number }[] } | null)?.todos ?? []
+    const made = todos.filter((t) => t.text.trim() === text).sort((a, b) => b.sortOrder - a.sortOrder)[0]
+    return made?.id
+  }
+  const id = (output as { id?: unknown } | null)?.id
+  return typeof id === 'string' ? id : undefined
+}
+
 /** One write, as it waits. */
 export interface QueuedWrite {
   /** Chosen by the window, so both sides can talk about the same write. */
   id: string
-  channel: SyncableChannel
+  channel: DrawnChannel
   input: unknown
   /** Set on a create: the id the window drew the new thing under. */
   tempId?: string

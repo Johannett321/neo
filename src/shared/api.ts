@@ -459,10 +459,11 @@ export interface ApiMap {
   /**
    * Hand over a write that can wait. It is sent at once, in order behind anything
    * already waiting; if Neo Cloud cannot be reached it is kept, sealed on disk, and
-   * sent when it can be — and the answer says which happened. See `shared/sync.ts`.
+   * sent when it can be — and the answer says which happened. A write that is drawn but
+   * never kept (`ONLINE_ONLY`) is refused instead of kept. See `shared/sync.ts`.
    */
   'sync:submit': {
-    in: { id: string; channel: import('./sync').SyncableChannel; input: unknown; tempId?: string; label: string }
+    in: { id: string; channel: import('./sync').DrawnChannel; input: unknown; tempId?: string; label: string }
     out: import('./sync').SubmitResult
   }
   /** What is waiting, what was refused, and whether Neo Cloud is answering. */
