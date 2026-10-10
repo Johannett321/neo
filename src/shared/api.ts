@@ -121,6 +121,13 @@ export interface ApiMap {
    * confirm because there is nothing to lose.
    */
   'folder:delete': { in: { id: string }; out: void }
+  /**
+   * To another workspace you are in, with its subfolders, their bands and every project
+   * in any of them, which keep their filing. People are matched or copied there, once
+   * each; the folder lands at the top level. Not drawn ahead or queued: it waits for
+   * Neo Cloud, like `project:move`.
+   */
+  'folder:move': { in: { id: string; workspaceId: string }; out: ProjectFolder }
   /** Order the folders that share a parent. */
   'folder:reorder': { in: { ids: string[] }; out: void }
 

@@ -43,6 +43,9 @@ export function registerProjectHandlers(): void {
       ? must(api.PATCH('/v1/project-folders/{id}', { params: { path: { id: draft.id } }, body: withoutId(draft) }))
       : must(api.POST('/v1/project-folders', { body: withoutId(draft) })))
 
+  handle('folder:move', ({ id, workspaceId }) =>
+    must(api.PUT('/v1/project-folders/{id}/workspace', { params: { path: { id } }, body: { workspaceId } })))
+
   handle('folder:delete', async ({ id }) => {
     await must(api.DELETE('/v1/project-folders/{id}', { params: { path: { id } } }))
   })

@@ -5,7 +5,9 @@ import type { MenuItem } from '@/lib/contextMenu'
 import { useContextMenu } from '@/lib/contextMenu'
 import { branchIds, type Dragged } from '@/lib/folders'
 import { plural } from '@/lib/format'
+import { useWorkspaces } from '@/lib/workspace'
 import { Icon } from './Icon'
+import { MoveFolderModal } from './MoveProjectModal'
 
 /**
  * Folders on the projects page.
@@ -50,6 +52,12 @@ export function FolderCard({
   const openMenu = useContextMenu()
   const [renaming, setRenaming] = useState(false)
   const [over, setOver] = useState(false)
+  const [emigrating, setEmigrating] = useState(false)
+  const { workspaces } = useWorkspaces()
+  // Only the owner of the workspace it is in may take a folder out of it, as with a project.
+  const elsewhere =
+    workspaces.find((w) => w.id === folder.workspaceId)?.role === 'owner' &&
+    workspaces.some((w) => w.id !== folder.workspaceId)
 
   // A folder is not a target for its own branch: moving one inside itself would leave
   // the rows there with nothing on earth able to draw them again.
@@ -69,6 +77,15 @@ export function FolderCard({
     { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(true) },
     { label: 'New folder inside', icon: 'plus', onSelect: onNewSubfolder },
     { label: 'Move to…', icon: 'folder', onSelect: onMove },
+    ...(elsewhere
+      ? [
+          {
+            label: 'Move to another workspace…',
+            icon: 'arrowRight' as const,
+            onSelect: () => setEmigrating(true)
+          }
+        ]
+      : []),
     'separator',
     {
       label: 'Delete folder',
@@ -89,61 +106,69 @@ export function FolderCard({
   ].filter(Boolean)
 
   return (
-    <button
-      draggable={!renaming}
-      onClick={() => !renaming && onOpen()}
-      onDragStart={() => onDragged({ kind: 'folder', id: folder.id })}
-      onDragEnd={() => onDragged(null)}
-      onDragOver={(e) => {
-        if (!accepts) return
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'move'
-        setOver(true)
-      }}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
-      }}
-      onDrop={() => {
-        setOver(false)
-        if (dragged && accepts) onMoveHere(dragged, folder.id)
-      }}
-      onContextMenu={(e) => openMenu(e, items)}
-      className={`hairline flex items-center gap-3 rounded-box border p-3 text-left transition ${
-        over
-          ? 'border-primary bg-primary/10'
-          : accepts
-            ? // Something is in the air and this is somewhere it can land.
-              'border-dashed border-primary/40 bg-base-100'
-            : 'bg-base-100 hover:border-base-content/20 hover:shadow-sm'
-      }`}
-    >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-[9px] bg-base-content/[0.06]">
-        <Icon name="folder" size={17} className="text-base-content/45" />
-      </span>
-      <span className="min-w-0 flex-1">
-        {renaming ? (
-          <input
-            autoFocus
-            defaultValue={folder.name}
-            className="input input-bordered input-xs w-full text-[13px]"
-            onClick={(e) => e.stopPropagation()}
-            onBlur={(e) => rename(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') rename((e.target as HTMLInputElement).value)
-              if (e.key === 'Escape') setRenaming(false)
-            }}
-          />
-        ) : (
-          <span className="block truncate text-[14px] font-medium tracking-[-0.01em]">
-            {folder.name}
-          </span>
-        )}
-        <span className="mt-0.5 block text-[11px] text-base-content/40">
-          {inside.length ? inside.join(' · ') : 'Empty'}
+    <>
+      <button
+        draggable={!renaming}
+        onClick={() => !renaming && onOpen()}
+        onDragStart={() => onDragged({ kind: 'folder', id: folder.id })}
+        onDragEnd={() => onDragged(null)}
+        onDragOver={(e) => {
+          if (!accepts) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          setOver(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+        }}
+        onDrop={() => {
+          setOver(false)
+          if (dragged && accepts) onMoveHere(dragged, folder.id)
+        }}
+        onContextMenu={(e) => openMenu(e, items)}
+        className={`hairline flex items-center gap-3 rounded-box border p-3 text-left transition ${
+          over
+            ? 'border-primary bg-primary/10'
+            : accepts
+              ? // Something is in the air and this is somewhere it can land.
+                'border-dashed border-primary/40 bg-base-100'
+              : 'bg-base-100 hover:border-base-content/20 hover:shadow-sm'
+        }`}
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[9px] bg-base-content/[0.06]">
+          <Icon name="folder" size={17} className="text-base-content/45" />
         </span>
-      </span>
-      <Icon name="chevronRight" size={14} className="shrink-0 text-base-content/25" />
-    </button>
+        <span className="min-w-0 flex-1">
+          {renaming ? (
+            <input
+              autoFocus
+              defaultValue={folder.name}
+              className="input input-bordered input-xs w-full text-[13px]"
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) => rename(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') rename((e.target as HTMLInputElement).value)
+                if (e.key === 'Escape') setRenaming(false)
+              }}
+            />
+          ) : (
+            <span className="block truncate text-[14px] font-medium tracking-[-0.01em]">
+              {folder.name}
+            </span>
+          )}
+          <span className="mt-0.5 block text-[11px] text-base-content/40">
+            {inside.length ? inside.join(' · ') : 'Empty'}
+          </span>
+        </span>
+        <Icon name="chevronRight" size={14} className="shrink-0 text-base-content/25" />
+      </button>
+
+      {/* Beside the card rather than in it: a click inside a dialog still bubbles to the
+          React parent it was rendered from, and the card's click opens the folder. */}
+      {emigrating && (
+        <MoveFolderModal open onClose={() => setEmigrating(false)} folder={folder} folders={folders} />
+      )}
+    </>
   )
 }

@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
+import type { ProjectFolderView } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
+import { branchIds } from '@/lib/folders'
+import { plural } from '@/lib/format'
 import { useToast } from '@/lib/toast'
 import { useGoIn, useWorkspaces } from '@/lib/workspace'
 import { Icon } from './Icon'
@@ -24,11 +27,120 @@ export function MoveProjectModal({
   onClose: () => void
   project: { id: string; name: string; workspaceId: string }
 }): React.JSX.Element {
-  const { workspaces } = useWorkspaces()
   const goIn = useGoIn()
   const toast = useToast()
   const move = useApiMutation('project:move')
-  const options = workspaces.filter((w) => w.id !== project.workspaceId)
+
+  return (
+    <MoveToWorkspaceModal
+      open={open}
+      onClose={onClose}
+      name={project.name}
+      from={project.workspaceId}
+      submitLabel="Move project"
+      pending={move.isPending}
+      error={move.error}
+      explain={(there) => (
+        <>
+          Everything in it goes along. The people on it are matched to the same people in{' '}
+          {there}, or copied there; they also stay where they are. It leaves its folder behind
+          and arrives unfiled.
+        </>
+      )}
+      onMove={async (target) => {
+        await move.mutateAsync({ id: project.id, workspaceId: target.id })
+        onClose()
+        toast({ title: `Moved to ${target.name}`, detail: project.name, icon: 'arrowRight' })
+        goIn(target.id, `/projects/${project.id}`)
+      }}
+    />
+  )
+}
+
+/**
+ * Taking a whole folder to another workspace: the same move as a project's, made for
+ * every project filed anywhere inside it at once. The folder keeps its insides — its
+ * subfolders, the bands drawn in them, which card is where — and lands at the top level
+ * of the other workspace, which is where you are taken to find it open.
+ */
+export function MoveFolderModal({
+  open,
+  onClose,
+  folder,
+  folders
+}: {
+  open: boolean
+  onClose: () => void
+  folder: { id: string; name: string; workspaceId: string }
+  /** Every folder in its workspace, to count what goes with it. */
+  folders: ProjectFolderView[]
+}): React.JSX.Element {
+  const goIn = useGoIn()
+  const toast = useToast()
+  const move = useApiMutation('folder:move')
+  const branch = branchIds(folders, folder.id)
+  const inside = folders.filter((f) => branch.has(f.id))
+  const subfolders = inside.length - 1
+  const projects = inside.reduce((n, f) => n + f.projectCount, 0)
+  const contents = [
+    subfolders === 1 ? 'its subfolder' : subfolders > 1 ? `its ${subfolders} subfolders` : '',
+    projects === 1 ? 'the project in it' : projects === 2 ? 'both projects in it' : projects > 2 ? `all ${plural(projects, 'project')} in it` : ''
+  ].filter(Boolean)
+
+  return (
+    <MoveToWorkspaceModal
+      open={open}
+      onClose={onClose}
+      name={folder.name}
+      from={folder.workspaceId}
+      submitLabel="Move folder"
+      pending={move.isPending}
+      error={move.error}
+      explain={(there) => (
+        <>
+          {contents.length > 0
+            ? `It goes with ${contents.join(' and ')}, filed as they are now`
+            : 'It goes as it is'}
+          , archived projects in it too. The people on them are matched to the same people in{' '}
+          {there}, or copied there; they also stay where they are. It arrives at the top level.
+        </>
+      )}
+      onMove={async (target) => {
+        await move.mutateAsync({ id: folder.id, workspaceId: target.id })
+        onClose()
+        toast({ title: `Moved to ${target.name}`, detail: folder.name, icon: 'arrowRight' })
+        goIn(target.id, `/projects?in=${folder.id}`)
+      }}
+    />
+  )
+}
+
+/** Pick another workspace, read what will happen, move. */
+function MoveToWorkspaceModal({
+  open,
+  onClose,
+  name,
+  from,
+  submitLabel,
+  pending,
+  error,
+  explain,
+  onMove
+}: {
+  open: boolean
+  onClose: () => void
+  name: string
+  /** The workspace it is in, which is not offered. */
+  from: string
+  submitLabel: string
+  pending: boolean
+  error: Error | null
+  /** What happens, given the chosen workspace's name (or a stand-in for it). */
+  explain: (there: string) => React.ReactNode
+  onMove: (target: { id: string; name: string }) => Promise<void>
+}): React.JSX.Element {
+  const { workspaces } = useWorkspaces()
+  const options = workspaces.filter((w) => w.id !== from)
   const [chosen, setChosen] = useState<string | null>(null)
 
   useEffect(() => {
@@ -38,11 +150,8 @@ export function MoveProjectModal({
   const target = options.find((w) => w.id === chosen)
 
   const submit = async (): Promise<void> => {
-    if (!target || move.isPending) return
-    await move.mutateAsync({ id: project.id, workspaceId: target.id })
-    onClose()
-    toast({ title: `Moved to ${target.name}`, detail: project.name, icon: 'arrowRight' })
-    goIn(target.id, `/projects/${project.id}`)
+    if (!target || pending) return
+    await onMove(target)
   }
 
   return (
@@ -50,7 +159,7 @@ export function MoveProjectModal({
       open={open}
       onClose={onClose}
       title="Move to another workspace"
-      description={project.name}
+      description={name}
       width="max-w-md"
       onSubmit={() => void submit()}
       footer={
@@ -60,10 +169,10 @@ export function MoveProjectModal({
           </button>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!target || move.isPending}
+            disabled={!target || pending}
             onClick={() => void submit()}
           >
-            Move project
+            {submitLabel}
           </button>
         </>
       }
@@ -94,13 +203,9 @@ export function MoveProjectModal({
 
         <p className="flex items-start gap-1.5 text-[12px] leading-relaxed text-base-content/55">
           <Icon name="info" size={13} className="mt-0.5 shrink-0" />
-          <span>
-            Everything in it goes along. The people on it are matched to the same people in{' '}
-            {target ? target.name : 'the other workspace'}, or copied there; they also stay where
-            they are. It leaves its folder behind and arrives unfiled.
-          </span>
+          <span>{explain(target ? target.name : 'the other workspace')}</span>
         </p>
-        {move.error && <p className="text-[12px] text-error">{move.error.message}</p>}
+        {error && <p className="text-[12px] text-error">{error.message}</p>}
       </div>
     </Modal>
   )

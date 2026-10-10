@@ -1020,6 +1020,46 @@ async function main(): Promise<void> {
   await call('project:delete', { id: emigrant.id })
   if (colleagueThere && !ownBefore.has(colleagueThere.id)) await call('person:delete', { id: colleagueThere.id })
 
+  // --- a whole folder taken to another workspace, with what is filed in it
+  const crate = await call('folder:save', { workspaceId: dayJob, name: 'Crate' })
+  const inner = await call('folder:save', { workspaceId: dayJob, name: 'Inner', parentId: crate.id })
+  const crateBand = await call('collapsible:save', { workspaceId: dayJob, name: 'Shelf', folderId: inner.id })
+  const outer = await call('project:save', { workspaceId: dayJob, name: 'In the crate', status: 'active', folderId: crate.id })
+  const shelved = await call('project:save', {
+    workspaceId: dayJob, name: 'On the crateBand', status: 'active', folderId: inner.id, collapsibleId: crateBand.id
+  })
+  await call('membership:save', { personId: colleague.id, projectId: outer.id, role: 'Lead' })
+  await call('membership:save', { personId: colleague.id, projectId: shelved.id, role: 'Review' })
+  const myShelvedCard = await call('task:save', { projectId: shelved.id, title: 'Shelved', assigneePersonId: boardMe.id })
+  const ownBeforeCrate = new Set((await call('person:list', { workspaceId: own })).map((p: any) => p.id))
+  const crated = await call('folder:move', { id: crate.id, workspaceId: own })
+  ok('a folder moves to another workspace, to its top level', crated.workspaceId === own && crated.parentId === null)
+  const ownFolders = await call('folder:list', { workspaceId: own })
+  ok('its subfolder comes with it, still inside it',
+     ownFolders.find((f: any) => f.id === inner.id)?.parentId === crate.id)
+  ok('and the band in the subfolder, still on its page',
+     (await call('collapsible:list', { workspaceId: own })).some((c: any) => c.id === crateBand.id && c.folderId === inner.id))
+  const shelvedThere = await call('project:get', { id: shelved.id })
+  ok('a project in the band is still filed there and grouped in it',
+     shelvedThere.project.workspaceId === own && shelvedThere.project.folderId === inner.id &&
+     shelvedThere.project.collapsibleId === crateBand.id)
+  const copies = (await call('person:list', { workspaceId: own }))
+    .filter((p: any) => p.name === colleague.name && !p.isMe && !ownBeforeCrate.has(p.id))
+  ok('somebody on two of its projects is copied once', copies.length === 1, String(copies.length))
+  ok('and is on both', (await call('project:get', { id: outer.id })).cast.some((c: any) => c.personId === copies[0]?.id) &&
+     shelvedThere.cast.some((c: any) => c.personId === copies[0]?.id && c.role === 'Review'))
+  ok('your own card is yours there too',
+     shelvedThere.tasks.find((t: any) => t.id === myShelvedCard.id)?.assigneePersonId === farMe.id)
+  ok('and nothing of it is left in the workspace it left',
+     !(await call('folder:list', { workspaceId: dayJob })).some((f: any) => f.id === crate.id || f.id === inner.id) &&
+     !(await call('project:list', { workspaceId: dayJob, status: 'all' })).some((p: any) => p.id === outer.id))
+  await call('project:delete', { id: outer.id })
+  await call('project:delete', { id: shelved.id })
+  await call('collapsible:delete', { id: crateBand.id })
+  await call('folder:delete', { id: inner.id })
+  await call('folder:delete', { id: crate.id })
+  for (const copy of copies) await call('person:delete', { id: copy.id })
+
   /* -------------------------------------------------------------------- meetings */
 
   const newMeeting = await call('meeting:save', {

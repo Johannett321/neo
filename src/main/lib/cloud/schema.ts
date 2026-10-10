@@ -881,6 +881,25 @@ export interface paths {
         patch: operations["updateProjectFolder"];
         trace?: never;
     };
+    "/v1/project-folders/{id}/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Move a folder to another workspace you are in, with everything filed in it: its subfolders however deep, the collapsibles drawn in any of them and every project in any of them, archived ones too. Only the owner of the workspace it is in may move it out. It arrives at the other workspace's top level with its insides unchanged; each project goes as PUT /v1/projects/{id}/workspace takes one, but keeps its filing, and a person named by several of them is matched or copied once. */
+        put: operations["moveProjectFolderToWorkspace"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/collapsibles": {
         parameters: {
             query?: never;
@@ -2987,7 +3006,10 @@ export interface components {
             folderCount: number;
         };
         ProjectFolderDraft: {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where a new folder goes. On an existing folder a different workspace moves it, and everything in it, exactly as PUT /v1/project-folders/{id}/workspace does, before the rest is applied.
+             */
             workspaceId?: string;
             /** Format: uuid */
             parentId?: string | null;
@@ -3006,6 +3028,10 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        FolderWorkspaceChange: {
+            /** Format: uuid */
+            workspaceId: string;
+        };
         ProjectCollapsibleView: {
             /** Format: uuid */
             id: string;
@@ -3021,7 +3047,10 @@ export interface components {
             projectCount: number;
         };
         ProjectCollapsibleDraft: {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where a new collapsible goes. An existing one is refused another workspace: it moves only with the folder it is drawn in.
+             */
             workspaceId?: string;
             /** Format: uuid */
             folderId?: string | null;
@@ -5040,6 +5069,33 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ProjectFolderDraft"];
+            };
+        };
+        responses: {
+            /** @description The folder as it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectFolder"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    moveProjectFolderToWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderWorkspaceChange"];
             };
         };
         responses: {
