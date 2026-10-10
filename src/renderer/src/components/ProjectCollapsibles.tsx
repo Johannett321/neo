@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ProjectCollapsibleView, ProjectSummary } from '@shared/types'
 import { useApiMutation } from '@/lib/api'
 import type { MenuItem } from '@/lib/contextMenu'
@@ -25,7 +25,25 @@ import { ProjectGrid } from './ProjectGrid'
  */
 
 /**
- * One band: a name, a rule across the page, and the cards in it.
+ * The card in the air, as a band sees it: a project or a folder card, and the band it is
+ * in now. Both kinds are grouped the same way and with the same write.
+ */
+export interface Carried {
+  kind: 'item' | 'folder'
+  id: string
+  collapsibleId: string | null
+}
+
+/** "2 folders · 3 projects" — what a band holds, folders first as they are drawn. */
+function holds(folders: number, projects: number): string {
+  return [folders > 0 ? plural(folders, 'folder') : '', projects > 0 ? plural(projects, 'project') : '']
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/**
+ * One band: a name, a rule across the page, and the cards in it — folder cards first, in
+ * a row of their own, then the projects.
  *
  * The whole band is a drop target rather than only its header, so a card can be aimed
  * at the group instead of at a two-line strip of it — but only for a card that is not
@@ -34,6 +52,8 @@ import { ProjectGrid } from './ProjectGrid'
 export function CollapsibleSection({
   collapsible,
   projects,
+  folderCount,
+  folders,
   carried,
   naming,
   onDragged,
@@ -44,12 +64,15 @@ export function CollapsibleSection({
   collapsible: ProjectCollapsibleView
   /** The projects in this band, in the order the page draws them. */
   projects: ProjectSummary[]
-  /** The project in the air anywhere on the page, or null. */
-  carried: ProjectSummary | null
+  /** How many folder cards are in it, and the row that draws them (null for none). */
+  folderCount: number
+  folders: ReactNode
+  /** The card in the air anywhere on the page, or null. */
+  carried: Carried | null
   /** Just made, so it opens with its name selected and waiting to be typed over. */
   naming: boolean
   onDragged: (dragged: Dragged | null) => void
-  onAdopt: (projectId: string) => void
+  onAdopt: (card: Carried) => void
   onNewProject: () => void
   onNamed: () => void
 }): React.JSX.Element {
@@ -61,6 +84,7 @@ export function CollapsibleSection({
 
   const editing = renaming || naming
   const shut = collapsible.isCollapsed
+  const count = folderCount + projects.length
   // A card already in this band is being reordered inside it, not moved into it.
   const accepts = carried !== null && carried.collapsibleId !== collapsible.id
 
@@ -87,10 +111,10 @@ export function CollapsibleSection({
       onSelect: () => remove.mutate({ id: collapsible.id }),
       // Nothing is lost when it is empty, so nothing is asked.
       confirm:
-        projects.length > 0
+        count > 0
           ? {
               title: `Delete ${collapsible.name}?`,
-              body: 'Only the collapsible goes. The projects in it come back up to the cards above.',
+              body: 'Only the collapsible goes. What is in it comes back up to the cards above.',
               confirmLabel: 'Delete collapsible'
             }
           : undefined
@@ -115,7 +139,7 @@ export function CollapsibleSection({
         if (!accepts || !carried) return
         e.preventDefault()
         setOver(false)
-        onAdopt(carried.id)
+        onAdopt(carried)
       }}
       onContextMenu={(e) => openMenu(e, items)}
     >
@@ -152,7 +176,7 @@ export function CollapsibleSection({
               {collapsible.name}
             </span>
             <span className="shrink-0 text-[11px] tabular-nums text-base-content/35">
-              {projects.length}
+              {count}
             </span>
           </button>
         )}
@@ -164,14 +188,17 @@ export function CollapsibleSection({
         // Folded, it still says what is inside it — a band you cannot see into is a
         // place to lose things.
         <p className="px-2 pb-1 text-[11px] text-base-content/35">
-          {projects.length > 0 ? `${plural(projects.length, 'project')} folded away` : 'Empty'}
+          {count > 0 ? `${holds(folderCount, projects.length)} folded away` : 'Empty'}
         </p>
-      ) : projects.length === 0 ? (
+      ) : count === 0 ? (
         <div className="hairline rounded-box border border-dashed px-3 py-5 text-center text-[12px] text-base-content/35">
-          Drag a project card in here.
+          Drag a project or a folder in here.
         </div>
       ) : (
-        <ProjectGrid projects={projects} onDragged={onDragged} />
+        <>
+          {folders}
+          {projects.length > 0 && <ProjectGrid projects={projects} onDragged={onDragged} />}
+        </>
       )}
     </section>
   )
@@ -187,14 +214,17 @@ export function CollapsibleSection({
  */
 export function LooseArea({
   projects,
+  folders,
   carried,
   onDragged,
   onRelease
 }: {
   projects: ProjectSummary[]
-  carried: ProjectSummary | null
+  /** The row of loose folder cards, drawn first; null when there are none. */
+  folders: ReactNode
+  carried: Carried | null
   onDragged: (dragged: Dragged | null) => void
-  onRelease: (projectId: string) => void
+  onRelease: (card: Carried) => void
 }): React.JSX.Element {
   const [over, setOver] = useState(false)
   const accepts = carried !== null && carried.collapsibleId !== null
@@ -215,15 +245,19 @@ export function LooseArea({
         if (!accepts || !carried) return
         e.preventDefault()
         setOver(false)
-        onRelease(carried.id)
+        onRelease(carried)
       }}
     >
-      {projects.length === 0 ? (
-        <div className="hairline rounded-box border border-dashed px-3 py-5 text-center text-[12px] text-base-content/35">
-          {accepts ? 'Drop here to take it out of its collapsible.' : 'Every project here is in a collapsible.'}
-        </div>
-      ) : (
+      {folders}
+      {projects.length > 0 ? (
         <ProjectGrid projects={projects} onDragged={onDragged} />
+      ) : (
+        // With loose folders above, an empty strip is only worth drawing as a landing.
+        (accepts || !folders) && (
+          <div className="hairline rounded-box border border-dashed px-3 py-5 text-center text-[12px] text-base-content/35">
+            {accepts ? 'Drop here to take it out of its collapsible.' : 'Everything here is in a collapsible.'}
+          </div>
+        )
       )}
     </div>
   )

@@ -396,7 +396,10 @@ install's database and files into an empty Neo Cloud account.
   `checkCollapsible()` enforces it on every write, `project:save` clears
   `collapsible_id` whenever `folder_id` changes, `folder:delete` lifts the bands along
   with the cards in them, and `collapsible:save` refuses to move a band to another page
-  rather than stranding what is in it. Otherwise it is furniture, exactly like
+  rather than stranding what is in it. A folder card is grouped the same way
+  (`project_folder.collapsible_id`, its level being its `parent_id`): drawn first inside
+  the band, ungrouped when it is filed under another parent, landing loose when it moves
+  to another workspace. Otherwise it is furniture, exactly like
   `sort_order`: nothing derives from it and it logs no activity. With no band at this level the page draws precisely the grid it drew
   before the feature existed — no rule, no heading, no drop strip.
 - **Arranging the cards is filing too.** `project.sort_order` is what a drag between two

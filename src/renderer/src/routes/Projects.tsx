@@ -15,7 +15,7 @@ import { IconPicker } from '@/components/IconPicker'
 import { ProjectCard } from '@/components/ProjectCard'
 import { MoveToFolderModal, NewFolderModal } from '@/components/FolderPicker'
 import { FolderTrail } from '@/components/FolderTrail'
-import { CollapsibleSection, LooseArea } from '@/components/ProjectCollapsibles'
+import { CollapsibleSection, LooseArea, type Carried } from '@/components/ProjectCollapsibles'
 import { FolderCard } from '@/components/ProjectFolders'
 import { ProjectGrid } from '@/components/ProjectGrid'
 import { stableKey } from '@/lib/sync'
@@ -107,8 +107,16 @@ export function ProjectsPage(): React.JSX.Element {
   // Anything whose band is not on this page is loose here, which is what stops a row
   // arriving from somewhere unexpected from vanishing off the screen entirely.
   const loose = visible.filter((p) => !p.collapsibleId || !banded.has(p.collapsibleId))
-  const carried =
-    dragged?.kind === 'item' ? (visible.find((p) => p.id === dragged.id) ?? null) : null
+  // Folder cards are grouped the same way, and drawn first inside a band as they are
+  // above the loose project cards.
+  const looseFolders = subfolders.filter((f) => !f.collapsibleId || !banded.has(f.collapsibleId))
+  const carriedProject = dragged?.kind === 'item' ? visible.find((p) => p.id === dragged.id) : undefined
+  const carriedFolder = dragged?.kind === 'folder' ? subfolders.find((f) => f.id === dragged.id) : undefined
+  const carried: Carried | null = carriedProject
+    ? { kind: 'item', id: carriedProject.id, collapsibleId: carriedProject.collapsibleId ?? null }
+    : carriedFolder
+      ? { kind: 'folder', id: carriedFolder.id, collapsibleId: carriedFolder.collapsibleId ?? null }
+      : null
 
   /** The folder tree as the pickers want it: a name, an indent, and what is in it. */
   const pickable = folders.map((f) => ({
@@ -124,11 +132,31 @@ export function ProjectsPage(): React.JSX.Element {
     setDragged(null)
   }
 
-  /** Into a band, or back out of one. The same write either way. */
-  const groupHere = (projectId: string, collapsibleId: string | null): void => {
-    saveProject.mutate({ id: projectId, collapsibleId })
+  /** Into a band, or back out of one. The same write either way, for either kind of card. */
+  const groupHere = (card: Carried, collapsibleId: string | null): void => {
+    if (card.kind === 'item') saveProject.mutate({ id: card.id, collapsibleId })
+    else saveFolder.mutate({ id: card.id, collapsibleId })
     setDragged(null)
   }
+
+  const folderCard = (folder: ProjectFolderView): React.JSX.Element => (
+    <FolderCard
+      key={stableKey(folder.id)}
+      folder={folder}
+      folders={folders}
+      dragged={dragged}
+      onOpen={() => open(folder.id)}
+      onDragged={setDragged}
+      onMoveHere={moveHere}
+      onNewSubfolder={() => setNewFolderIn(folder.id)}
+      onMove={() => setMovingFolder(folder)}
+    />
+  )
+  /** A row of folder cards: their own row, never a card among the work. */
+  const folderRow = (list: ProjectFolderView[]): React.JSX.Element | null =>
+    list.length > 0 ? (
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{list.map(folderCard)}</div>
+    ) : null
 
   const newCollapsible = async (): Promise<void> => {
     const made = await saveCollapsible.mutateAsync({
@@ -260,24 +288,10 @@ export function ProjectsPage(): React.JSX.Element {
         ) : (
           <>
             {/* Folders first, in a row of their own. A folder is not work, so it does not
-                sit among the work as another card the same size. */}
-            {subfolders.length > 0 && (
-              <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {subfolders.map((folder) => (
-                  <FolderCard
-                    key={stableKey(folder.id)}
-                    folder={folder}
-                    folders={folders}
-                    dragged={dragged}
-                    onOpen={() => open(folder.id)}
-                    onDragged={setDragged}
-                    onMoveHere={moveHere}
-                    onNewSubfolder={() => setNewFolderIn(folder.id)}
-                    onMove={() => setMovingFolder(folder)}
-                  />
-                ))}
-              </div>
-            )}
+                sit among the work as another card the same size. With bands on the page the
+                loose ones are drawn inside the loose area instead, so that a folder taken
+                out of a band can be dropped back among them. */}
+            {bands.length === 0 && folderRow(subfolders)}
 
             {/* The archive is a list you are reading, not one you are arranging: nothing
                 in it is dragged anywhere, so it is drawn as plain cards. */}
@@ -302,19 +316,22 @@ export function ProjectsPage(): React.JSX.Element {
                 <LooseArea
                   key={openFolderId ?? 'root'}
                   projects={loose}
+                  folders={folderRow(looseFolders)}
                   carried={carried}
                   onDragged={setDragged}
-                  onRelease={(id) => groupHere(id, null)}
+                  onRelease={(card) => groupHere(card, null)}
                 />
                 {bands.map((band) => (
                   <CollapsibleSection
                     key={stableKey(band.id)}
                     collapsible={band}
                     projects={visible.filter((p) => p.collapsibleId === band.id)}
+                    folderCount={subfolders.filter((f) => f.collapsibleId === band.id).length}
+                    folders={folderRow(subfolders.filter((f) => f.collapsibleId === band.id))}
                     carried={carried}
                     naming={naming === band.id}
                     onDragged={setDragged}
-                    onAdopt={(id) => groupHere(id, band.id)}
+                    onAdopt={(card) => groupHere(card, band.id)}
                     onNewProject={() => {
                       setCreatingIn(band.id)
                       setCreating(true)

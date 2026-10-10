@@ -278,6 +278,12 @@ export interface ProjectFolder {
   workspaceId: string
   /** Null at the top level. */
   parentId: string | null
+  /**
+   * The collapsible it is drawn in on its parent's page, or null for a loose card. A
+   * folder card is grouped exactly as a project card is: always in a band at its own
+   * level, and filing it under another parent takes it out.
+   */
+  collapsibleId: string | null
   name: string
   sortOrder: number
   createdAt: string
@@ -319,6 +325,8 @@ export interface ProjectCollapsible {
 export interface ProjectCollapsibleView extends ProjectCollapsible {
   /** Projects in it, not counting archived ones. */
   projectCount: number
+  /** Folder cards in it. */
+  folderCount: number
 }
 
 /** A folder with its place in the tree worked out — what a list view needs. */

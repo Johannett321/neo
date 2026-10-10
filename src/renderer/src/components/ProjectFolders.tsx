@@ -25,7 +25,8 @@ import { MoveFolderModal } from './MoveProjectModal'
  *
  * It is deliberately quieter than a project card: a project is work and a folder is
  * only somewhere to put it, so it says what is inside and stops there. Drop a project
- * on it to file it; drop another folder on it to move that one in.
+ * on it to file it; drop another folder on it to move that one in. It is dragged into a
+ * collapsible, and back out, exactly as a project card is.
  */
 export function FolderCard({
   folder,
@@ -115,15 +116,20 @@ export function FolderCard({
         onDragOver={(e) => {
           if (!accepts) return
           e.preventDefault()
+          // A folder card can sit inside a band or the loose area, which are drop targets
+          // of their own; over the card, the card is the one landing on offer.
+          e.stopPropagation()
           e.dataTransfer.dropEffect = 'move'
           setOver(true)
         }}
         onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
         }}
-        onDrop={() => {
+        onDrop={(e) => {
           setOver(false)
-          if (dragged && accepts) onMoveHere(dragged, folder.id)
+          if (!dragged || !accepts) return
+          e.stopPropagation()
+          onMoveHere(dragged, folder.id)
         }}
         onContextMenu={(e) => openMenu(e, items)}
         className={`hairline flex items-center gap-3 rounded-box border p-3 text-left transition ${

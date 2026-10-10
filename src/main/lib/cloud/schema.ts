@@ -2996,6 +2996,11 @@ export interface components {
             workspaceId: string;
             /** Format: uuid */
             parentId: string | null;
+            /**
+             * Format: uuid
+             * @description The collapsible it is grouped in on its parent's page, or null for a loose card. Always a band drawn at the folder's own level (the band's folderId is this folder's parentId).
+             */
+            collapsibleId: string | null;
             name: string;
             sortOrder: number;
             /** Format: date-time */
@@ -3013,6 +3018,11 @@ export interface components {
             workspaceId?: string;
             /** Format: uuid */
             parentId?: string | null;
+            /**
+             * Format: uuid
+             * @description Group it in a collapsible at its own level, or null to make it a loose card again. Refused for a band in another workspace or drawn at another level. Moving the folder to another parent ungroups it, unless a band at the new level is named with it.
+             */
+            collapsibleId?: string | null;
             name?: string;
             sortOrder?: number;
         };
@@ -3023,6 +3033,11 @@ export interface components {
             workspaceId: string;
             /** Format: uuid */
             parentId: string | null;
+            /**
+             * Format: uuid
+             * @description The collapsible it is grouped in on its parent's page, or null for a loose card. Always a band drawn at the folder's own level (the band's folderId is this folder's parentId).
+             */
+            collapsibleId: string | null;
             name: string;
             sortOrder: number;
             /** Format: date-time */
@@ -3045,6 +3060,8 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             projectCount: number;
+            /** @description How many folders are grouped in it. */
+            folderCount: number;
         };
         ProjectCollapsibleDraft: {
             /**

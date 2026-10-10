@@ -911,9 +911,15 @@ export const optimists: Registry = {
       let result: ProjectFolderView | undefined
       if (input.id) {
         const id = input.id
-        const change = defined(input)
+        const current = folderOf(cache, id)
+        const change: Partial<ProjectFolderView> = defined(input)
+        // Filed under another parent: the band it was in is drawn on the page it left.
+        if (current && input.parentId !== undefined && (input.parentId ?? null) !== current.parentId) {
+          change.collapsibleId = input.collapsibleId ?? null
+        }
         cache.update('folder:list', (list) => tree(patch(list, id, (f) => ({ ...f, ...change, id }))))
         result = folderOf(cache, id)
+        regroup(cache, current?.workspaceId ?? result?.workspaceId)
         return result ?? ({ ...input, id } as ProjectFolderView)
       }
       if (!tempId || !input.workspaceId) return
@@ -925,6 +931,7 @@ export const optimists: Registry = {
           id: tempId,
           workspaceId,
           parentId,
+          collapsibleId: input.collapsibleId ?? null,
           name: input.name ?? '',
           sortOrder: Math.max(-1, ...list.filter((f) => f.parentId === parentId).map((f) => f.sortOrder)) + 1,
           createdAt: now,
@@ -936,6 +943,7 @@ export const optimists: Registry = {
         return tree([...list, result])
       })
       refile(cache, workspaceId)
+      regroup(cache, workspaceId)
       return result
     }
   },
@@ -956,6 +964,7 @@ export const optimists: Registry = {
         list.some((p) => p.folderId === id) ? list.map((p) => (p.folderId === id ? { ...p, folderId: up } : p)) : list
       )
       refile(cache, folder.workspaceId)
+      regroup(cache, folder.workspaceId)
     }
   },
 
@@ -986,14 +995,15 @@ export const optimists: Registry = {
           sortOrder: Math.max(-1, ...list.filter((c) => c.folderId === folderId).map((c) => c.sortOrder)) + 1,
           isCollapsed: input.isCollapsed ?? false,
           createdAt: now,
-          projectCount: 0
+          projectCount: 0,
+          folderCount: 0
         }
         return insert(list, result)
       })
       return result
     }
   },
-  /** Gone, and its projects back among the loose cards on the same page. */
+  /** Gone, and its projects and folders back among the loose cards on the same page. */
   'collapsible:delete': {
     label: ({ id }, cache) =>
       `Remove ${quote(cache.read('collapsible:list').flatMap((q) => q.data).find((c) => c.id === id)?.name, 'a collapsible')}`,
@@ -1001,6 +1011,9 @@ export const optimists: Registry = {
       cache.update('collapsible:list', (list) => drop(list, id))
       cache.update('project:list', (list) =>
         list.some((p) => p.collapsibleId === id) ? list.map((p) => (p.collapsibleId === id ? { ...p, collapsibleId: null } : p)) : list
+      )
+      cache.update('folder:list', (list) =>
+        list.some((f) => f.collapsibleId === id) ? list.map((f) => (f.collapsibleId === id ? { ...f, collapsibleId: null } : f)) : list
       )
     }
   },
@@ -1298,6 +1311,22 @@ function refile(cache: Draft, workspaceId: string | undefined): void {
     const next = list.map((c) =>
       c.projectCount === count('collapsibleId', c.id) ? c : { ...c, projectCount: count('collapsibleId', c.id) }
     )
+    return next.every((c, i) => c === list[i]) ? list : next
+  })
+}
+
+/**
+ * How many folder cards each band holds, counted again from the workspace's folder list
+ * — the folder half of `refile`, and safe to apply twice for the same reason.
+ */
+function regroup(cache: Draft, workspaceId: string | undefined): void {
+  if (!workspaceId) return
+  const folders = cache.read('folder:list').find((q) => q.input.workspaceId === workspaceId)?.data
+  if (!folders) return
+  const count = (id: string): number => folders.filter((f) => f.collapsibleId === id).length
+  cache.update('collapsible:list', (list, scope) => {
+    if (scope.workspaceId !== workspaceId) return list
+    const next = list.map((c) => (c.folderCount === count(c.id) ? c : { ...c, folderCount: count(c.id) }))
     return next.every((c, i) => c === list[i]) ? list : next
   })
 }

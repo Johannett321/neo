@@ -481,8 +481,40 @@ async function main(): Promise<void> {
      lifted2?.folderId === null && (await groupedNow()).collapsibleId === shedBand.id,
      JSON.stringify(lifted2))
 
+  /*
+   * A folder card is grouped the way a project card is, on the same terms: a band at
+   * its own level — its parent's page — in its own workspace.
+   */
+  const folderNow = async (id: string): Promise<any> =>
+    (await call('folder:list', { workspaceId: dayJob })).find((f: any) => f.id === id)
+  const bandNow = async (id: string): Promise<any> =>
+    (await call('collapsible:list', { workspaceId: dayJob })).find((c: any) => c.id === id)
+  await call('folder:save', { id: clients.id, collapsibleId: shedBand.id })
+  ok('a folder can be put in a collapsible at its level', (await folderNow(clients.id)).collapsibleId === shedBand.id)
+  ok('and the band counts the folders in it beside its projects',
+     (await bandNow(shedBand.id)).folderCount === 1 && (await bandNow(shedBand.id)).projectCount === 1)
+  ok('a collapsible only holds folders filed at the level it is drawn at',
+     await threw(() => call('folder:save', { id: clients.id, collapsibleId: deepBand.id }), 'level it is drawn at'))
+  const foreignFolderBand = await call('collapsible:save', { workspaceId: own, name: 'Somewhere else' })
+  ok('a folder cannot be grouped in another workspace’s collapsible',
+     await threw(() => call('folder:save', { id: clients.id, collapsibleId: foreignFolderBand.id }), 'another workspace'))
+  await call('collapsible:delete', { id: foreignFolderBand.id })
+  ok('and neither refusal took it out of its band', (await folderNow(clients.id)).collapsibleId === shedBand.id)
+  const box = await call('folder:save', { workspaceId: dayJob, name: 'Box', collapsibleId: shedBand.id })
+  ok('a new folder can be made straight into a band', box.collapsibleId === shedBand.id)
+  await call('folder:save', { id: box.id, parentId: acme.id })
+  ok('filing a folder under another one takes it out of the band it was in',
+     (await folderNow(box.id)).collapsibleId === null)
+  await call('folder:save', { id: box.id, parentId: null, collapsibleId: shedBand.id })
+  ok('and it can be put back in the same breath', (await folderNow(box.id)).collapsibleId === shedBand.id)
+  await call('folder:save', { id: box.id, collapsibleId: null })
+  ok('null takes it back out among the loose cards', (await folderNow(box.id)).collapsibleId === null)
+  await call('folder:delete', { id: box.id })
+
   await call('project:delete', { id: grouped.id })
   await call('collapsible:delete', { id: shedBand.id })
+  ok('deleting a collapsible leaves its folders behind, ungrouped',
+     (await folderNow(clients.id))?.collapsibleId === null)
   await call('collapsible:delete', { id: deepBand.id })
   ok('and the workspace is back to no collapsibles at all',
      (await call('collapsible:list', { workspaceId: dayJob })).length === 0)
