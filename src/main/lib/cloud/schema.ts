@@ -821,7 +821,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Move a project, and everything in it, to another workspace you are in. Its folder and collapsible stay behind. Everybody it names — its team, assignees, attendees, owners of open questions — is matched to the same account, email or name in the other workspace, or copied there; the people in the workspace it left stay where they are. */
+        /** Move a project, and everything in it, to another workspace you are in. Only the owner of the workspace it is in may move it out. Its folder and collapsible stay behind. Everybody it names — its team, assignees, attendees, owners of open questions — is matched to the same account, email or name in the other workspace, or copied there; the people in the workspace it left stay where they are. */
         put: operations["moveProjectToWorkspace"];
         post?: never;
         delete?: never;

@@ -225,7 +225,10 @@ function DangerPane({
   const remove = useApiMutation('project:delete')
   const { workspaces } = useWorkspaces()
   const [moving, setMoving] = useState(false)
-  const canMove = workspaces.some((w) => w.id !== project.workspaceId)
+  // Only the owner of the workspace it is in may take a project out of it.
+  const canMove =
+    workspaces.find((w) => w.id === project.workspaceId)?.role === 'owner' &&
+    workspaces.some((w) => w.id !== project.workspaceId)
 
   return (
     <Panel>

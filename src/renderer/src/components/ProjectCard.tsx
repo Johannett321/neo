@@ -54,7 +54,11 @@ export function ProjectCard({ project }: { project: ProjectSummary }): React.JSX
   const remove = useApiMutation('project:delete')
   const [moving, setMoving] = useState(false)
   const [emigrating, setEmigrating] = useState(false)
-  const elsewhere = useWorkspaces().workspaces.some((w) => w.id !== project.workspaceId)
+  const { workspaces } = useWorkspaces()
+  // Only the owner of the workspace it is in may take a project out of it.
+  const elsewhere =
+    workspaces.find((w) => w.id === project.workspaceId)?.role === 'owner' &&
+    workspaces.some((w) => w.id !== project.workspaceId)
   // The card is on Today and in search results as well as on the projects page, so
   // filing is offered wherever the card is. Nothing is drawn for it until there is
   // somewhere to file it.
