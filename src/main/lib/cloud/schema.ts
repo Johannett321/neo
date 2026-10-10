@@ -811,6 +811,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{id}/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Move a project, and everything in it, to another workspace you are in. Its folder and collapsible stay behind. Everybody it names — its team, assignees, attendees, owners of open questions — is matched to the same account, email or name in the other workspace, or copied there; the people in the workspace it left stay where they are. */
+        put: operations["moveProjectToWorkspace"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-folders": {
         parameters: {
             query?: never;
@@ -2577,7 +2596,10 @@ export interface components {
             attention: string | null;
         };
         ProjectDraft: {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where a new project goes. On an existing project a different workspace moves it, exactly as PUT /v1/projects/{id}/workspace does, before the rest is applied.
+             */
             workspaceId?: string;
             name?: string;
             summary?: string;
@@ -2943,6 +2965,10 @@ export interface components {
             openQuestions: components["schemas"]["OpenQuestion"][];
             journal: components["schemas"]["JournalEntry"][];
             activity: components["schemas"]["Activity"][];
+        };
+        ProjectWorkspaceChange: {
+            /** Format: uuid */
+            workspaceId: string;
         };
         ProjectFolderView: {
             /** Format: uuid */
@@ -4879,6 +4905,33 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Archived"];
+            };
+        };
+        responses: {
+            /** @description The project as it now is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["ErrorResponse"];
+        };
+    };
+    moveProjectToWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectWorkspaceChange"];
             };
         };
         responses: {

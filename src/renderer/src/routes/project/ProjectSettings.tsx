@@ -10,6 +10,8 @@ import { IconPicker } from '@/components/IconPicker'
 import { SettingsLayout } from '@/components/SettingsLayout'
 import { ConfirmButton, Field, Panel } from '@/components/primitives'
 import { PROJECT_COLORS } from '@/components/WorkspaceModal'
+import { MoveProjectModal } from '@/components/MoveProjectModal'
+import { useWorkspaces } from '@/lib/workspace'
 import { useProject } from './ProjectLayout'
 
 type Project = ProjectDetail['project']
@@ -42,7 +44,7 @@ export function ProjectSettings(): React.JSX.Element {
         },
         {
           id: 'archive',
-          label: 'Archive and delete',
+          label: 'Move, archive and delete',
           icon: 'archive',
           tone: 'warn',
           render: () => <DangerPane project={project} taskCount={tasks.length} />
@@ -221,9 +223,29 @@ function DangerPane({
   const navigate = useNavigate()
   const setArchived = useApiMutation('project:setArchived')
   const remove = useApiMutation('project:delete')
+  const { workspaces } = useWorkspaces()
+  const [moving, setMoving] = useState(false)
+  const canMove = workspaces.some((w) => w.id !== project.workspaceId)
 
   return (
     <Panel>
+      {canMove && (
+        <div className="hairline mb-4 flex items-start gap-4 border-b pb-4">
+          <div className="flex-1">
+            <div className="text-[13px] font-medium">Move to another workspace</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-base-content/55">
+              Takes it, and everything in it, to another of your workspaces. The people on it are
+              matched to the same people there, or copied over, and it arrives unfiled.
+            </p>
+          </div>
+          <button className="btn btn-sm gap-1.5" onClick={() => setMoving(true)}>
+            <Icon name="arrowRight" size={13} />
+            Move…
+          </button>
+          <MoveProjectModal open={moving} onClose={() => setMoving(false)} project={project} />
+        </div>
+      )}
+
       <div className="flex items-start gap-4">
         <div className="flex-1">
           <div className="text-[13px] font-medium">

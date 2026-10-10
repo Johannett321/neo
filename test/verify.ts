@@ -989,6 +989,30 @@ async function main(): Promise<void> {
   await call('project:delete', { id: sameSide.id })
   await call('project:delete', { id: otherSide.id })
 
+  // --- a whole project taken to another workspace
+  const emigrant = await call('project:save', { workspaceId: dayJob, name: 'Emigrant', status: 'active' })
+  await call('membership:save', { personId: colleague.id, projectId: emigrant.id, role: 'Lead' })
+  const emigrantsCard = await call('task:save', { projectId: emigrant.id, title: 'Theirs', assigneePersonId: colleague.id })
+  const myEmigrantCard = await call('task:save', { projectId: emigrant.id, title: 'Ours', assigneePersonId: boardMe.id })
+  const ownBefore = new Set((await call('person:list', { workspaceId: own })).map((p: any) => p.id))
+  const emigrated = await call('project:move', { id: emigrant.id, workspaceId: own })
+  ok('a project moves to another workspace', emigrated.workspaceId === own && emigrated.folderId === null)
+  const landed = await call('project:get', { id: emigrant.id })
+  const ownPeople = await call('person:list', { workspaceId: own })
+  const colleagueThere = ownPeople.find((p: any) => p.name === colleague.name && !p.isMe)
+  ok('somebody on it is copied into the other workspace, keeping their role',
+     !!colleagueThere && landed.cast.some((c: any) => c.personId === colleagueThere.id && c.role === 'Lead'))
+  ok('and their card follows them there',
+     landed.tasks.find((t: any) => t.id === emigrantsCard.id)?.assigneePersonId === colleagueThere?.id)
+  ok('your own card is yours there too',
+     landed.tasks.find((t: any) => t.id === myEmigrantCard.id)?.assigneePersonId === farMe.id)
+  ok('the workspace it left keeps its people',
+     (await call('person:list', { workspaceId: dayJob })).some((p: any) => p.id === colleague.id))
+  ok('and no longer lists it',
+     !(await call('project:list', { workspaceId: dayJob, status: 'all' })).some((p: any) => p.id === emigrant.id))
+  await call('project:delete', { id: emigrant.id })
+  if (colleagueThere && !ownBefore.has(colleagueThere.id)) await call('person:delete', { id: colleagueThere.id })
+
   /* -------------------------------------------------------------------- meetings */
 
   const newMeeting = await call('meeting:save', {
