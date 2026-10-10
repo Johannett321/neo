@@ -24,6 +24,9 @@ export function registerProjectHandlers(): void {
   handle('project:setArchived', ({ id, archived }) =>
     must(api.PUT('/v1/projects/{id}/archived', { params: { path: { id } }, body: { archived } })))
 
+  handle('project:move', ({ id, workspaceId }) =>
+    must(api.PUT('/v1/projects/{id}/workspace', { params: { path: { id } }, body: { workspaceId } })))
+
   handle('project:reorder', async ({ ids }) => {
     await must(api.PUT('/v1/projects/order', { body: { ids } }))
   })

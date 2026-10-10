@@ -6,6 +6,8 @@ import type { ProjectSummary } from '@shared/types'
 import { daysBetween, dueLabel, projectColor, relativeFromIso, STATUS_LABEL, todayStr } from '@/lib/format'
 import { DeadlineBar } from './DeadlineBar'
 import { MoveToFolderModal } from './FolderPicker'
+import { MoveProjectModal } from './MoveProjectModal'
+import { useWorkspaces } from '@/lib/workspace'
 import { Icon } from './Icon'
 import { Mark } from './Mark'
 
@@ -51,6 +53,8 @@ export function ProjectCard({ project }: { project: ProjectSummary }): React.JSX
   const setArchived = useApiMutation('project:setArchived')
   const remove = useApiMutation('project:delete')
   const [moving, setMoving] = useState(false)
+  const [emigrating, setEmigrating] = useState(false)
+  const elsewhere = useWorkspaces().workspaces.some((w) => w.id !== project.workspaceId)
   // The card is on Today and in search results as well as on the projects page, so
   // filing is offered wherever the card is. Nothing is drawn for it until there is
   // somewhere to file it.
@@ -90,6 +94,15 @@ export function ProjectCard({ project }: { project: ProjectSummary }): React.JSX
                     label: project.folderId ? 'Move to another folder…' : 'Move to a folder…',
                     icon: 'folder' as const,
                     onSelect: () => setMoving(true)
+                  }
+                ]
+              : []),
+            ...(elsewhere
+              ? [
+                  {
+                    label: 'Move to another workspace…',
+                    icon: 'arrowRight' as const,
+                    onSelect: () => setEmigrating(true)
                   }
                 ]
               : []),
@@ -226,6 +239,10 @@ export function ProjectCard({ project }: { project: ProjectSummary }): React.JSX
         </div>
 
       </Link>
+
+      {emigrating && (
+        <MoveProjectModal open onClose={() => setEmigrating(false)} project={project} />
+      )}
 
       {moving && (
         <MoveToFolderModal

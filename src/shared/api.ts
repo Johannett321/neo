@@ -93,6 +93,8 @@ export interface ApiMap {
   'project:save': { in: Draft<Project>; out: Project }
   'project:setArchived': { in: { id: string; archived: boolean }; out: Project }
   'project:delete': { in: { id: string }; out: void }
+  /** To another workspace you are in: its people are matched or copied there, its folder stays behind. */
+  'project:move': { in: { id: string; workspaceId: string }; out: Project }
   /**
    * Arrange the cards. The ids are one folder's worth of projects in the order they
    * are to be drawn — the whole visible set, not the one that moved, because a
