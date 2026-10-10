@@ -29,7 +29,7 @@ import { changelogMedia, listChangelog, readChangelog } from '../src/main/lib/ch
 import { checkForUpdate, setUpdatePreference, updateStatus } from '../src/main/lib/updater'
 import { resolveTemperature } from '../src/shared/formats'
 import { helperPath, parseHelperLine } from '../src/main/lib/recording/systemAudio'
-import { api, cloudUrl, fetchRaw, must } from '../src/main/lib/cloud/client'
+import { api, cloudUrl, DEFAULT_CLOUD_URL, fetchRaw, must } from '../src/main/lib/cloud/client'
 import { loadSession } from '../src/main/lib/cloud/session'
 import { drain, syncState } from '../src/main/lib/cloud/outbox'
 import { listSealed, readSealed } from '../src/main/lib/cloud/sealed'
@@ -183,6 +183,13 @@ async function main(): Promise<void> {
   registerChatHandlers()
   registerClaudeHandlers()
   registerSyncHandlers()
+
+  // Without NEO_CLOUD_URL the client talks to production Neo Cloud, and every run
+  // registers accounts and writes data there. Refuse rather than do that.
+  if (!process.env.NEO_CLOUD_URL || cloudUrl() === DEFAULT_CLOUD_URL) {
+    console.error('Set NEO_CLOUD_URL to a local Neo Cloud: verify does not run against production.')
+    process.exit(1)
+  }
 
   const scratch = mkdtempSync(join(tmpdir(), 'neo-verify-files-'))
 
