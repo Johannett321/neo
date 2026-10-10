@@ -31,9 +31,9 @@ export interface SettingsPane {
  * screen with an instruction to go and find it.
  *
  * The app's settings and a workspace's are drawn in the layer over the whole window
- * (`SettingsOverlay`), and there the same panes take the window's shape instead: a bar
- * across the top with the title and the ✕, the list as a column down the left edge, and
- * the pane scrolling on its own on the right. A project's settings stay a page.
+ * (`SettingsOverlay`), a sheet risen from the bottom of the window, and there the same
+ * panes take the sheet's shape instead: a bar across the top with the title and the ✕,
+ * the list as a column down the left edge, and the pane scrolling on its own on the right. A project's settings stay a page.
  */
 export function SettingsLayout({
   title,
@@ -136,13 +136,11 @@ export function SettingsLayout({
     return (
       <>
         {/*
-          The layer's title bar is the window's, so it is the strip you drag and it
-          starts past the traffic lights on macOS, exactly as the sidebar's does.
+          The sheet's bar stands in for the window's title bar while the sheet is up,
+          so it is a strip you can drag the window by. The sheet starts below the
+          traffic lights, so unlike the sidebar's it needs no room left for them.
         */}
-        <header
-          className="glass-chrome drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b pr-3"
-          style={{ paddingLeft: window.api.platform === 'darwin' ? 94 : 16 }}
-        >
+        <header className="glass-chrome drag-region hairline flex h-[52px] shrink-0 items-center gap-3 border-b pl-5 pr-3">
           {mark}
           <h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em]">{title}</h1>
           {actions}

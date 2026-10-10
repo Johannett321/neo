@@ -1236,7 +1236,19 @@ summary,
 }
 
 /*
- * The settings layer (components/SettingsOverlay.tsx) covers the whole app, so unlike
+ * The field the settings sheet sits on: the page, dimmed, as under a dialog — and as
+ * dark as a dialog's under Liquid Glass, for the same reason (see the modal backdrop
+ * below). No blur, which would do nothing here anyway.
+ */
+.settings-backdrop {
+  background-color: color-mix(in oklch, black 28%, transparent);
+}
+[data-glass] .settings-backdrop {
+  background-color: color-mix(in oklch, black 42%, transparent);
+}
+
+/*
+ * The settings sheet (components/SettingsOverlay.tsx) covers most of the app, so unlike
  * every other surface it must not let the app show through it: the sheet is what the
  * window would have been without the app on it. Opaque in the solid themes. Under
  * Liquid Glass it is the window's own backdrop again — the solid capture with the same
