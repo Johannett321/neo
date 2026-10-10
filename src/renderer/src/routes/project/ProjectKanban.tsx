@@ -264,12 +264,8 @@ export function ProjectKanban(): React.JSX.Element {
         columnId={adding || undefined}
         only="task"
       />
-      <TaskDialog
-        open={editing !== null}
-        onClose={() => setEditing(null)}
-        task={editing}
-        columns={columns}
-      />
+      {/* No columns: on the board a card changes column by being dragged there. */}
+      <TaskDialog open={editing !== null} onClose={() => setEditing(null)} task={editing} />
     </div>
   )
 }

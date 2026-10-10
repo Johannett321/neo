@@ -38,6 +38,11 @@ export function TaskDialog({
   open: boolean
   onClose: () => void
   task: TaskView | null
+  /**
+   * The board's columns, to move the item from here. Left out on the board itself,
+   * where dragging the card is how it moves and a second way to do it is clutter.
+   * Without them the item keeps the column it is in.
+   */
   columns?: BoardColumn[]
 }): React.JSX.Element {
   const workspace = useWorkspace()
