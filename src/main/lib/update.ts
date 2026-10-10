@@ -1,4 +1,4 @@
-import type { ChangelogEntry } from '@shared/update'
+import type { ChangelogEntry, ChangelogItem } from '@shared/update'
 
 /**
  * The part of updating that is only arithmetic and text.
@@ -143,9 +143,9 @@ const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
  *
  * The front matter is optional and so is every key in it, because a release that
  * fixed one thing should cost one sentence in a file and nothing else. A file with
- * no title falls back to its first heading, and then to its version — so the
- * simplest possible entry is a line of prose, and the most elaborate is prose with
- * headings and screenshots. Both draw.
+ * no title falls back to its first heading, and then to its version. A body that is
+ * a list of `- [icon] **Title** — sentence` lines becomes `items`, which is how a
+ * changelog is written now; anything else is the older long form and stays Markdown.
  */
 export function parseChangelog(version: string, text: string): ChangelogEntry {
   let title = ''
@@ -178,7 +178,39 @@ export function parseChangelog(version: string, text: string): ChangelogEntry {
     }
   }
 
-  return { version, title: title || `Version ${version}`, date, body: rewriteMedia(body) }
+  const items = changelogItems(body)
+  if (items.length) body = body.replace(ICON_TAG, '$1')
+  return { version, title: title || `Version ${version}`, date, items, body: rewriteMedia(body) }
+}
+
+/**
+ * `- [icon] **Title** — one sentence.` The dash may be an em dash, an en dash, a
+ * hyphen or a colon, and the sentence may be left off.
+ */
+const ITEM = /^[-*][ \t]+\[([A-Za-z][\w-]*)\][ \t]+\*\*(.+?)\*\*[ \t]*(?:[—–:-][ \t]*(.*))?$/
+const ICON_TAG = /^([-*][ \t]+)\[[A-Za-z][\w-]*\][ \t]+/gm
+
+/**
+ * The short list a changelog is written as now, or nothing.
+ *
+ * All or nothing on purpose: a file is either a list of features — every line one
+ * of them — or the older long form, which is drawn as Markdown exactly as it always
+ * was. Half of each would mean prose silently dropped from the screen. Icon names
+ * may be written `kebab-case` as well as the renderer's `camelCase`.
+ */
+function changelogItems(body: string): ChangelogItem[] {
+  const lines = body.split(/\r?\n/).filter((line) => line.trim())
+  const items: ChangelogItem[] = []
+  for (const line of lines) {
+    const match = ITEM.exec(line.trim())
+    if (!match) return []
+    items.push({
+      icon: match[1].replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()),
+      title: match[2].trim(),
+      detail: (match[3] ?? '').trim()
+    })
+  }
+  return items
 }
 
 /**

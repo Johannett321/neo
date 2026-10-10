@@ -2756,6 +2756,32 @@ async function main(): Promise<void> {
          entry.body.includes('![Remote](https://x/y.png)')
      })())
 
+  ok('a changelog written as a short list reads as items, with the icons off its Markdown',
+     (() => {
+       const list = parseChangelog('2.3.0', [
+         '---', 'title: Short', '---', '',
+         '- [orgchart] **Draw the team** — One sentence with `⌘K`.',
+         '- [cloud-off] **Offline**',
+         '* [bell] **Notified**: said with a colon.'
+       ].join('\n'))
+       const [team, offline, bell] = list.items
+       return list.items.length === 3 &&
+         team.icon === 'orgchart' && team.title === 'Draw the team' &&
+         team.detail === 'One sentence with `⌘K`.' &&
+         // kebab-case is read as the renderer's camelCase.
+         offline.icon === 'cloudOff' && offline.detail === '' &&
+         bell.detail === 'said with a colon.' &&
+         list.body.startsWith('- **Draw the team**') && !list.body.includes('[orgchart]')
+     })())
+
+  ok('and a file with anything else in it is the long form, drawn as Markdown',
+     (() => {
+       const mixed = parseChangelog('2.3.0', 'A paragraph.\n\n- [bell] **Notified** — said.')
+       const plain = parseChangelog('2.3.0', '- **Bold** without an icon.')
+       return mixed.items.length === 0 && mixed.body.includes('[bell]') &&
+         plain.items.length === 0 && plain.body === '- **Bold** without an icon.'
+     })())
+
   ok('only a version-shaped name is a changelog',
      changelogVersion('1.2.0.md') === '1.2.0' && changelogVersion('README.md') === '' &&
      changelogVersion('../secrets.md') === '')
@@ -2776,6 +2802,10 @@ async function main(): Promise<void> {
   ok('and one that wrote one reads back with something in it',
      shipped === null || Boolean(shipped.body),
      version)
+  ok('every changelog that ships is a short list of three to five things',
+     history.every((entry: any) => entry.items.length >= 3 && entry.items.length <= 5),
+     history.filter((entry: any) => entry.items.length < 3 || entry.items.length > 5)
+       .map((entry: any) => entry.version).join(', '))
   ok('the changelog is newest first',
      history.length > 0 && history.every((entry: any, i: number) =>
        i === 0 || compareVersions(history[i - 1].version, entry.version) > 0))

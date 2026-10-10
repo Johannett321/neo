@@ -107,6 +107,9 @@ const PATHS = {
   group: 'M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v11a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-11zM8 9.5h3.5v3.5H8zM12.5 11h3.5v3.5h-3.5z'
 } as const
 
+/** Whether a name from outside the renderer — a changelog, say — is one of these. */
+export const isIconName = (name: string): name is IconName => Object.hasOwn(PATHS, name)
+
 /** The path behind a name, for the one place that draws an icon without React. */
 export const iconPath = (name: IconName): string => PATHS[name]
 

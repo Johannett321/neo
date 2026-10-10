@@ -672,7 +672,12 @@ which writes to stderr even on success) rather than assumed, so a real Developer
 retires the whole permissions panel without a line being touched.
 
 **The changelog is a folder in the repository, bundled and never fetched.** `changelog/`
-holds one Markdown file per version with its illustrations in `media/`; it ships as
+holds one Markdown file per big release, written as **three to five items** —
+`- [icon] **Title** — one sentence.`, the icon a name from `Icon.tsx` — which
+`parseChangelog` reads into `items` and `components/ChangelogItems.tsx` draws as a tile
+and a line each, in the dialog and in Settings → Updates alike. A file that is not
+entirely items is the older long form and draws as Markdown (`changelog/README.md` has
+the rules). It ships as
 `extraResources` and is found by looking for the file. The screen that reads it appears
 on the first launch after an update, which is exactly the launch most likely to have no
 network. The release workflow generates the GitHub release notes from the same files, so
