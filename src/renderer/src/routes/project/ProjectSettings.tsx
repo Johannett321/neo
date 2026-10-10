@@ -237,8 +237,8 @@ function DangerPane({
         </div>
         <button
           className="btn btn-sm gap-1.5"
-          onClick={async () => {
-            await setArchived.mutateAsync({ id: project.id, archived: !project.archivedAt })
+          onClick={() => {
+            setArchived.mutate({ id: project.id, archived: !project.archivedAt })
             if (!project.archivedAt) navigate('/projects')
           }}
         >
@@ -258,8 +258,8 @@ function DangerPane({
         <ConfirmButton
           label="Delete"
           className="btn btn-sm text-base-content/60 hover:text-error"
-          onConfirm={async () => {
-            await remove.mutateAsync({ id: project.id })
+          onConfirm={() => {
+            remove.mutate({ id: project.id })
             navigate('/projects')
           }}
         />

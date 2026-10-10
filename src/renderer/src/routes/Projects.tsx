@@ -18,6 +18,7 @@ import { FolderTrail } from '@/components/FolderTrail'
 import { CollapsibleSection, LooseArea } from '@/components/ProjectCollapsibles'
 import { FolderCard } from '@/components/ProjectFolders'
 import { ProjectGrid } from '@/components/ProjectGrid'
+import { stableKey } from '@/lib/sync'
 
 export function ProjectsPage(): React.JSX.Element {
   const workspace = useWorkspace()
@@ -264,7 +265,7 @@ export function ProjectsPage(): React.JSX.Element {
               <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {subfolders.map((folder) => (
                   <FolderCard
-                    key={folder.id}
+                    key={stableKey(folder.id)}
                     folder={folder}
                     folders={folders}
                     dragged={dragged}
@@ -283,7 +284,7 @@ export function ProjectsPage(): React.JSX.Element {
             {showArchived ? (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {visible.map((project) => (
-                  <ProjectCard key={project.id} project={project} />
+                  <ProjectCard key={stableKey(project.id)} project={project} />
                 ))}
               </div>
             ) : bands.length === 0 ? (
@@ -307,7 +308,7 @@ export function ProjectsPage(): React.JSX.Element {
                 />
                 {bands.map((band) => (
                   <CollapsibleSection
-                    key={band.id}
+                    key={stableKey(band.id)}
                     collapsible={band}
                     projects={visible.filter((p) => p.collapsibleId === band.id)}
                     carried={carried}
@@ -348,9 +349,10 @@ export function ProjectsPage(): React.JSX.Element {
           folders={pickable}
           parentId={newFolderIn}
           description="Somewhere to file projects. It holds nothing else, and nothing in the app reads it back."
-          onCreate={(name, parentId) =>
-            saveFolder.mutateAsync({ workspaceId: workspace.id, name, parentId })
-          }
+          // Drawn at once, so the dialog need not wait for Neo Cloud to close.
+          onCreate={async (name, parentId) => {
+            saveFolder.mutate({ workspaceId: workspace.id, name, parentId })
+          }}
         />
       )}
 
@@ -393,9 +395,10 @@ export function NewProjectModal({
   const [iconPath, setIconPath] = useState('')
   const [iconPreview, setIconPreview] = useState<string | null>(null)
 
-  const submit = async (): Promise<void> => {
+  // Drawn at once, so the card is on the page as the dialog closes. See `useApiMutation`.
+  const submit = (): void => {
     if (!name.trim()) return
-    await save.mutateAsync({
+    save.mutate({
       name: name.trim(),
       summary,
       iconPath,

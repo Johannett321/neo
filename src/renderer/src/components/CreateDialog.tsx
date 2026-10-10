@@ -139,13 +139,12 @@ export function CreateDialog({
   // A meeting needs nothing but its date; everything else needs something written down.
   const canSave = Boolean(targetProject) && (kind === 'meeting' || draft.title.trim() || draft.note.trim())
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!canSave) return
     const where = project?.name ?? 'the project'
     if (kind === 'task') {
       const assignedElsewhere = Boolean(draft.assigneePersonId) && draft.assigneePersonId !== me?.id
-      // Tasks, decisions and log entries are on screen before Neo Cloud answers, so the
-      // dialog closes at once; a meeting waits, because the toast links to its page.
+      // Everything here is on screen before Neo Cloud answers, so the dialog closes at once.
       saveTask.mutate({
         projectId: targetProject,
         title: draft.title.trim(),
@@ -188,18 +187,21 @@ export function CreateDialog({
         to: `/projects/${targetProject}`
       })
     } else {
-      const created = await saveMeeting.mutateAsync({
-        projectId: targetProject,
-        title: draft.title.trim(),
-        occurredOn: draft.date
-      })
-      // Straight to the page it will be written up on, which is the next thing to do.
-      toast({
-        title: `Meeting added to ${where}`,
-        detail: draft.title.trim() || 'Untitled — add the notes when you have them',
-        icon: 'people',
-        to: `/projects/${targetProject}/meetings/${created.id}`
-      })
+      // Drawn at once as well, so the dialog closes now; the toast waits for the real
+      // id, because it links straight to the page the meeting will be written up on.
+      const title = draft.title.trim()
+      saveMeeting.mutate(
+        { projectId: targetProject, title, occurredOn: draft.date },
+        {
+          onSuccess: (created) =>
+            toast({
+              title: `Meeting added to ${where}`,
+              detail: title || 'Untitled — add the notes when you have them',
+              icon: 'people',
+              to: `/projects/${targetProject}/meetings/${created.id}`
+            })
+        }
+      )
     }
     onClose()
   }

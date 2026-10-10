@@ -14,6 +14,7 @@ import {
   CarryableRow, ContentFolderRow, FilingDialogs, useFiling
 } from '@/components/ContentFolders'
 import { useProject } from './ProjectLayout'
+import { stableKey } from '@/lib/sync'
 
 /**
  * A meeting is a note that knows when it happened and who was there. That is the
@@ -124,7 +125,7 @@ export function ProjectMeetings(): React.JSX.Element {
         ) : (
           <div className="space-y-2.5">
             {here.map((meeting) => (
-              <CarryableRow key={meeting.id} id={meeting.id} filing={filing}>
+              <CarryableRow key={stableKey(meeting.id)} id={meeting.id} filing={filing}>
                 <Link
                   to={href(meeting.id)}
                   draggable={false}

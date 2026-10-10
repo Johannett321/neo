@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import type { TaskComment } from '@shared/types'
+import { isTempId } from '@shared/sync'
 import { useApi, useApiMutation } from '@/lib/api'
 import { useContextMenu } from '@/lib/contextMenu'
 import { timeAgo } from '@/lib/format'
-import { useToast } from '@/lib/toast'
+import { stableKey } from '@/lib/sync'
 import { Avatar } from './primitives'
 import { Markdown } from './Markdown'
 
@@ -22,11 +22,6 @@ const colourOf = (name: string): string => {
 
 const isSend = (e: React.KeyboardEvent): boolean => e.key === 'Enter' && (e.metaKey || e.ctrlKey)
 
-interface Pending {
-  key: number
-  body: string
-}
-
 /**
  * The conversation on a card: what happened to the work since the card was written,
  * oldest at the top so it reads as it was said, and the composer at the bottom where
@@ -37,7 +32,8 @@ interface Pending {
  *
  * A comment appears the moment it is sent, faded until Neo Cloud has it — the thread is
  * where you are looking, and a box that empties with nothing appearing for a beat
- * reads as lost. If the send fails the words go back in the box.
+ * reads as lost. It is drawn like any other write (`optimistic.ts`); if Neo Cloud
+ * refuses it, it comes back out and the words go back in the box.
  */
 export function TaskComments({
   taskId,
@@ -47,49 +43,30 @@ export function TaskComments({
   /** Whether something is typed and unsent, so the dialog can ask before throwing it away. */
   onDraftChange?: (dirty: boolean) => void
 }): React.JSX.Element {
-  const client = useQueryClient()
-  const toast = useToast()
   const comments = useApi('taskComment:list', { taskId })
   const profile = useApi('profile:get')
   const save = useApiMutation('taskComment:save')
   const [draft, setDraft] = useState('')
-  const [pending, setPending] = useState<Pending[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const nextKey = useRef(0)
 
   useEffect(() => onDraftChange?.(draft.trim().length > 0), [draft, onDraftChange])
 
   const list = comments.data ?? []
-  const count = list.length + pending.length
+  const count = list.length
+  const sending = list.filter((c) => isTempId(c.id)).length
 
   // A new line in the thread is the thing to look at: keep the bottom in view.
   useEffect(() => {
-    if (pending.length > 0) endRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [pending.length])
+    if (sending > 0) endRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [sending])
 
-  const send = async (): Promise<void> => {
+  const send = (): void => {
     const body = draft.trim()
     if (!body) return
-    const key = nextKey.current++
-    setPending((p) => [...p, { key, body }])
     setDraft('')
-    try {
-      const saved = await save.mutateAsync({ taskId, body })
-      // Into the cache before the faded copy goes, so there is no frame without it.
-      client.setQueryData<TaskComment[]>(['taskComment:list', { taskId }], (old) =>
-        old && !old.some((c) => c.id === saved.id) ? [...old, saved] : old
-      )
-    } catch (error) {
-      setDraft((current) => (current ? `${body}\n\n${current}` : body))
-      toast({
-        title: 'That comment was not sent',
-        detail: (error as Error).message || 'It is back in the box to try again.',
-        icon: 'alert'
-      })
-    } finally {
-      setPending((p) => p.filter((x) => x.key !== key))
-    }
+    // Refused: the toast says why, and the words are back in the box to try again.
+    save.mutate({ taskId, body }, { onError: () => setDraft((current) => (current ? `${body}\n\n${current}` : body)) })
   }
 
   const me = profile.data
@@ -109,24 +86,12 @@ export function TaskComments({
         <ol className="mb-4 max-h-[320px] space-y-3.5 overflow-y-auto">
           {list.map((comment) => (
             <CommentItem
-              key={comment.id}
+              key={stableKey(comment.id)}
               comment={comment}
               editing={editing === comment.id}
               onEdit={() => setEditing(comment.id)}
               onDone={() => setEditing(null)}
             />
-          ))}
-          {pending.map((p) => (
-            <li key={`pending-${p.key}`} className="flex gap-2.5 opacity-55">
-              <Avatar name={me?.name ?? 'Me'} color={colourOf(me?.name ?? 'Me')} image={me?.avatar} size={24} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2 text-[12px]">
-                  <span className="font-medium">{me?.name ?? 'Me'}</span>
-                  <span className="text-[11px] text-base-content/40">Sending…</span>
-                </div>
-                <Markdown source={p.body} className="mt-0.5 text-[13px]" />
-              </div>
-            </li>
           ))}
           <div ref={endRef} />
         </ol>
@@ -144,7 +109,7 @@ export function TaskComments({
               if (isSend(e)) {
                 e.preventDefault()
                 e.stopPropagation()
-                void send()
+                send()
               }
             }}
             className="block max-h-40 min-h-[34px] w-full resize-y bg-transparent px-3 py-2 text-[13px] leading-relaxed outline-none"
@@ -152,7 +117,7 @@ export function TaskComments({
           {draft.trim() && (
             <div className="flex items-center justify-end gap-2 px-2 pb-1.5">
               <span className="text-[10px] text-base-content/35">⌘↵</span>
-              <button type="button" className="btn btn-primary btn-xs" onClick={() => void send()}>
+              <button type="button" className="btn btn-primary btn-xs" onClick={send}>
                 Comment
               </button>
             </div>
@@ -178,21 +143,23 @@ function CommentItem({
   const remove = useApiMutation('taskComment:delete')
   const openMenu = useContextMenu()
   const [body, setBody] = useState(comment.body)
+  // Drawn before Neo Cloud has it, under a temporary id until it does.
+  const sending = isTempId(comment.id)
 
   useEffect(() => {
     if (editing) setBody(comment.body)
   }, [editing, comment.body])
 
-  const commit = async (): Promise<void> => {
+  const commit = (): void => {
     const next = body.trim()
     if (!next || next === comment.body) return onDone()
-    await save.mutateAsync({ id: comment.id, body: next })
+    save.mutate({ id: comment.id, body: next })
     onDone()
   }
 
   return (
     <li
-      className="group flex gap-2.5"
+      className={`group flex gap-2.5 ${sending ? 'opacity-55' : ''}`}
       onContextMenu={
         comment.isMine
           ? (e) =>
@@ -220,7 +187,7 @@ function CommentItem({
         <div className="flex items-baseline gap-2 text-[12px]">
           <span className="font-medium">{comment.authorName || 'Someone'}</span>
           <span className="text-[11px] text-base-content/40" title={new Date(comment.createdAt).toLocaleString()}>
-            {timeAgo(comment.createdAt)}
+            {sending ? 'Sending…' : timeAgo(comment.createdAt)}
             {comment.editedAt && ' · edited'}
           </span>
           {comment.isMine && !editing && (
@@ -247,7 +214,7 @@ function CommentItem({
                 if (isSend(e)) {
                   e.preventDefault()
                   e.stopPropagation()
-                  void commit()
+                  commit()
                 } else if (e.key === 'Escape') {
                   // Leaving the edit, not the dialog.
                   e.preventDefault()
@@ -265,7 +232,7 @@ function CommentItem({
                 type="button"
                 className="btn btn-primary btn-xs"
                 disabled={!body.trim()}
-                onClick={() => void commit()}
+                onClick={commit}
               >
                 Save
               </button>
