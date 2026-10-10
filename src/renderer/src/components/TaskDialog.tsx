@@ -3,8 +3,9 @@ import type { BoardColumn, TaskView } from '@shared/types'
 import { useApi, useApiMutation } from '@/lib/api'
 import { differs } from '@/lib/format'
 import { useWorkspace } from '@/lib/workspace'
-import { Avatar, ConfirmButton, Field, Modal } from './primitives'
+import { ConfirmButton, Field, Modal } from './primitives'
 import { DateField } from './DateField'
+import { PersonSelect } from './PersonSelect'
 import { TaskComments } from './TaskComments'
 
 interface State {
@@ -169,35 +170,13 @@ export function TaskDialog({
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Assigned to">
-            <div className="flex items-center gap-2">
-              {assignee ? (
-                <Avatar
-                  name={assignee.name}
-                  color={assignee.avatarColor}
-                  image={assignee.avatar}
-                  size={26}
-                />
-              ) : (
-                departed && (
-                  <Avatar name={departed.name} color={departed.color ?? '#64748b'} size={26} />
-                )
-              )}
-              <select
-                className="select select-bordered w-full"
-                value={state.assigneePersonId}
-                onChange={(e) => set('assigneePersonId', e.target.value)}
-              >
-                <option value="">Nobody yet</option>
-                {(people.data ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.isMe ? 'Me' : p.name}
-                  </option>
-                ))}
-                {departed && (
-                  <option value={departed.id}>{departed.name} — no longer on this project</option>
-                )}
-              </select>
-            </div>
+            <PersonSelect
+              label="Assigned to"
+              value={state.assigneePersonId}
+              onChange={(id) => set('assigneePersonId', id)}
+              people={people.data ?? []}
+              departed={departed}
+            />
           </Field>
 
           {columns.length > 0 && (
