@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { SearchHit } from '@shared/types'
 import { useApi } from '@/lib/api'
 import { projectColor } from '@/lib/format'
+import { revealState } from '@/lib/reveal'
 import { useWorkspace } from '@/lib/workspace'
 import { Icon, type IconName } from './Icon'
 import { Kbd } from './primitives'
@@ -44,6 +45,8 @@ interface Row {
   subtitle?: string
   meta: string
   to: string
+  /** The thing on `to` to scroll to and light on arrival. See `lib/reveal.ts`. */
+  reveal?: string
 }
 
 /** One keystroke to anything: projects, people, notes, decisions, journal, tasks. */
@@ -118,9 +121,13 @@ export function CommandPalette({
             : // A note has a page of its own, so search lands on the note, not near it.
               hit.kind === 'note' && hit.projectId
               ? `/projects/${hit.projectId}/notes/${hit.id}`
-              : hit.projectId
-                ? `/projects/${hit.projectId}`
-                : '/projects'
+              : // An item lands on its card, lit, rather than on the project's front page.
+                hit.kind === 'task' && hit.projectId
+                ? `/projects/${hit.projectId}/kanban`
+                : hit.projectId
+                  ? `/projects/${hit.projectId}`
+                  : '/projects',
+      reveal: hit.kind === 'task' && hit.projectId ? hit.id : undefined
     }))
     return [...nav, ...hits]
   }, [browsing, query, projects.data, results.data])
@@ -156,7 +163,7 @@ export function CommandPalette({
   const go = (index: number): void => {
     const row = rows[index]
     if (!row) return
-    navigate(row.to)
+    navigate(row.to, row.reveal ? { state: revealState(row.reveal) } : undefined)
     onClose()
   }
 
